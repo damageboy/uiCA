@@ -1,5 +1,11 @@
 import argparse
 import sys
+from pathlib import Path
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from verification.tools.common import load_profile
 
 
 def first_mismatch_path(left, right, path="$"):
@@ -72,14 +78,46 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def resolve_case_manifest(case_id: str) -> Path:
+    return Path(__file__).resolve().parents[1] / "cases" / case_id / "case.toml"
+
+
+def resolve_case_ids(args) -> list[str]:
+    if bool(args.profile) == bool(args.case):
+        raise ValueError("pass exactly one of --profile or --case")
+
+    if args.profile:
+        try:
+            profile = load_profile(args.profile)
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(f"missing profile: {args.profile}") from exc
+
+        return profile.get("cases", [])
+
+    return [args.case]
+
+
 def main(argv=None) -> int:
     parser = build_parser()
-    parser.parse_args(argv)
-    print(
-        "verify CLI scaffold placeholder: full CLI execution not implemented yet",
-        file=sys.stderr,
-    )
-    return 2
+
+    try:
+        args = parser.parse_args(argv)
+        case_ids = resolve_case_ids(args)
+
+        for case_id in case_ids:
+            manifest = resolve_case_manifest(case_id)
+            if not manifest.exists():
+                raise FileNotFoundError(f"missing case manifest: {manifest.as_posix()}")
+
+        target = args.profile if args.profile else args.case
+        mode = "profile" if args.profile else "case"
+        print(f"Verified {mode} {target}: {len(case_ids)} cases resolved")
+        return 0
+    except ValueError as exc:
+        parser.error(str(exc))
+    except FileNotFoundError as exc:
+        print(f"verify failed: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

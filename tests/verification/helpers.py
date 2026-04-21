@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -8,13 +9,14 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def _run_command(cmd, description: str) -> None:
+def _run_command(cmd, description: str, env=None) -> None:
     try:
         subprocess.run(
             cmd,
             check=True,
             capture_output=True,
             text=True,
+            env=env,
         )
     except FileNotFoundError as exc:
         raise FileNotFoundError(
@@ -48,7 +50,15 @@ def assemble_fixture(fixture_name: str, out_dir: str) -> str:
     return str(obj)
 
 
-def run_uica_json(obj_path: str, out_json: str, arch: str = "SKL") -> None:
+def run_uica_json(
+    obj_path: str,
+    out_json: str,
+    arch: str = "SKL",
+    env_overrides=None,
+) -> None:
+    env = os.environ.copy()
+    if env_overrides:
+        env.update(env_overrides)
     _run_command(
         [
             sys.executable,
@@ -61,4 +71,5 @@ def run_uica_json(obj_path: str, out_json: str, arch: str = "SKL") -> None:
             "-TPonly",
         ],
         "uiCA JSON run",
+        env=env,
     )

@@ -1550,12 +1550,13 @@ def printUopsTable(tableLineData, uArchConfig: MicroArchConfig, addHyperlink=Tru
    print(getTableBorderLine(u'\u2514', u'\u2534', u'\u2518'))
 
 
-def printBottlenecks(TP, instructions, instrInstancesForInstr, disas, alignmentOffset, loop, depLimit, uArchConfig: MicroArchConfig, nRounds):
+def getBottlenecks(TP, instructions, instrInstancesForInstr, disas, alignmentOffset, loop, depLimit, uArchConfig: MicroArchConfig, nRounds):
    allLamUops = [lamUop for iiList in instrInstancesForInstr.values() for ii in iiList for lamUop in ii.uops + ii.regMergeUops + ii.stackSyncUops]
    allUnfusedUops = [uop for lUop in allLamUops for uop in lUop.getUnfusedUops()]
 
    output = []
    bottlenecks = []
+   limits = {'predecoder': None, 'decoder': None, 'dsb': None, 'lsd': None, 'issue': None, 'ports': None, 'dependencies': depLimit}
 
    # Front End
    miteInstrs = [i for i in instructions if instrInstancesForInstr[i] and (instrInstancesForInstr[i][0].source == 'MITE')]
@@ -1564,42 +1565,42 @@ def printBottlenecks(TP, instructions, instrInstancesForInstr, disas, alignmentO
 
    if miteInstrs:
       if (not dsbInstrs) and (not lsdInstrs):
-         predecLimit = round(computePredecLimit(disas, loop, alignmentOffset), 2)
-         if predecLimit:
-            output.append('  - Predecoder: {:.2f}'.format(predecLimit))
-            if predecLimit >= .98 * TP:
+         limits['predecoder'] = round(computePredecLimit(disas, loop, alignmentOffset), 2)
+         if limits['predecoder']:
+            output.append('  - Predecoder: {:.2f}'.format(limits['predecoder']))
+            if limits['predecoder'] >= .98 * TP:
                bottlenecks.append('Predecoder')
-      decLimit = round(computeDecLimit(instructions, uArchConfig), 2)
-      if decLimit:
-         output.append('  - Decoder: {:.2f}'.format(decLimit))
-         if decLimit >= .98 * TP:
+      limits['decoder'] = round(computeDecLimit(instructions, uArchConfig), 2)
+      if limits['decoder']:
+         output.append('  - Decoder: {:.2f}'.format(limits['decoder']))
+         if limits['decoder'] >= .98 * TP:
             bottlenecks.append('Decoder')
 
    if dsbInstrs:
-      dsbLimit = round(computeDSBLimit(instructions, alignmentOffset), 2)
-      if dsbLimit:
-         output.append('  - DSB: {:.2f}'.format(dsbLimit))
-         if dsbLimit >= .98 * TP:
+      limits['dsb'] = round(computeDSBLimit(instructions, alignmentOffset), 2)
+      if limits['dsb']:
+         output.append('  - DSB: {:.2f}'.format(limits['dsb']))
+         if limits['dsb'] >= .98 * TP:
             bottlenecks.append('DSB')
 
    if lsdInstrs:
-      lsdLimit = round(computeLSDLimit(instructions, uArchConfig), 2)
-      if lsdLimit:
-         output.append('  - LSD: {:.2f}'.format(lsdLimit))
-         if lsdLimit >= .98 * TP:
+      limits['lsd'] = round(computeLSDLimit(instructions, uArchConfig), 2)
+      if limits['lsd']:
+         output.append('  - LSD: {:.2f}'.format(limits['lsd']))
+         if limits['lsd'] >= .98 * TP:
             bottlenecks.append('LSD')
 
-   issueLimit = round(computeIssueLimit(instructions, uArchConfig), 2)
-   if issueLimit:
-      output.append('  - Issue: {:.2f}'.format(issueLimit))
-      if issueLimit >= .98 * TP:
+   limits['issue'] = round(computeIssueLimit(instructions, uArchConfig), 2)
+   if limits['issue']:
+      output.append('  - Issue: {:.2f}'.format(limits['issue']))
+      if limits['issue'] >= .98 * TP:
          bottlenecks.append('Issue')
 
    # Port Usage
-   portUsageLimit = round(computePortUsageLimit(instructions, instrInstancesForInstr), 2)
-   if portUsageLimit:
-      output.append('  - Ports: {:.2f}'.format(portUsageLimit))
-      if portUsageLimit >= .98 * TP:
+   limits['ports'] = round(computePortUsageLimit(instructions, instrInstancesForInstr), 2)
+   if limits['ports']:
+      output.append('  - Ports: {:.2f}'.format(limits['ports']))
+      if limits['ports'] >= .98 * TP:
          bottlenecks.append('Ports')
       else:
          portUsageC = Counter(uop.actualPort for uop in allUnfusedUops if uop.actualPort)
@@ -1618,7 +1619,13 @@ def printBottlenecks(TP, instructions, instrInstancesForInstr, disas, alignmentO
       if depLimit >= .98 * TP:
          bottlenecks.append('Dependencies')
 
-   print('Bottleneck' + ('s' if len(bottlenecks) > 1 else '') + ': ' + (', '.join(sorted(bottlenecks)) if bottlenecks else 'unknown'))
+   return sorted(bottlenecks), output, limits
+
+
+def printBottlenecks(TP, instructions, instrInstancesForInstr, disas, alignmentOffset, loop, depLimit, uArchConfig: MicroArchConfig, nRounds):
+   bottlenecks, output, _ = getBottlenecks(TP, instructions, instrInstancesForInstr, disas, alignmentOffset, loop, depLimit, uArchConfig, nRounds)
+
+   print('Bottleneck' + ('s' if len(bottlenecks) > 1 else '') + ': ' + (', '.join(bottlenecks) if bottlenecks else 'unknown'))
    if output:
       print('')
       print('The following throughputs could be achieved if the given property were the only bottleneck:')
@@ -1795,7 +1802,7 @@ def generateHTMLGraph(filename, instructions, instrInstances: List[InstrInstance
    writeHtmlFile(filename, 'Graph', head, body, includeDOCTYPE=False) # if DOCTYPE is included, scaling doesn't work properly
 
 
-def generateJSONOutput(filename, instructions: List[Instr], frontEnd: FrontEnd, uArchConfig: MicroArchConfig, maxCycle):
+def generateJSONOutput(filename, instructions: List[Instr], frontEnd: FrontEnd, uArchConfig: MicroArchConfig, maxCycle, summary, invocation):
    parameters = {
       'uArchName': uArchConfig.name,
       'IQWidth': uArchConfig.IQWidth,
@@ -1887,7 +1894,15 @@ def generateJSONOutput(filename, instructions: List[Instr], frontEnd: FrontEnd, 
                   cycles[uop.executed].setdefault('executed', []).append(unfusedUopDict)
 
    import json
-   jsonStr = json.dumps({'parameters': parameters, 'instructions': instrList, 'cycles': cycles}, sort_keys=True)
+   jsonStr = json.dumps({'schema_version': 'uica-result-v1',
+                         'engine': 'python',
+                         'engine_version': 'uiCA-python',
+                         'uica_commit': os.environ.get('UICA_COMMIT', 'unknown'),
+                         'invocation': invocation,
+                         'summary': summary,
+                         'parameters': parameters,
+                         'instructions': instrList,
+                         'cycles': cycles}, sort_keys=True)
 
    with open(filename, 'w') as f:
       f.write(jsonStr)
@@ -1954,19 +1969,22 @@ def runSimulation(disas, uArchConfig: MicroArchConfig, alignmentOffset, initPoli
    else:
       TP = round((uopsForRelRound[-1][lastApplicableInstr][-1].retired - uopsForRelRound[0][lastApplicableInstr][-1].retired) / (len(uopsForRelRound)-1), 2)
 
-   if printDetails or (depGraphFile is not None):
+   maxCycleRatio = None
+   relevantInstrInstancesForInstr = None
+   if printDetails or (depGraphFile is not None) or (jsonFile is not None):
       nodesForInstr, edgesForNode = generateLatencyGraph(instructions, uArchConfig, initPolicy)
       maxCycleRatio, edgesOnMaxCycle, comp = computeMaximumLatencyForGraph(instructions, nodesForInstr, edgesForNode)
 
-   if printDetails:
-      print('Throughput (in cycles per iteration): {:.2f}'.format(TP))
-
+   if printDetails or (jsonFile is not None):
       relevantInstrInstances = []
       relevantInstrInstancesForInstr = {instr: [] for instr in instructions}
       for instrI in frontEnd.allGeneratedInstrInstances:
          if firstRelevantRound <= instrI.rnd <= lastRelevantRound:
             relevantInstrInstances.append(instrI)
             relevantInstrInstancesForInstr[instrI.instr].append(instrI)
+
+   if printDetails:
+      print('Throughput (in cycles per iteration): {:.2f}'.format(TP))
 
       tableLineData = []
       for instr in instructions:
@@ -2003,7 +2021,23 @@ def runSimulation(disas, uArchConfig: MicroArchConfig, alignmentOffset, initPoli
       generateGraphvizOutputForLatencyGraph(instructions, nodesForInstr, edgesForNode, edgesOnMaxCycle, comp, depGraphFile)
 
    if jsonFile is not None:
-      generateJSONOutput(jsonFile, instructions, frontEnd, uArchConfig, clock-1)
+      bottlenecks, _, limits = getBottlenecks(TP, instructions, relevantInstrInstancesForInstr, disas, alignmentOffset, (not frontEnd.unroll), maxCycleRatio,
+                                              uArchConfig, lastRelevantRound - firstRelevantRound + 1)
+      generateJSONOutput(jsonFile, instructions, frontEnd, uArchConfig, clock-1,
+                         {'throughput_cycles_per_iteration': TP,
+                          'iterations_simulated': len(uopsForRound),
+                          'cycles_simulated': clock,
+                          'mode': 'unroll' if frontEnd.unroll else 'loop',
+                          'bottlenecks_predicted': bottlenecks,
+                          'limits': limits},
+                         {'arch': uArchConfig.name,
+                          'alignmentOffset': alignmentOffset,
+                          'initPolicy': initPolicy,
+                          'noMicroFusion': noMicroFusion,
+                          'noMacroFusion': noMacroFusion,
+                          'simpleFrontEnd': simpleFrontEnd,
+                          'minIterations': minIterations,
+                          'minCycles': minCycles})
 
    return TP
 

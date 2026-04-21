@@ -1,0 +1,13 @@
+id = "curated/add_loop_001"
+description = "Tight add loop sentinel case"
+tags = ["curated", "loop", "alu"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

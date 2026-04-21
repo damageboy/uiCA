@@ -51,7 +51,7 @@ python3 verification/tools/capture.py --help
 
 ## Verify goldens
 
-Verify CLI currently scaffold placeholder. `--help` works. Non-help invocation prints placeholder message and exits non-zero until full implementation task lands.
+Verify CLI currently scaffold-level: it validates case/profile resolution and manifest presence. `--help` works. Non-help invocation exits zero when manifests resolve, but full golden comparison is not implemented yet.
 
 Planned quick-profile verify:
 

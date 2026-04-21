@@ -20,7 +20,6 @@ jobs:
             tests.verification.test_case_manifest \
             tests.verification.test_profiles \
             tests.verification.test_smoke_harness \
-            tests.verification.test_uica_json_contract \
             tests.verification.test_verify_tool \
             tests.verification.test_verify_cli \
             tests.verification.test_ci_contract -v

@@ -69,6 +69,7 @@ The following parameters are optional. Parameter names may be abbreviated if the
 | `-depGraph <filename.x>` | Output the dependency graph; the format is determined by the filename extension (e.g., svg, png, dot, etc.)  |
 | `-alignmentOffset`       | Alignment offset (relative to a 64-Byte cache line). The option `all` provides an overview of the throughputs for all possible alignment offsets. `[Default: 0]` |
 | `-TPonly`                | Output only the throughput prediction. |
+| `-json <filename.json>`  | Generate JSON output containing engine/invocation metadata, simulation parameters, instructions, cycles, and rich v1 summary metadata. |
 | `-minIterations <n>`     | Simulate at least n iterations of the code. `[Default: 10]`. |
 | `-minCycles <n>`         | Simulate at least n cycles. `[Default: 500]`. |
 | `-simpleFrontEnd`        | Simulate a simple front end that is only limited by the issue width. |

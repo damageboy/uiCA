@@ -55,6 +55,17 @@ An online version of uiCA is available at [uiCA.uops.info](https://uiCA.uops.inf
     as test.asm -o test.o
     ./uiCA.py test.o -arch SKL
 
+## Verification Suite
+
+Verification harness docs live in [`verification/README.md`](verification/README.md).
+
+Quick entry points:
+
+    python3 verification/tools/capture.py --help
+    python3 verification/tools/verify.py --help
+
+`capture.py` and `verify.py` currently scaffold placeholders; verification guide documents planned `--profile quick` usage and current limitations.
+
 ## Command-Line Options
 
 The following parameters are optional. Parameter names may be abbreviated if the abbreviation is unique (e.g., `-ar` may be used instead of `-arch`).

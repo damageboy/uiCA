@@ -2,6 +2,12 @@ import tomllib
 from pathlib import Path
 
 
+def load_profile(name: str) -> dict:
+    base = Path(__file__).resolve().parents[1] / "profiles"
+    with open(base / f"{name}.toml", "rb") as f:
+        return tomllib.load(f)
+
+
 def load_case_manifest(path: str) -> dict:
     with open(path, "rb") as f:
         data = tomllib.load(f)

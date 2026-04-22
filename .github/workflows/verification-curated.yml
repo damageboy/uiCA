@@ -1,0 +1,55 @@
+name: verification-curated
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "Verification profile to run"
+        required: true
+        default: "curated12"
+        type: choice
+        options:
+          - curated12
+          - curated24
+  schedule:
+    - cron: "0 4 * * 0"
+
+jobs:
+  verification-curated:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      PROFILE: ${{ github.event.inputs.profile || 'curated12' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install runtime prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential wget
+
+      - name: Build uiCA runtime artifacts
+        run: |
+          bash ./setup.sh
+
+      - name: Capture and verify selected profile
+        run: |
+          set -euo pipefail
+          TMP_GOLDEN_DIR=$(mktemp -d)
+          GOLDEN_TAG="ci-${GITHUB_SHA::8}"
+
+          python3 verification/tools/capture.py \
+            --profile "$PROFILE" \
+            --engine python \
+            --golden-root "$TMP_GOLDEN_DIR" \
+            --golden-tag "$GOLDEN_TAG"
+
+          python3 verification/tools/verify.py \
+            --profile "$PROFILE" \
+            --engine python \
+            --execute \
+            --golden-root "$TMP_GOLDEN_DIR" \
+            --golden-tag "$GOLDEN_TAG"

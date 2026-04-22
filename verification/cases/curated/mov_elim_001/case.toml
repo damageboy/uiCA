@@ -1,0 +1,13 @@
+id = "curated/mov_elim_001"
+description = "Move-elimination friendly chain"
+tags = ["curated", "moves", "move-elim"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

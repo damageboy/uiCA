@@ -1,0 +1,28 @@
+name = "curated24"
+cases = [
+  "curated/add_loop_001",
+  "curated/fusion_jcc_001",
+  "curated/alu_dep_001",
+  "curated/flag_chain_001",
+  "curated/load_store_mix_001",
+  "curated/store_stream_001",
+  "curated/div_mul_001",
+  "curated/shift_rotate_001",
+  "curated/vector128_001",
+  "curated/vector256_001",
+  "curated/cmov_setcc_001",
+  "curated/fence_mix_001",
+  "curated/cmp_jcc_001",
+  "curated/test_jcc_001",
+  "curated/lea_chain_001",
+  "curated/mov_elim_001",
+  "curated/partial_reg_001",
+  "curated/high8_001",
+  "curated/stack_push_pop_001",
+  "curated/pointer_chase_001",
+  "curated/logic_mix_001",
+  "curated/imul_dep_001",
+  "curated/mem_indexed_001",
+  "curated/nop_decode_001",
+]
+arches = ["HSW", "SKL", "ICL"]

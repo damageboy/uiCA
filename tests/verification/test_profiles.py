@@ -16,3 +16,10 @@ class TestProfiles(unittest.TestCase):
         self.assertEqual(profile["name"], "curated12")
         self.assertEqual(len(profile["cases"]), 12)
         self.assertIn("curated/vector256_001", profile["cases"])
+
+    def test_load_curated24_profile(self):
+        profile = load_profile("curated24")
+
+        self.assertEqual(profile["name"], "curated24")
+        self.assertEqual(len(profile["cases"]), 24)
+        self.assertIn("curated/high8_001", profile["cases"])

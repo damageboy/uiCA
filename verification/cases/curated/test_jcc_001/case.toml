@@ -1,0 +1,13 @@
+id = "curated/test_jcc_001"
+description = "TEST with conditional branch"
+tags = ["curated", "branch", "test-jcc"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

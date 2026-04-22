@@ -1,0 +1,13 @@
+id = "curated/imul_dep_001"
+description = "Dependent IMUL chain"
+tags = ["curated", "mul", "dependencies"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

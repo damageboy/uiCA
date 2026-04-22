@@ -1,0 +1,13 @@
+id = "curated/logic_mix_001"
+description = "AND/OR/XOR logic mix"
+tags = ["curated", "alu", "logic"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

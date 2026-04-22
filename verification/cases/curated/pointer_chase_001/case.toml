@@ -1,0 +1,13 @@
+id = "curated/pointer_chase_001"
+description = "Simple pointer-chasing load chain"
+tags = ["curated", "memory", "pointer-chase"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

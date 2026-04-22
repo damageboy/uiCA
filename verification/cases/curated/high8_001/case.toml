@@ -1,0 +1,13 @@
+id = "curated/high8_001"
+description = "High-8 register dependency case"
+tags = ["curated", "registers", "high8"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

@@ -51,6 +51,14 @@ Contains 12 curated sentinel cases covering ALU deps, flags, load/store, divider
 
 Matrix size: `12 cases x 3 arches = 36 results`.
 
+### `curated24`
+
+Profile: `verification/profiles/curated24.toml`
+
+Contains the `curated12` set plus 12 additional curated cases for branch forms, LEA/address-generation, move-elimination style chains, partial/high8 register behavior, stack push/pop, pointer-chasing, logic mix, indexed memory addressing, and NOP-heavy decode pattern.
+
+Matrix size: `24 cases x 3 arches = 72 results`.
+
 ## 4) Capture flow
 
 Capture writes canonical goldens.

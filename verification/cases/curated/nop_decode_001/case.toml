@@ -1,0 +1,13 @@
+id = "curated/nop_decode_001"
+description = "NOP-heavy front-end pattern"
+tags = ["curated", "frontend", "nop"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

@@ -29,18 +29,16 @@ python3 uiCA.py /tmp/uica-verification/add_loop_001/snippet.o -arch SKL -json /t
 
 ## Capture goldens
 
-Capture CLI currently scaffold placeholder. `--help` works. Non-help invocation prints placeholder message and exits non-zero until full implementation task lands.
-
-Planned command shape:
+Capture full quick profile:
 
 ```bash
 python3 verification/tools/capture.py --profile quick --engine python
 ```
 
-Planned focused form:
+Capture one case for one arch into custom tag/root:
 
 ```bash
-python3 verification/tools/capture.py --case curated/add_loop_001 --arch SKL --engine python
+python3 verification/tools/capture.py --case curated/add_loop_001 --arch SKL --engine python --golden-tag local-dev --golden-root verification/golden
 ```
 
 CLI help:
@@ -51,24 +49,28 @@ python3 verification/tools/capture.py --help
 
 ## Verify goldens
 
-Verify CLI currently scaffold-level: it validates case/profile resolution and manifest presence. `--help` works. Non-help invocation exits zero when manifests resolve, but full golden comparison is not implemented yet.
-
-Planned quick-profile verify:
+By default, verify checks profile/case manifest resolution only (fast sanity check):
 
 ```bash
 python3 verification/tools/verify.py --profile quick --engine python
 ```
 
-Planned focused verify for one case and one arch:
+Run full execute+compare against captured goldens:
 
 ```bash
-python3 verification/tools/verify.py --case curated/add_loop_001 --arch SKL --engine python
+python3 verification/tools/verify.py --profile quick --engine python --execute
 ```
 
-Planned diff report flow during focused debug:
+Focused compare for one case and one arch:
 
 ```bash
-python3 verification/tools/verify.py --case curated/add_loop_001 --arch SKL --engine python --dump-diff /tmp/uica-verification/add_loop_001.diff
+python3 verification/tools/verify.py --case curated/add_loop_001 --arch SKL --engine python --execute --golden-tag local-dev
+```
+
+Write mismatch report during focused debug:
+
+```bash
+python3 verification/tools/verify.py --case curated/add_loop_001 --arch SKL --engine python --execute --dump-diff /tmp/uica-verification/add_loop_001.diff
 ```
 
 CLI help:

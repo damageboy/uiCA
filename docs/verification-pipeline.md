@@ -24,9 +24,9 @@ Core data:
 | Mode | Command shape | What it does | Typical use |
 |---|---|---|---|
 | Harness tests | `python3 -m unittest ...` | Validates pipeline code itself | Dev confidence after edits |
-| Verify sanity | `verify.py --profile quick --engine python` | Resolves profile/cases/manifests only (fast preflight) | Quick CI guard |
-| Full execute+compare | `verify.py --profile quick --engine <engine> --execute ...` | Runs engine and compares canonical JSON vs golden | Real parity gate |
-| Focused execute+compare | `verify.py --case ... --arch ... --execute ...` | Single case/arch parity check | Fast mismatch debugging |
+| Verify sanity | `verify.py --profile quick --engine python --resolve-only` | Resolves profile/cases/manifests only (fast preflight) | Quick CI guard |
+| Full execute+compare | `verify.py --profile quick --engine <engine> ...` | Runs engine and compares canonical JSON vs golden (parallel by default) | Real parity gate |
+| Focused execute+compare | `verify.py --case ... --arch ...` | Single case/arch parity check | Fast mismatch debugging |
 
 ## 3) Current corpus profiles
 
@@ -89,16 +89,15 @@ python3 verification/tools/capture.py \
 Sanity only (no engine run):
 
 ```bash
-python3 verification/tools/verify.py --profile quick --engine python
+python3 verification/tools/verify.py --profile quick --engine python --resolve-only
 ```
 
-Full execute+compare:
+Full execute+compare (default mode):
 
 ```bash
 python3 verification/tools/verify.py \
   --profile quick \
   --engine python \
-  --execute \
   --golden-root verification/golden \
   --golden-tag py-baseline-001
 ```
@@ -110,7 +109,6 @@ python3 verification/tools/verify.py \
   --case curated/add_loop_001 \
   --arch SKL \
   --engine python \
-  --execute \
   --golden-root verification/golden \
   --golden-tag py-baseline-001 \
   --dump-diff /tmp/uica.diff
@@ -128,7 +126,7 @@ Exit codes:
 2. Freeze that baseline for Rust comparison.
 
 ### During Rust development
-1. Run Rust engine in verify execute mode (`--engine rust --execute`) against Python baseline tag.
+1. Run Rust engine in verify mode (`--engine rust`) against Python baseline tag.
 2. Fix mismatches until clean pass.
 3. Use focused case+arch mode for rapid debugging.
 
@@ -137,6 +135,8 @@ Exit codes:
 `canonicalize.py` normalizes JSON so ordering noise does not cause false diffs.
 
 Comparator reports first mismatch path (via `first_mismatch_path`) and optional diff report file when `--dump-diff` used.
+
+Both capture and execute-verify support multiprocessing via `--jobs` (default: CPU count).
 
 ## 8) Suggested baseline policy
 

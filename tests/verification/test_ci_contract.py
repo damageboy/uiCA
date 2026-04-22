@@ -9,6 +9,6 @@ class TestCiContract(unittest.TestCase):
 
         self.assertTrue(workflow.exists(), f"missing workflow: {workflow}")
         self.assertIn(
-            "verification/tools/verify.py --profile quick --engine python",
+            "verification/tools/verify.py --profile quick --engine python --resolve-only",
             workflow.read_text(),
         )

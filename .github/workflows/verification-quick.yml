@@ -23,6 +23,6 @@ jobs:
             tests.verification.test_verify_tool \
             tests.verification.test_verify_cli \
             tests.verification.test_ci_contract -v
-      - name: Run quick verification command
+      - name: Run quick verification command (resolve-only)
         run: |
-          python3 verification/tools/verify.py --profile quick --engine python
+          python3 verification/tools/verify.py --profile quick --engine python --resolve-only

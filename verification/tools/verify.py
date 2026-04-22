@@ -1,6 +1,8 @@
 import argparse
+import os
 import sys
 import tempfile
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +21,7 @@ from verification.tools.common import (
 )
 
 
-def first_mismatch_path(left, right, path="$"):
+def first_mismatch_path(left, right, path: str = "$"):
     if type(left) is not type(right):
         return path
 
@@ -91,9 +93,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="optional path for mismatch report output",
     )
     parser.add_argument(
+        "--resolve-only",
+        action="store_true",
+        help="resolve profile/case manifests only; skip engine execution and golden comparison",
+    )
+    parser.add_argument(
         "--execute",
         action="store_true",
-        help="execute engine and compare against captured goldens (default checks case/profile resolution only)",
+        help="deprecated alias kept for compatibility (execute is default unless --resolve-only)",
+    )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=(os.cpu_count() or 1),
+        help="number of worker processes for execute mode",
     )
     return parser
 
@@ -226,6 +239,56 @@ def verify_case_arch(
     return True, None, golden_path, Path("<tmp>")
 
 
+def _verify_task(task: dict[str, Any]) -> dict[str, Any]:
+    ok, mismatch, golden_path, candidate_path = verify_case_arch(
+        case_id=task["case_id"],
+        arch=task["arch"],
+        case_manifest=task["case_manifest"],
+        engine=task["engine"],
+        rust_bin=task["rust_bin"],
+        golden_root=Path(task["golden_root"]),
+        golden_tag=task["golden_tag"],
+    )
+    return {
+        "ok": ok,
+        "mismatch": mismatch,
+        "golden_path": golden_path.as_posix(),
+        "candidate_path": candidate_path.as_posix(),
+        "case_id": task["case_id"],
+        "arch": task["arch"],
+    }
+
+
+def build_verify_tasks(
+    *,
+    case_ids: list[str],
+    manifests: dict[str, dict[str, Any]],
+    cli_arches: list[str] | None,
+    profile_arches: list[str] | None,
+    engine: str,
+    rust_bin: str | None,
+    golden_root: Path,
+    golden_tag: str,
+) -> list[dict[str, Any]]:
+    tasks: list[dict[str, Any]] = []
+    for case_id in case_ids:
+        case_manifest = manifests[case_id]
+        arches = resolve_arches(cli_arches, case_manifest, profile_arches)
+        for arch in arches:
+            tasks.append(
+                {
+                    "case_id": case_id,
+                    "arch": arch,
+                    "case_manifest": case_manifest,
+                    "engine": engine,
+                    "rust_bin": rust_bin,
+                    "golden_root": golden_root.as_posix(),
+                    "golden_tag": golden_tag,
+                }
+            )
+    return tasks
+
+
 def write_diff_report(path: Path, lines: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n")
@@ -250,43 +313,54 @@ def main(argv=None) -> int:
         target = args.profile if args.profile else args.case
         mode = "profile" if args.profile else "case"
 
-        if not args.execute:
+        if args.resolve_only:
             print(f"Verified {mode} {target}: {len(case_ids)} cases resolved")
             return 0
+
+        if args.jobs < 1:
+            raise ValueError("--jobs must be >= 1")
 
         golden_root = Path(args.golden_root)
         golden_tag = resolve_golden_tag(golden_root, args.engine, args.golden_tag)
 
+        tasks = build_verify_tasks(
+            case_ids=case_ids,
+            manifests=manifests,
+            cli_arches=args.arches,
+            profile_arches=profile_arches,
+            engine=args.engine,
+            rust_bin=args.rust_bin,
+            golden_root=golden_root,
+            golden_tag=golden_tag,
+        )
+
+        results: list[dict[str, Any]] = []
+        if args.jobs == 1 or len(tasks) <= 1:
+            for task in tasks:
+                results.append(_verify_task(task))
+        else:
+            with ProcessPoolExecutor(max_workers=args.jobs) as pool:
+                for result in pool.map(_verify_task, tasks):
+                    results.append(result)
+
         diff_lines: list[str] = []
         passed = 0
         failed = 0
-        for case_id in case_ids:
-            case_manifest = manifests[case_id]
-            arches = resolve_arches(args.arches, case_manifest, profile_arches)
-            for arch in arches:
-                ok, mismatch, golden_path, candidate_path = verify_case_arch(
-                    case_id=case_id,
-                    arch=arch,
-                    case_manifest=case_manifest,
-                    engine=args.engine,
-                    rust_bin=args.rust_bin,
-                    golden_root=golden_root,
-                    golden_tag=golden_tag,
-                )
-                if ok:
-                    passed += 1
-                    continue
+        for result in results:
+            if result["ok"]:
+                passed += 1
+                continue
 
-                failed += 1
-                diff_lines.extend(
-                    collect_diff_lines(
-                        case_id=case_id,
-                        arch=arch,
-                        mismatch_path=mismatch or "<unknown>",
-                        golden_path=golden_path,
-                        candidate_path=candidate_path,
-                    )
+            failed += 1
+            diff_lines.extend(
+                collect_diff_lines(
+                    case_id=result["case_id"],
+                    arch=result["arch"],
+                    mismatch_path=result["mismatch"] or "<unknown>",
+                    golden_path=Path(result["golden_path"]),
+                    candidate_path=Path(result["candidate_path"]),
                 )
+            )
 
         if args.dump_diff and diff_lines:
             write_diff_report(Path(args.dump_diff), diff_lines)

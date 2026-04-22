@@ -1,5 +1,8 @@
 # Verification suite
 
+Pipeline overview (modes, Rust-parity usage, baseline policy):
+- [`docs/verification-pipeline.md`](../docs/verification-pipeline.md)
+
 ## Case structure
 
 Each verification case lives under `verification/cases/<group>/<case_name>/`.

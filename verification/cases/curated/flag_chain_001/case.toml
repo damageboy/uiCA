@@ -1,0 +1,13 @@
+id = "curated/flag_chain_001"
+description = "Flag-heavy dependency chain"
+tags = ["curated", "flags", "dependencies"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

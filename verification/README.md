@@ -7,10 +7,16 @@ Pipeline overview (modes, Rust-parity usage, baseline policy):
 
 Each verification case lives under `verification/cases/<group>/<case_name>/`.
 
-Current curated examples:
+Current curated profile sizes:
+
+- `quick`: 2 sentinel cases
+- `curated12`: 12 curated sentinel cases
+
+Example case directories:
 
 - `verification/cases/curated/add_loop_001/`
 - `verification/cases/curated/fusion_jcc_001/`
+- `verification/cases/curated/vector256_001/`
 
 Each case directory contains:
 
@@ -36,6 +42,12 @@ Capture full quick profile:
 
 ```bash
 python3 verification/tools/capture.py --profile quick --engine python
+```
+
+Capture expanded curated profile:
+
+```bash
+python3 verification/tools/capture.py --profile curated12 --engine python
 ```
 
 Capture one case for one arch into custom tag/root:

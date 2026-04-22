@@ -1,0 +1,13 @@
+id = "curated/fence_mix_001"
+description = "Fence and memory ordering mix"
+tags = ["curated", "fence", "memory"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

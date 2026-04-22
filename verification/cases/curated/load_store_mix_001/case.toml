@@ -1,0 +1,13 @@
+id = "curated/load_store_mix_001"
+description = "Load-use-store mixed memory ops"
+tags = ["curated", "memory", "load-store"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

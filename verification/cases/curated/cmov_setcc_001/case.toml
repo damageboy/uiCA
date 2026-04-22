@@ -1,0 +1,13 @@
+id = "curated/cmov_setcc_001"
+description = "Compare with cmov and setcc"
+tags = ["curated", "branch", "cmov"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

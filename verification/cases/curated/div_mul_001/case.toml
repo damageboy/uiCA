@@ -1,0 +1,13 @@
+id = "curated/div_mul_001"
+description = "Divider and multiplier pressure"
+tags = ["curated", "divider", "mul"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

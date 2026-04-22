@@ -1,0 +1,13 @@
+id = "curated/store_stream_001"
+description = "Store streaming pattern"
+tags = ["curated", "memory", "store"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

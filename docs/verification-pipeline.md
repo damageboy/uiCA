@@ -28,7 +28,9 @@ Core data:
 | Full execute+compare | `verify.py --profile quick --engine <engine> --execute ...` | Runs engine and compares canonical JSON vs golden | Real parity gate |
 | Focused execute+compare | `verify.py --case ... --arch ... --execute ...` | Single case/arch parity check | Fast mismatch debugging |
 
-## 3) Current quick corpus
+## 3) Current corpus profiles
+
+### `quick`
 
 Profile: `verification/profiles/quick.toml`
 
@@ -40,6 +42,14 @@ Arches (from case manifests):
 - `HSW`, `SKL`, `ICL`
 
 Quick matrix size: `2 cases x 3 arches = 6 results`.
+
+### `curated12`
+
+Profile: `verification/profiles/curated12.toml`
+
+Contains 12 curated sentinel cases covering ALU deps, flags, load/store, divider, shifts, SIMD (128/256), cmov/setcc, and fence mix.
+
+Matrix size: `12 cases x 3 arches = 36 results`.
 
 ## 4) Capture flow
 

@@ -1,0 +1,13 @@
+id = "curated/alu_dep_001"
+description = "Integer dependency chain"
+tags = ["curated", "alu", "dependencies"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

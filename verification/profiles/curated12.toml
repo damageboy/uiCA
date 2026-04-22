@@ -1,0 +1,16 @@
+name = "curated12"
+cases = [
+  "curated/add_loop_001",
+  "curated/fusion_jcc_001",
+  "curated/alu_dep_001",
+  "curated/flag_chain_001",
+  "curated/load_store_mix_001",
+  "curated/store_stream_001",
+  "curated/div_mul_001",
+  "curated/shift_rotate_001",
+  "curated/vector128_001",
+  "curated/vector256_001",
+  "curated/cmov_setcc_001",
+  "curated/fence_mix_001",
+]
+arches = ["HSW", "SKL", "ICL"]

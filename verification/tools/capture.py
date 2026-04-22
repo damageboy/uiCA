@@ -1,8 +1,11 @@
 import argparse
 import json
+import os
 import sys
 import tempfile
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
+from typing import Any
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -71,6 +74,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--golden-tag",
         help="golden tag directory below engine root (default: current git short SHA)",
     )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=(os.cpu_count() or 1),
+        help="number of worker processes",
+    )
     return parser
 
 
@@ -122,7 +131,7 @@ def capture_case_arch(
         raise NotImplementedError("rust engine capture not implemented yet")
 
     if rust_bin is not None:
-        _ = rust_bin  # keep arg validated by parser for future use
+        _ = rust_bin  # reserved for future Rust capture
 
     with tempfile.TemporaryDirectory() as td:
         work = Path(td)
@@ -142,6 +151,53 @@ def capture_case_arch(
     return out_path
 
 
+def _capture_task(task: dict[str, Any]) -> str:
+    out_path = capture_case_arch(
+        case_id=task["case_id"],
+        arch=task["arch"],
+        case_manifest=task["case_manifest"],
+        engine=task["engine"],
+        rust_bin=task["rust_bin"],
+        golden_root=Path(task["golden_root"]),
+        golden_tag=task["golden_tag"],
+    )
+    return out_path.as_posix()
+
+
+def build_capture_tasks(
+    *,
+    case_ids: list[str],
+    profile_arches: list[str] | None,
+    cli_arches: list[str] | None,
+    engine: str,
+    rust_bin: str | None,
+    golden_root: Path,
+    golden_tag: str,
+) -> list[dict[str, Any]]:
+    tasks: list[dict[str, Any]] = []
+
+    for case_id in case_ids:
+        manifest_path = case_manifest_path(case_id)
+        if not manifest_path.exists():
+            raise FileNotFoundError(f"missing case manifest: {manifest_path}")
+        case_manifest = load_case_manifest(manifest_path)
+        arches = resolve_arches(cli_arches, case_manifest, profile_arches)
+        for arch in arches:
+            tasks.append(
+                {
+                    "case_id": case_id,
+                    "arch": arch,
+                    "case_manifest": case_manifest,
+                    "engine": engine,
+                    "rust_bin": rust_bin,
+                    "golden_root": golden_root.as_posix(),
+                    "golden_tag": golden_tag,
+                }
+            )
+
+    return tasks
+
+
 def main(argv=None) -> int:
     parser = build_parser()
 
@@ -152,31 +208,32 @@ def main(argv=None) -> int:
         golden_root = Path(args.golden_root)
         golden_tag = args.golden_tag or get_git_commit_short()
 
-        captured = 0
+        if args.jobs < 1:
+            raise ValueError("--jobs must be >= 1")
+
+        tasks = build_capture_tasks(
+            case_ids=case_ids,
+            profile_arches=profile_arches,
+            cli_arches=args.arches,
+            engine=args.engine,
+            rust_bin=args.rust_bin,
+            golden_root=golden_root,
+            golden_tag=golden_tag,
+        )
+
         outputs: list[Path] = []
-        for case_id in case_ids:
-            manifest_path = case_manifest_path(case_id)
-            if not manifest_path.exists():
-                raise FileNotFoundError(f"missing case manifest: {manifest_path}")
-            case_manifest = load_case_manifest(manifest_path)
-            arches = resolve_arches(args.arches, case_manifest, profile_arches)
-            for arch in arches:
-                out_path = capture_case_arch(
-                    case_id=case_id,
-                    arch=arch,
-                    case_manifest=case_manifest,
-                    engine=args.engine,
-                    rust_bin=args.rust_bin,
-                    golden_root=golden_root,
-                    golden_tag=golden_tag,
-                )
-                captured += 1
-                outputs.append(out_path)
+        if args.jobs == 1 or len(tasks) <= 1:
+            for task in tasks:
+                outputs.append(Path(_capture_task(task)))
+        else:
+            with ProcessPoolExecutor(max_workers=args.jobs) as pool:
+                for out_path in pool.map(_capture_task, tasks):
+                    outputs.append(Path(out_path))
 
         target = args.profile if args.profile else args.case
         mode = "profile" if args.profile else "case"
         print(
-            f"Captured {captured} golden files for {mode} {target} under "
+            f"Captured {len(outputs)} golden files for {mode} {target} under "
             f"{(golden_root / args.engine / golden_tag).as_posix()}"
         )
         for path in outputs:

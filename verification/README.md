@@ -71,28 +71,34 @@ python3 verification/tools/capture.py --help
 
 ## Verify goldens
 
-By default, verify checks profile/case manifest resolution only (fast sanity check):
+By default, verify executes engine runs and compares against captured goldens:
 
 ```bash
-python3 verification/tools/verify.py --profile quick --engine python
+python3 verification/tools/verify.py --profile quick --engine python --golden-tag local-dev
 ```
 
-Run full execute+compare against captured goldens:
+Fast sanity check (manifests only, no engine execution):
 
 ```bash
-python3 verification/tools/verify.py --profile quick --engine python --execute
+python3 verification/tools/verify.py --profile quick --engine python --resolve-only
 ```
 
 Focused compare for one case and one arch:
 
 ```bash
-python3 verification/tools/verify.py --case curated/add_loop_001 --arch SKL --engine python --execute --golden-tag local-dev
+python3 verification/tools/verify.py --case curated/add_loop_001 --arch SKL --engine python --golden-tag local-dev
 ```
 
 Write mismatch report during focused debug:
 
 ```bash
-python3 verification/tools/verify.py --case curated/add_loop_001 --arch SKL --engine python --execute --dump-diff /tmp/uica-verification/add_loop_001.diff
+python3 verification/tools/verify.py --case curated/add_loop_001 --arch SKL --engine python --golden-tag local-dev --dump-diff /tmp/uica-verification/add_loop_001.diff
+```
+
+Control parallelism (both capture and verify):
+
+```bash
+python3 verification/tools/verify.py --profile curated24 --engine python --golden-tag local-dev --jobs 8
 ```
 
 CLI help:

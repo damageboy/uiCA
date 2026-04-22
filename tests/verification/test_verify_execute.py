@@ -17,7 +17,7 @@ class TestVerifyExecute(unittest.TestCase):
                 return_value=(True, None, Path("g"), Path("c")),
             ) as mocked_verify,
         ):
-            rc = main(["--profile", "quick", "--engine", "python", "--execute"])
+            rc = main(["--profile", "quick", "--engine", "python", "--jobs", "1"])
 
         self.assertEqual(rc, 0)
         # 2 cases * 3 arches from case manifests
@@ -55,7 +55,8 @@ class TestVerifyExecute(unittest.TestCase):
                         "quick",
                         "--engine",
                         "python",
-                        "--execute",
+                        "--jobs",
+                        "1",
                         "--dump-diff",
                         str(diff_path),
                     ]

@@ -65,7 +65,7 @@ Quick entry points:
     python3 verification/tools/capture.py --help
     python3 verification/tools/verify.py --help
 
-`capture.py` supports golden capture runs. `verify.py` supports fast manifest checks by default and full golden comparison with `--execute`; see verification guide for command matrix.
+`capture.py` supports golden capture runs. `verify.py` runs execute+compare by default (with parallel workers), and supports fast manifest-only checks with `--resolve-only`; see verification guide for command matrix.
 
 ## Command-Line Options
 

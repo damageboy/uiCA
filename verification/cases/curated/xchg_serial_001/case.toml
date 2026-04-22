@@ -1,0 +1,13 @@
+id = "curated/xchg_serial_001"
+description = "XCHG dependency/serialization shape"
+tags = ["curated", "registers", "xchg"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

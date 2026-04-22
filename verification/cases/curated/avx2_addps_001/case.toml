@@ -1,0 +1,13 @@
+id = "curated/avx2_addps_001"
+description = "AVX2 packed FP add loop"
+tags = ["curated", "simd", "avx2", "fp"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

@@ -1,0 +1,13 @@
+id = "curated/avx512_mask_001"
+description = "AVX512 opmask operations"
+tags = ["curated", "simd", "avx512", "mask"]
+
+[run]
+arches = ["ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

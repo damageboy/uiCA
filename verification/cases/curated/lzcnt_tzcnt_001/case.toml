@@ -1,0 +1,13 @@
+id = "curated/lzcnt_tzcnt_001"
+description = "Leading/trailing zero count"
+tags = ["curated", "bitops", "count"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

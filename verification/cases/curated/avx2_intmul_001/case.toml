@@ -1,0 +1,13 @@
+id = "curated/avx2_intmul_001"
+description = "AVX2 integer multiply mix"
+tags = ["curated", "simd", "avx2", "integer"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

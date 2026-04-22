@@ -1,0 +1,13 @@
+id = "curated/mulx_like_001"
+description = "BMI2 MULX-like throughput sample"
+tags = ["curated", "mul", "bmi2"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

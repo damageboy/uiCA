@@ -12,6 +12,7 @@ Current curated profile sizes:
 - `quick`: 2 sentinel cases
 - `curated12`: 12 curated sentinel cases
 - `curated24`: 24 curated sentinel cases
+- `curated48`: 48 curated sentinel cases (includes AVX2 + AVX512 sampling)
 
 Example case directories:
 
@@ -57,6 +58,12 @@ Capture larger curated batch:
 python3 verification/tools/capture.py --profile curated24 --engine python
 ```
 
+Capture full curated48 batch:
+
+```bash
+python3 verification/tools/capture.py --profile curated48 --engine python --jobs 8
+```
+
 Capture one case for one arch into custom tag/root:
 
 ```bash
@@ -99,6 +106,7 @@ Control parallelism (both capture and verify):
 
 ```bash
 python3 verification/tools/verify.py --profile curated24 --engine python --golden-tag local-dev --jobs 8
+python3 verification/tools/verify.py --profile curated48 --engine python --golden-tag local-dev --jobs 8
 ```
 
 CLI help:

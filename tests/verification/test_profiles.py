@@ -23,3 +23,11 @@ class TestProfiles(unittest.TestCase):
         self.assertEqual(profile["name"], "curated24")
         self.assertEqual(len(profile["cases"]), 24)
         self.assertIn("curated/high8_001", profile["cases"])
+
+    def test_load_curated48_profile(self):
+        profile = load_profile("curated48")
+
+        self.assertEqual(profile["name"], "curated48")
+        self.assertEqual(len(profile["cases"]), 48)
+        self.assertIn("curated/avx2_fma_001", profile["cases"])
+        self.assertIn("curated/avx512_kmovd_001", profile["cases"])

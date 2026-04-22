@@ -1,0 +1,13 @@
+id = "curated/avx512_addps_001"
+description = "AVX512 packed FP add"
+tags = ["curated", "simd", "avx512", "fp"]
+
+[run]
+arches = ["ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

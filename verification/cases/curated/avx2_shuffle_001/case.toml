@@ -1,0 +1,13 @@
+id = "curated/avx2_shuffle_001"
+description = "AVX2 permute/shuffle pattern"
+tags = ["curated", "simd", "avx2", "shuffle"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

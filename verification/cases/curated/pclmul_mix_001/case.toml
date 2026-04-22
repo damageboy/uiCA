@@ -1,0 +1,13 @@
+id = "curated/pclmul_mix_001"
+description = "Carry-less multiply sample"
+tags = ["curated", "crypto", "pclmul"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

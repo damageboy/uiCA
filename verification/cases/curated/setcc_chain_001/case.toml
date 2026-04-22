@@ -1,0 +1,13 @@
+id = "curated/setcc_chain_001"
+description = "Setcc and flag consumption"
+tags = ["curated", "flags", "setcc"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

@@ -58,6 +58,7 @@ An online version of uiCA is available at [uiCA.uops.info](https://uiCA.uops.inf
 ## Verification Suite
 
 Verification harness docs live in [`verification/README.md`](verification/README.md).
+Pipeline overview (capture/verify modes, Rust-parity flow) lives in [`docs/verification-pipeline.md`](docs/verification-pipeline.md).
 
 Quick entry points:
 

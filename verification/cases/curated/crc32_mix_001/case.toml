@@ -1,0 +1,13 @@
+id = "curated/crc32_mix_001"
+description = "CRC32 integer mix"
+tags = ["curated", "crc", "integer"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

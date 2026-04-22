@@ -59,6 +59,14 @@ Contains the `curated12` set plus 12 additional curated cases for branch forms, 
 
 Matrix size: `24 cases x 3 arches = 72 results`.
 
+### `curated48`
+
+Profile: `verification/profiles/curated48.toml`
+
+Contains `curated24` plus 24 additional cases, including explicit AVX2 and AVX512 sampling (`avx2_*`, `avx512_*`) and additional scalar/bitops/crypto/memory patterns.
+
+Matrix size: `48 cases`, currently `134` case/arch results (AVX512 cases constrained to `ICL`).
+
 ## 4) Capture flow
 
 Capture writes canonical goldens.

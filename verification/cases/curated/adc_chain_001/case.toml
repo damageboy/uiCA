@@ -1,0 +1,13 @@
+id = "curated/adc_chain_001"
+description = "Carry-chain arithmetic"
+tags = ["curated", "alu", "adc-sbb"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

@@ -1,0 +1,13 @@
+id = "curated/aesenc_mix_001"
+description = "AES round instruction sample"
+tags = ["curated", "crypto", "aes"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

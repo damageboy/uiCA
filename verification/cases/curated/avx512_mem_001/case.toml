@@ -1,0 +1,13 @@
+id = "curated/avx512_mem_001"
+description = "AVX512 vector memory traffic"
+tags = ["curated", "simd", "avx512", "memory"]
+
+[run]
+arches = ["ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

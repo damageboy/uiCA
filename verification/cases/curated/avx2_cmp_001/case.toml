@@ -1,0 +1,13 @@
+id = "curated/avx2_cmp_001"
+description = "AVX2 compare and blend"
+tags = ["curated", "simd", "avx2", "compare"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

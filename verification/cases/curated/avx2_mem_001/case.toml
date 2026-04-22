@@ -1,0 +1,13 @@
+id = "curated/avx2_mem_001"
+description = "AVX2 load-store with arithmetic"
+tags = ["curated", "simd", "avx2", "memory"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

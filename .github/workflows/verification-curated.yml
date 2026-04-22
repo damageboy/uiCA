@@ -11,6 +11,7 @@ on:
         options:
           - curated12
           - curated24
+          - curated48
   schedule:
     - cron: "0 4 * * 0"
 
@@ -45,11 +46,12 @@ jobs:
             --profile "$PROFILE" \
             --engine python \
             --golden-root "$TMP_GOLDEN_DIR" \
-            --golden-tag "$GOLDEN_TAG"
+            --golden-tag "$GOLDEN_TAG" \
+            --jobs 8
 
           python3 verification/tools/verify.py \
             --profile "$PROFILE" \
             --engine python \
-            --execute \
             --golden-root "$TMP_GOLDEN_DIR" \
-            --golden-tag "$GOLDEN_TAG"
+            --golden-tag "$GOLDEN_TAG" \
+            --jobs 8

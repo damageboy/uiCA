@@ -1,0 +1,13 @@
+id = "curated/popcnt_mix_001"
+description = "Popcnt dependent loop"
+tags = ["curated", "bitops", "popcnt"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

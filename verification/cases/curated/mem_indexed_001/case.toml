@@ -1,0 +1,13 @@
+id = "curated/mem_indexed_001"
+description = "Indexed addressing load+store"
+tags = ["curated", "memory", "indexed-address"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

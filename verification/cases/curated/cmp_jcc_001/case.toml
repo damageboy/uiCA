@@ -1,0 +1,13 @@
+id = "curated/cmp_jcc_001"
+description = "CMP with conditional branch"
+tags = ["curated", "branch", "cmp-jcc"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

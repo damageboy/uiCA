@@ -11,6 +11,7 @@ Current curated profile sizes:
 
 - `quick`: 2 sentinel cases
 - `curated12`: 12 curated sentinel cases
+- `curated24`: 24 curated sentinel cases
 
 Example case directories:
 
@@ -48,6 +49,12 @@ Capture expanded curated profile:
 
 ```bash
 python3 verification/tools/capture.py --profile curated12 --engine python
+```
+
+Capture larger curated batch:
+
+```bash
+python3 verification/tools/capture.py --profile curated24 --engine python
 ```
 
 Capture one case for one arch into custom tag/root:

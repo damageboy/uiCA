@@ -1,0 +1,13 @@
+id = "curated/lea_chain_001"
+description = "Address generation dependency chain"
+tags = ["curated", "agen", "lea"]
+
+[run]
+arches = ["HSW", "SKL", "ICL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

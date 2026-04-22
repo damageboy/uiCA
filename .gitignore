@@ -134,3 +134,6 @@ instrData
 xed
 xed.exe
 
+# Local worktrees
+.worktrees/
+

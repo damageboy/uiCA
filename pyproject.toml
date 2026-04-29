@@ -1,0 +1,22 @@
+[project]
+name = "uica"
+version = "0.1.0"
+description = "uiCA — throughput predictor for x86 basic blocks"
+requires-python = ">=3.14"
+# No PyPI dependencies. The xed.cpython-*.so in the repo root is a pre-built
+# C extension for the local platform. Python finds it automatically when run
+# from the repo directory.
+#
+# Usage:
+#   uv run python uiCA.py test.o -arch SKL -TPonly
+#   uv run python uiCA.py test.o -arch SKL -json out.json
+#
+# To rebuild the xed extension for a different Python version / platform:
+#   git submodule update --init
+#   cd XED-to-XML && ./mfile.py --opt=2 --no-encoder pymodule && cp xed.cpython-*.so ..
+dependencies = [
+    "plotly>=6.7.0",
+]
+
+[tool.uv]
+python-preference = "managed"

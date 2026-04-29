@@ -110,6 +110,44 @@ def assemble_case_snippet(case_id: str, out_dir: Path) -> Path:
     return obj
 
 
+def _append_python_run_config_flags(cmd: list[str], run_config: dict[str, Any]) -> None:
+    """Python uiCA.py uses single-dash camelCase flags (argparse convention)."""
+    if "alignmentOffset" in run_config:
+        cmd.extend(["-alignmentOffset", str(run_config["alignmentOffset"])])
+    if "initPolicy" in run_config:
+        cmd.extend(["-initPolicy", str(run_config["initPolicy"])])
+    if "minIterations" in run_config:
+        cmd.extend(["-minIterations", str(run_config["minIterations"])])
+    if "minCycles" in run_config:
+        cmd.extend(["-minCycles", str(run_config["minCycles"])])
+
+    if run_config.get("noMicroFusion", False):
+        cmd.append("-noMicroFusion")
+    if run_config.get("noMacroFusion", False):
+        cmd.append("-noMacroFusion")
+    if run_config.get("simpleFrontEnd", False):
+        cmd.append("-simpleFrontEnd")
+
+
+def _append_rust_run_config_flags(cmd: list[str], run_config: dict[str, Any]) -> None:
+    """Rust uica-cli uses GNU-style double-dash kebab-case flags (clap)."""
+    if "alignmentOffset" in run_config:
+        cmd.extend(["--alignment-offset", str(run_config["alignmentOffset"])])
+    if "initPolicy" in run_config:
+        cmd.extend(["--init-policy", str(run_config["initPolicy"])])
+    if "minIterations" in run_config:
+        cmd.extend(["--min-iterations", str(run_config["minIterations"])])
+    if "minCycles" in run_config:
+        cmd.extend(["--min-cycles", str(run_config["minCycles"])])
+
+    if run_config.get("noMicroFusion", False):
+        cmd.append("--no-micro-fusion")
+    if run_config.get("noMacroFusion", False):
+        cmd.append("--no-macro-fusion")
+    if run_config.get("simpleFrontEnd", False):
+        cmd.append("--simple-front-end")
+
+
 def run_python_uica(
     obj_path: Path,
     out_json: Path,
@@ -129,25 +167,37 @@ def run_python_uica(
         "-TPonly",
     ]
 
-    if "alignmentOffset" in run_config:
-        cmd.extend(["-alignmentOffset", str(run_config["alignmentOffset"])])
-    if "initPolicy" in run_config:
-        cmd.extend(["-initPolicy", str(run_config["initPolicy"])])
-    if "minIterations" in run_config:
-        cmd.extend(["-minIterations", str(run_config["minIterations"])])
-    if "minCycles" in run_config:
-        cmd.extend(["-minCycles", str(run_config["minCycles"])])
-
-    if run_config.get("noMicroFusion", False):
-        cmd.append("-noMicroFusion")
-    if run_config.get("noMacroFusion", False):
-        cmd.append("-noMacroFusion")
-    if run_config.get("simpleFrontEnd", False):
-        cmd.append("-simpleFrontEnd")
+    _append_python_run_config_flags(cmd, run_config)
 
     env = os.environ.copy()
     env["UICA_COMMIT"] = uica_commit
     _run_command(cmd, "uiCA python engine run", env=env)
+
+
+def run_rust_uica(
+    rust_bin: str | Path,
+    obj_path: Path,
+    out_json: Path,
+    arch: str,
+    run_config: dict[str, Any],
+    *,
+    uica_commit: str,
+) -> None:
+    cmd = [
+        str(rust_bin),
+        str(obj_path),
+        "--arch",
+        arch,
+        "--json",
+        str(out_json),
+        "--tp-only",
+    ]
+
+    _append_rust_run_config_flags(cmd, run_config)
+
+    env = os.environ.copy()
+    env["UICA_COMMIT"] = uica_commit
+    _run_command(cmd, "uiCA rust engine run", env=env)
 
 
 def load_json(path: Path) -> dict:

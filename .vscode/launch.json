@@ -1,0 +1,85 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		// ─── Python: uiCA.py ──────────────────────────────────────────────────
+		{
+			"name": "Python: uiCA add_loop SKL (TPonly)",
+			"type": "debugpy",
+			"request": "launch",
+			"program": "${workspaceFolder}/uiCA.py",
+			"python": "${workspaceFolder}/.venv/bin/python3",
+			"args": ["tests/fixtures/add_loop_001.o", "-arch", "SKL", "-TPonly"],
+			"cwd": "${workspaceFolder}",
+			"console": "integratedTerminal",
+			"justMyCode": false
+		},
+		{
+			"name": "Python: uiCA add_loop SKL (JSON + eventTrace)",
+			"type": "debugpy",
+			"request": "launch",
+			"program": "${workspaceFolder}/uiCA.py",
+			"python": "${workspaceFolder}/.venv/bin/python3",
+			"args": [
+				"tests/fixtures/add_loop_001.o",
+				"-arch",
+				"SKL",
+				"-json",
+				"/tmp/py_add_loop_skl.json",
+				"-eventTrace",
+				"/tmp/py_add_loop_skl.trace",
+				"-TPonly"
+			],
+			"cwd": "${workspaceFolder}",
+			"console": "integratedTerminal",
+			"justMyCode": false
+		},
+		{
+			"name": "Python: uiCA fusion_jcc HSW (TPonly)",
+			"type": "debugpy",
+			"request": "launch",
+			"program": "${workspaceFolder}/uiCA.py",
+			"python": "${workspaceFolder}/.venv/bin/python3",
+			"args": ["tests/fixtures/fusion_jcc_001.o", "-arch", "HSW", "-TPonly"],
+			"cwd": "${workspaceFolder}",
+			"console": "integratedTerminal",
+			"justMyCode": false
+		},
+		// ─── Rust: uica-cli ───────────────────────────────────────────────────
+		{
+			"name": "Rust: uica-cli add_loop SKL (TPonly)",
+			"type": "lldb",
+			"request": "launch",
+			"program": "${workspaceFolder}/target/debug/uica-cli",
+			"args": ["tests/fixtures/add_loop_001.o", "--arch", "SKL", "--tp-only"],
+			"cwd": "${workspaceFolder}",
+			"preLaunchTask": "cargo build (debug)"
+		},
+		{
+			"name": "Rust: uica-cli add_loop SKL (JSON + eventTrace)",
+			"type": "lldb",
+			"request": "launch",
+			"program": "${workspaceFolder}/target/debug/uica-cli",
+			"args": [
+				"tests/fixtures/add_loop_001.o",
+				"--arch",
+				"SKL",
+				"--json",
+				"/tmp/rust_add_loop_skl.json",
+				"--event-trace",
+				"/tmp/rust_add_loop_skl.trace",
+				"--tp-only"
+			],
+			"cwd": "${workspaceFolder}",
+			"preLaunchTask": "cargo build (debug)"
+		},
+		{
+			"name": "Rust: uica-cli fusion_jcc HSW (TPonly)",
+			"type": "lldb",
+			"request": "launch",
+			"program": "${workspaceFolder}/target/debug/uica-cli",
+			"args": ["tests/fixtures/fusion_jcc_001.o", "--arch", "HSW", "--tp-only"],
+			"cwd": "${workspaceFolder}",
+			"preLaunchTask": "cargo build (debug)"
+		}
+	]
+}

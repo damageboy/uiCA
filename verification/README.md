@@ -115,6 +115,50 @@ CLI help:
 python3 verification/tools/verify.py --help
 ```
 
+## Rust CLI usage
+
+Build Rust CLI:
+
+```bash
+cargo build -p uica-cli
+```
+
+Run Rust CLI on assembled object:
+
+```bash
+target/debug/uica-cli /tmp/uica-verification/add_loop_001/snippet.o --arch SKL --tp-only
+target/debug/uica-cli /tmp/uica-verification/add_loop_001/snippet.o --arch SKL --json /tmp/uica-verification/add_loop_001/SKL.rust.json --tp-only
+```
+
+## Rust parity commands
+
+Compare Rust engine against frozen Python baseline tag.
+Current verifier resolves goldens under engine-scoped roots, so mirror approved Python baseline tag under `rust/<tag>/` before running parity check.
+
+```bash
+python3 verification/tools/verify.py --profile quick --engine rust --rust-bin target/debug/uica-cli --golden-root verification/golden --golden-tag py-baseline-001
+```
+
+Focused Rust parity debug:
+
+```bash
+python3 verification/tools/verify.py --case curated/add_loop_001 --arch SKL --engine rust --rust-bin target/debug/uica-cli --golden-root verification/golden --golden-tag py-baseline-001 --dump-diff /tmp/uica-verification/add_loop_001.rust.diff
+```
+
+## CI parity gate commands
+
+Minimal local replay of CI gate:
+
+```bash
+TMP_GOLDEN_DIR=$(mktemp -d)
+python3 verification/tools/capture.py --profile quick --engine python --golden-root "$TMP_GOLDEN_DIR" --golden-tag py-ci-baseline
+python3 verification/tools/capture.py --profile quick --engine rust --rust-bin target/debug/uica-cli --golden-root "$TMP_GOLDEN_DIR" --golden-tag rust-ci-smoke
+python3 verification/tools/verify.py --profile quick --engine rust --rust-bin target/debug/uica-cli --golden-root "$TMP_GOLDEN_DIR" --golden-tag rust-ci-smoke
+./scripts/build-web.sh
+```
+
+`./scripts/build-web.sh` requires `wasm-pack` and writes bundle to `dist/`.
+
 ## Golden directory conventions
 
 Goldens live below `verification/golden/`.

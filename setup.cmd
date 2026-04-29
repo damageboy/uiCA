@@ -10,4 +10,5 @@ rd /s /q .git\modules
 
 PowerShell -Command Invoke-WebRequest https://www.uops.info/instructions.xml -OutFile instructions.xml || exit /b
 py convertXML.py instructions.xml || exit /b
+cargo run -p uica-data-gen -- instructions.xml rust/uica-data/generated || exit /b
 del instructions.xml

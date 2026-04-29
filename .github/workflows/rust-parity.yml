@@ -1,0 +1,74 @@
+name: rust-parity
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust-parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install runtime prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential wget binutils
+
+      - name: Run Rust parity contract tests
+        run: |
+          python3 -m unittest \
+            tests.verification.test_rust_ci_contract \
+            tests.verification.test_verify_cli \
+            tests.verification.test_verify_execute -v
+
+      - name: Build uiCA runtime artifacts
+        run: |
+          bash ./setup.sh
+
+      - name: Run Rust workspace tests
+        run: |
+          cargo test --workspace
+
+      - name: Build uica-cli
+        run: |
+          cargo build -p uica-cli
+
+      - name: Capture Python quick baseline
+        run: |
+          TMP_GOLDEN_DIR="$(mktemp -d)"
+          PY_GOLDEN_TAG="py-ci-baseline"
+          RUST_GOLDEN_TAG="rust-ci-smoke"
+          echo "TMP_GOLDEN_DIR=$TMP_GOLDEN_DIR" >> "$GITHUB_ENV"
+          echo "PY_GOLDEN_TAG=$PY_GOLDEN_TAG" >> "$GITHUB_ENV"
+          echo "RUST_GOLDEN_TAG=$RUST_GOLDEN_TAG" >> "$GITHUB_ENV"
+          python3 verification/tools/capture.py --profile quick --engine python --golden-root "$TMP_GOLDEN_DIR" --golden-tag "$PY_GOLDEN_TAG" --jobs 2
+
+      - name: Capture Rust quick baseline
+        run: |
+          python3 verification/tools/capture.py --profile quick --engine rust --rust-bin target/debug/uica-cli --golden-root "$TMP_GOLDEN_DIR" --golden-tag "$RUST_GOLDEN_TAG" --jobs 2
+
+      - name: Run Rust quick execute+compare gate
+        run: |
+          python3 verification/tools/verify.py --profile quick --engine rust --rust-bin target/debug/uica-cli --golden-root "$TMP_GOLDEN_DIR" --golden-tag "$RUST_GOLDEN_TAG" --jobs 2
+
+      - name: Install wasm-pack
+        run: |
+          if ! command -v wasm-pack >/dev/null 2>&1; then
+            cargo install wasm-pack --locked
+          fi
+
+      - name: Build web bundle
+        run: |
+          ./scripts/build-web.sh
+          test -f dist/index.html
+          test -f dist/pkg/uica_wasm.js

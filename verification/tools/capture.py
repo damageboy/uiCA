@@ -19,6 +19,7 @@ from verification.tools.common import (
     load_json,
     load_profile,
     run_python_uica,
+    run_rust_uica,
 )
 
 
@@ -127,23 +128,33 @@ def capture_case_arch(
     golden_root: Path,
     golden_tag: str,
 ) -> Path:
-    if engine == "rust":
-        raise NotImplementedError("rust engine capture not implemented yet")
-
-    if rust_bin is not None:
-        _ = rust_bin  # reserved for future Rust capture
+    if engine == "rust" and not rust_bin:
+        raise ValueError("pass --rust-bin when --engine rust")
 
     with tempfile.TemporaryDirectory() as td:
         work = Path(td)
         obj = assemble_case_snippet(case_id, work)
         out_json = work / "result.json"
-        run_python_uica(
-            obj,
-            out_json,
-            arch,
-            case_manifest.get("run", {}),
-            uica_commit=golden_tag,
-        )
+        if engine == "rust":
+            rust_bin_path = rust_bin
+            if rust_bin_path is None:
+                raise ValueError("pass --rust-bin when --engine rust")
+            run_rust_uica(
+                rust_bin_path,
+                obj,
+                out_json,
+                arch,
+                case_manifest.get("run", {}),
+                uica_commit=golden_tag,
+            )
+        else:
+            run_python_uica(
+                obj,
+                out_json,
+                arch,
+                case_manifest.get("run", {}),
+                uica_commit=golden_tag,
+            )
         result = load_json(out_json)
 
     out_path = golden_root / engine / golden_tag / case_id / f"{arch}.json"
@@ -205,6 +216,9 @@ def main(argv=None) -> int:
         args = parser.parse_args(argv)
         case_ids, profile_arches = resolve_case_ids_and_profile_arches(args)
 
+        if args.engine == "rust" and not args.rust_bin:
+            parser.error("pass --rust-bin when --engine rust")
+
         golden_root = Path(args.golden_root)
         golden_tag = args.golden_tag or get_git_commit_short()
 
@@ -242,7 +256,7 @@ def main(argv=None) -> int:
 
     except ValueError as exc:
         parser.error(str(exc))
-    except (FileNotFoundError, RuntimeError, NotImplementedError) as exc:
+    except (FileNotFoundError, RuntimeError) as exc:
         print(f"capture failed: {exc}", file=sys.stderr)
         return 1
 

@@ -61,6 +61,7 @@ pub(crate) fn normalize_mnemonic(text: &str) -> String {
 
 fn canonical_mnemonic_alias(mnemonic: &str) -> &str {
     match mnemonic {
+        "JE" => "JZ",
         "JNE" => "JNZ",
         "CMOVNLE" => "CMOVG",
         "SETZ" => "SETE",

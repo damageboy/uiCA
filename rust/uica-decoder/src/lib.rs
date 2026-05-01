@@ -19,6 +19,9 @@ pub struct DecodedMemAddr {
     pub index: Option<String>,
     pub scale: i32,
     pub disp: i64,
+    /// Python parity: XED marks STACKPUSH/STACKPOP address registers as
+    /// `RegOperand.isImplicitStackOperand`; they do not trigger stack-sync uops.
+    pub is_implicit_stack_operand: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,11 +39,20 @@ pub struct DecodedInstruction {
     pub has_memory_read: bool,
     pub has_memory_write: bool,
     pub mem_addrs: Vec<DecodedMemAddr>,
+    /// Python parity: `getInstructions()` derives `implicitRSPChange` from
+    /// XED STACKPUSH/STACKPOP operands before XML row lookup.
+    pub implicit_rsp_change: i32,
     pub immediate: Option<i64>,
     /// Operand-kind signature used for iform matching (e.g. `GPRv_GPRv`).
     pub iform_signature: String,
     /// Max operand register size in bytes (8=R64, 4=R32, 2=R16, 1=R8, 0=unknown).
     pub max_op_size_bytes: u8,
+    /// True when an explicit operand uses legacy high-8 register AH/BH/CH/DH.
+    pub uses_high8_reg: bool,
+    /// Explicit register operands in instruction operand order; mirrors XED operand attrs.
+    pub explicit_reg_operands: Vec<String>,
+    /// XED-style LEA addressing form, e.g. B_IS_D8, used by uops.info LEA rows.
+    pub agen: Option<String>,
 }
 
 pub fn decode_raw(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
@@ -143,6 +155,7 @@ pub fn decode_raw(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
 
         let reads_flags = instruction.rflags_read() != 0;
         let writes_flags = instruction.rflags_written() != 0;
+        let implicit_rsp_change = python_implicit_rsp_change(&mnemonic, &instruction);
 
         let mut has_memory_read = false;
         let mut has_memory_write = false;
@@ -163,28 +176,54 @@ pub fn decode_raw(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
             }
             let base = format_register(used_mem.base()).to_ascii_uppercase();
             let index = format_register(used_mem.index()).to_ascii_uppercase();
+            let is_implicit_stack_operand =
+                is_implicit_stack_memory(implicit_rsp_change, &base, used_mem.access());
             mem_addrs.push(DecodedMemAddr {
                 base: if base == "NONE" { None } else { Some(base) },
                 index: if index == "NONE" { None } else { Some(index) },
                 scale: used_mem.scale() as i32,
-                disp: used_mem.displacement() as i64,
+                disp: if is_implicit_stack_operand {
+                    0
+                } else {
+                    used_mem.displacement() as i64
+                },
+                is_implicit_stack_operand,
             });
+        }
+
+        if mem_addrs.is_empty() && has_explicit_memory_operand(&instruction) {
+            mem_addrs.push(decoded_mem_addr_from_instruction(&instruction));
         }
 
         let immediate = first_immediate(&instruction);
         let iform_signature = build_iform_signature(&instruction);
+        let agen = if mnemonic.eq_ignore_ascii_case("lea") {
+            Some(agen_tag(&instruction))
+        } else {
+            None
+        };
         // Max register operand size — used by the matcher to pick the right
         // R16/R32/R64 variant from records sharing the same iform prefix.
-        let max_op_size_bytes = (0..instruction.op_count())
+        let explicit_registers: Vec<Register> = (0..instruction.op_count())
             .filter_map(|i| {
                 if instruction.op_kind(i) == OpKind::Register {
-                    Some(instruction.op_register(i).info().size() as u8)
+                    Some(instruction.op_register(i))
                 } else {
                     None
                 }
             })
+            .collect();
+        let max_op_size_bytes = explicit_registers
+            .iter()
+            .map(|reg| reg.info().size() as u8)
             .max()
             .unwrap_or(0);
+        let explicit_reg_operands: Vec<String> = explicit_registers
+            .iter()
+            .map(|reg| format_register(*reg))
+            .collect();
+        strip_implicit_stack_pointer_regs(&mut input_regs, &mut output_regs, &instruction, info);
+        let uses_high8_reg = explicit_registers.iter().any(|reg| is_high8_register(*reg));
 
         instructions.push(DecodedInstruction {
             ip: instruction.ip(),
@@ -200,9 +239,13 @@ pub fn decode_raw(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
             has_memory_read,
             has_memory_write,
             mem_addrs,
+            implicit_rsp_change,
             immediate,
             iform_signature,
             max_op_size_bytes,
+            uses_high8_reg,
+            explicit_reg_operands,
+            agen,
         });
     }
 
@@ -226,6 +269,54 @@ fn nominal_opcode_offset(bytes: &[u8]) -> u32 {
     0
 }
 
+fn has_explicit_memory_operand(instruction: &iced_x86::Instruction) -> bool {
+    (0..instruction.op_count()).any(|i| instruction.op_kind(i) == OpKind::Memory)
+}
+
+fn decoded_mem_addr_from_instruction(instruction: &iced_x86::Instruction) -> DecodedMemAddr {
+    let base = format_register(instruction.memory_base()).to_ascii_uppercase();
+    let index = format_register(instruction.memory_index()).to_ascii_uppercase();
+    DecodedMemAddr {
+        base: if base == "NONE" { None } else { Some(base) },
+        index: if index == "NONE" { None } else { Some(index) },
+        scale: instruction.memory_index_scale() as i32,
+        disp: instruction.memory_displacement64() as i64,
+        is_implicit_stack_operand: false,
+    }
+}
+
+fn agen_tag(instruction: &iced_x86::Instruction) -> String {
+    let base = instruction.memory_base();
+    let index = instruction.memory_index();
+    let has_base = base != Register::None;
+    let has_index = index != Register::None;
+    let is_ip_relative = matches!(base, Register::RIP | Register::EIP);
+    let mut parts: Vec<&str> = Vec::new();
+
+    if is_ip_relative {
+        parts.push("R");
+    } else if has_base {
+        parts.push("B");
+    }
+    if has_index {
+        if instruction.memory_index_scale() == 1 {
+            parts.push("I");
+        } else {
+            parts.push("IS");
+        }
+    }
+    match instruction.memory_displ_size() {
+        1 => parts.push("D8"),
+        2 | 3 | 4 | 8 => parts.push("D32"),
+        _ => {}
+    }
+    if parts.is_empty() {
+        "D32".to_string()
+    } else {
+        parts.join("_")
+    }
+}
+
 fn first_immediate(instruction: &iced_x86::Instruction) -> Option<i64> {
     for i in 0..instruction.op_count() {
         let imm = match instruction.op_kind(i) {
@@ -245,7 +336,102 @@ fn first_immediate(instruction: &iced_x86::Instruction) -> Option<i64> {
 }
 
 fn format_register(reg: Register) -> String {
-    format!("{:?}", reg).to_ascii_uppercase()
+    let name = format!("{:?}", reg).to_ascii_uppercase();
+    if let Some(num) = name
+        .strip_prefix('R')
+        .and_then(|rest| rest.strip_suffix('L'))
+        .and_then(|num| num.parse::<u8>().ok())
+        .filter(|num| (8..=15).contains(num))
+    {
+        format!("R{num}B")
+    } else {
+        name
+    }
+}
+
+fn is_stack_pointer_reg(reg: &str) -> bool {
+    matches!(reg, "SP" | "ESP" | "RSP")
+}
+
+fn python_implicit_rsp_change(mnemonic: &str, instruction: &iced_x86::Instruction) -> i32 {
+    let stack_delta = instruction.stack_pointer_increment();
+    if stack_delta == 0 {
+        return 0;
+    }
+
+    let slot = stack_delta.unsigned_abs().min(8) as i32;
+    let mnemonic = mnemonic.to_ascii_lowercase();
+    if mnemonic.starts_with("push") || mnemonic == "call" || mnemonic == "enter" {
+        -slot
+    } else if mnemonic.starts_with("pop") || mnemonic == "ret" {
+        slot
+    } else {
+        0
+    }
+}
+
+fn is_implicit_stack_memory(implicit_rsp_change: i32, base: &str, access: OpAccess) -> bool {
+    implicit_rsp_change != 0
+        && is_stack_pointer_reg(base)
+        && ((implicit_rsp_change < 0 && matches!(access, OpAccess::Write | OpAccess::CondWrite))
+            || (implicit_rsp_change > 0 && matches!(access, OpAccess::Read | OpAccess::CondRead)))
+}
+
+fn strip_implicit_stack_pointer_regs(
+    input_regs: &mut Vec<String>,
+    output_regs: &mut Vec<String>,
+    instruction: &iced_x86::Instruction,
+    info: &iced_x86::InstructionInfo,
+) {
+    if instruction.stack_pointer_increment() == 0 {
+        return;
+    }
+
+    let mut explicit_reads = 0usize;
+    let mut explicit_writes = 0usize;
+    for i in 0..instruction.op_count() {
+        if instruction.op_kind(i) != OpKind::Register {
+            continue;
+        }
+        let reg = format_register(instruction.op_register(i));
+        if !is_stack_pointer_reg(&reg) {
+            continue;
+        }
+        match info.op_access(i) {
+            OpAccess::Read | OpAccess::CondRead => explicit_reads += 1,
+            OpAccess::Write | OpAccess::CondWrite => explicit_writes += 1,
+            OpAccess::ReadWrite | OpAccess::ReadCondWrite => {
+                explicit_reads += 1;
+                explicit_writes += 1;
+            }
+            _ => {}
+        }
+    }
+
+    retain_explicit_stack_pointer_uses(input_regs, explicit_reads);
+    retain_explicit_stack_pointer_uses(output_regs, explicit_writes);
+}
+
+fn retain_explicit_stack_pointer_uses(regs: &mut Vec<String>, explicit_count: usize) {
+    let mut kept = 0usize;
+    regs.retain(|reg| {
+        if !is_stack_pointer_reg(reg) {
+            return true;
+        }
+        if kept < explicit_count {
+            kept += 1;
+            true
+        } else {
+            false
+        }
+    });
+}
+
+fn is_high8_register(reg: Register) -> bool {
+    matches!(
+        reg,
+        Register::AH | Register::BH | Register::CH | Register::DH
+    )
 }
 
 /// Construct a uops.info-style operand signature by walking the instruction's

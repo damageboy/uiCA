@@ -25,7 +25,126 @@ use super::uop_storage::UopStorage;
 /// Returns an ordered list of `(ports, inputs, outputs, latencies)` plans,
 /// one per unfused uop, matching Python's `instr.UopPropertiesList`.
 pub fn compute_uop_plans(record: &uica_data::InstructionRecord, arch_name: &str) -> Vec<UopPlan> {
-    compute_uop_plans_inner(record, arch_name)
+    compute_uop_plans_inner(record, arch_name, None)
+}
+
+pub(crate) fn record_may_be_eliminated(record: &uica_data::InstructionRecord) -> bool {
+    if record.perf.may_be_eliminated {
+        return true;
+    }
+    // Python parity: `instructions.py` derives `mayBeEliminated` for MOVs
+    // from the measured zero-uop form. `MOVZX` is included because Python's
+    // predicate is `('MOV' in instrData['string'])`; only the decoded
+    // `movzxSpecialCase` below disables elimination for specific low-8 aliases.
+    record_zero_uop_single_reg_mov(record)
+}
+
+pub(crate) fn perf_may_be_eliminated_with_input_regs(
+    record: &uica_data::InstructionRecord,
+    perf: &uica_data::PerfRecord,
+    input_regs: &[String],
+    arch: &crate::micro_arch::MicroArchConfig,
+) -> bool {
+    if perf.may_be_eliminated {
+        return true;
+    }
+    perf_zero_uop_single_reg_mov(record, perf)
+        && !record_movzx_special_case_with_input_regs(record, input_regs, arch)
+}
+
+pub(crate) fn perf_uses_move_elim_fallback_with_input_regs(
+    record: &uica_data::InstructionRecord,
+    perf: &uica_data::PerfRecord,
+    input_regs: &[String],
+    arch: &crate::micro_arch::MicroArchConfig,
+) -> bool {
+    perf_may_be_eliminated_with_input_regs(record, perf, input_regs, arch)
+        || record_movzx_special_case_with_input_regs(record, input_regs, arch)
+}
+
+pub(crate) fn record_movzx_special_case_with_input_regs(
+    record: &uica_data::InstructionRecord,
+    input_regs: &[String],
+    arch: &crate::micro_arch::MicroArchConfig,
+) -> bool {
+    !arch.movzx_high8_alias_can_be_eliminated
+        && matches!(
+            record.string.as_str(),
+            "MOVZX (R64, R8l)" | "MOVZX (R32, R8l)"
+        )
+        && input_regs.first().is_some_and(|reg| {
+            matches!(
+                reg.to_ascii_uppercase().as_str(),
+                "SPL" | "BPL" | "SIL" | "DIL" | "R12B" | "R13B" | "R14B" | "R15B"
+            )
+        })
+}
+
+fn record_zero_uop_single_reg_mov(record: &uica_data::InstructionRecord) -> bool {
+    perf_zero_uop_single_reg_mov(record, &record.perf)
+}
+
+fn perf_zero_uop_single_reg_mov(
+    record: &uica_data::InstructionRecord,
+    perf: &uica_data::PerfRecord,
+) -> bool {
+    record.string.contains("MOV")
+        && perf.uops == 0
+        && record_input_reg_operand_count(record) == 1
+        && record_output_reg_operand_count(record) == 1
+}
+
+fn record_input_reg_operand_count(record: &uica_data::InstructionRecord) -> usize {
+    record
+        .perf
+        .operands
+        .iter()
+        .filter(|op| {
+            op.r#type == "reg"
+                && (op.read
+                    || record
+                        .perf
+                        .latencies
+                        .iter()
+                        .any(|latency| latency.start_op == op.name))
+        })
+        .count()
+}
+
+fn record_output_reg_operand_count(record: &uica_data::InstructionRecord) -> usize {
+    record
+        .perf
+        .operands
+        .iter()
+        .filter(|op| op.r#type == "reg" && op.write)
+        .count()
+}
+
+fn is_python_excluded_stack_or_ip_reg_operand(
+    instr: &InstrInstance,
+    _record: &uica_data::InstructionRecord,
+    operand_name: &str,
+) -> bool {
+    let Some(idx) = operand_name
+        .strip_prefix("REG")
+        .and_then(|idx| idx.parse::<usize>().ok())
+    else {
+        return false;
+    };
+    if instr.implicit_rsp_change == 0 {
+        return false;
+    }
+
+    match instr.mnemonic.as_str() {
+        // Python filters operands whose XED reg name contains STACK or IP.
+        // For call/ret/enter, uops.info REG ordering follows XED: stack pseudo
+        // reg first; IP regs after explicit call target; ENTER keeps RBP at REG1.
+        "enter" => idx == 0,
+        "ret" => true,
+        "call" => idx >= instr.explicit_reg_operands.len(),
+        "push" | "pop" | "pushf" | "popf" => idx >= instr.explicit_reg_operands.len(),
+        _ => false,
+    }
 }
 
 /// An unfused uop's properties as computed by `computeUopProperties`.
@@ -76,6 +195,10 @@ pub fn is_mnemonic_supported(
         mnemonic: mnemonic.to_string(),
         iform_signature: String::new(),
         max_op_size_bytes: 0,
+        immediate: None,
+        uses_high8_reg: false,
+        explicit_reg_operands: Vec::new(),
+        agen: None,
     };
     let candidates = index.candidates_for(&arch_name.to_ascii_uppercase(), mnemonic);
     match_instruction_record(&norm, candidates).is_some()
@@ -103,6 +226,163 @@ pub fn lookup_uops_mite_ms(
     )
 }
 
+pub fn record_uops_mite(record: &uica_data::InstructionRecord) -> u32 {
+    perf_uops_mite(&record.perf)
+}
+
+pub(crate) fn perf_uops_mite(perf: &uica_data::PerfRecord) -> u32 {
+    // Python parity: `convertXML.py` clamps `uops_MITE` to at least 1 and
+    // `instructions.py` defaults missing `uopsMITE` to 1. Older UIPacks encode
+    // that missing/clamped value as 0; normalize at runtime without adding a
+    // JSON fallback or regenerating datapacks.
+    perf.uops_mite.max(1) as u32
+}
+
+pub(crate) fn perf_for_operands(
+    record: &uica_data::InstructionRecord,
+    uses_same_reg: bool,
+    uses_indexed_addr: bool,
+) -> uica_data::PerfRecord {
+    let mut perf = record.perf.clone();
+    // Python parity: `instructions.py getInstructions()` overlays `_SR`
+    // fields before `_I` fields when both same-register and indexed-address
+    // predicates apply.
+    if uses_same_reg {
+        if let Some(same_reg) = record.perf.variants.get("same_reg") {
+            apply_perf_variant(&mut perf, same_reg);
+        }
+    }
+    if uses_indexed_addr {
+        if let Some(indexed) = record.perf.variants.get("indexed") {
+            apply_perf_variant(&mut perf, indexed);
+        }
+    }
+    perf
+}
+
+fn apply_perf_variant(perf: &mut uica_data::PerfRecord, variant: &uica_data::PerfVariantRecord) {
+    if let Some(uops) = variant.uops {
+        perf.uops = uops;
+    }
+    if let Some(retire_slots) = variant.retire_slots {
+        perf.retire_slots = retire_slots;
+    }
+    if let Some(uops_mite) = variant.uops_mite {
+        perf.uops_mite = uops_mite;
+    }
+    if let Some(uops_ms) = variant.uops_ms {
+        perf.uops_ms = uops_ms;
+    }
+    if let Some(tp) = variant.tp {
+        perf.tp = Some(tp);
+    }
+    if let Some(ports) = &variant.ports {
+        perf.ports = ports.clone();
+    }
+    if let Some(div_cycles) = variant.div_cycles {
+        perf.div_cycles = div_cycles;
+    }
+    if let Some(complex_decoder) = variant.complex_decoder {
+        perf.complex_decoder = complex_decoder;
+    }
+    if let Some(n_available_simple_decoders) = variant.n_available_simple_decoders {
+        perf.n_available_simple_decoders = n_available_simple_decoders;
+    }
+}
+
+pub(crate) fn instr_uses_indexed_addr(instr: &InstrInstance) -> bool {
+    instr.mem_addrs.iter().any(|addr| addr.index.is_some())
+}
+
+pub(crate) fn instr_uses_same_reg(instr: &InstrInstance) -> bool {
+    explicit_regs_use_same_reg(&instr.explicit_reg_operands)
+}
+
+pub(crate) fn explicit_regs_use_same_reg(regs: &[String]) -> bool {
+    let used_regs: Vec<String> = regs
+        .iter()
+        .filter(|reg| crate::x64::is_gp_reg(reg) || reg.to_ascii_uppercase().contains("MM"))
+        .map(|reg| crate::x64::get_canonical_reg(reg))
+        .collect();
+    used_regs.len() > 1 && used_regs.iter().all(|reg| reg == &used_regs[0])
+}
+
+pub fn record_latency_cycles(
+    record: &uica_data::InstructionRecord,
+    latency: &uica_data::LatencyRecord,
+    arch_name: &str,
+) -> i32 {
+    let mut cycles = latency.cycles;
+    if let Some(addr) = latency.cycles_addr {
+        cycles = cycles.max(addr);
+    }
+    if let Some(addr_index) = latency.cycles_addr_index {
+        cycles = cycles.max(addr_index);
+    }
+    if let Some(mem) = latency.cycles_mem {
+        cycles = cycles.max(mem);
+    }
+    cycles.max(old_uipack_complex_lea_latency(record, latency, arch_name).unwrap_or(cycles))
+}
+
+pub fn record_latency_cycles_for_start(
+    record: &uica_data::InstructionRecord,
+    latency: &uica_data::LatencyRecord,
+    arch_name: &str,
+    start_op: &str,
+) -> i32 {
+    let field_cycles = match start_op {
+        "__AGEN_ADDR" => latency.cycles_addr,
+        "__AGEN_ADDRI" => latency.cycles_addr_index,
+        name if name.starts_with("__M_") => latency.cycles_mem,
+        _ => None,
+    };
+    field_cycles
+        .or_else(|| old_uipack_complex_lea_latency(record, latency, arch_name))
+        .unwrap_or(latency.cycles)
+}
+
+fn old_uipack_complex_lea_latency(
+    record: &uica_data::InstructionRecord,
+    latency: &uica_data::LatencyRecord,
+    arch_name: &str,
+) -> Option<i32> {
+    if latency.cycles_addr.is_none()
+        && latency.cycles_addr_index.is_none()
+        && latency.start_op == "AGEN"
+        && record.iform == "LEA_GPRv_AGEN"
+        && matches!(arch_name, "HSW" | "SKL")
+        && record.string.starts_with("LEA_B_I")
+        && record.perf.ports.len() == 1
+        && record.perf.ports.get("1") == Some(&1)
+    {
+        Some(3)
+    } else {
+        None
+    }
+}
+
+fn lea_agen_concrete_names(record: &uica_data::InstructionRecord) -> Vec<String> {
+    let Some(form) = record
+        .string
+        .strip_prefix("LEA_")
+        .and_then(|rest| rest.split_whitespace().next())
+    else {
+        return vec!["AGEN".to_string()];
+    };
+    let mut names = Vec::new();
+    if form.split('_').any(|part| matches!(part, "B" | "R")) {
+        names.push("__AGEN_ADDR".to_string());
+    }
+    if form.split('_').any(|part| matches!(part, "I" | "IS")) {
+        names.push("__AGEN_ADDRI".to_string());
+    }
+    if names.is_empty() {
+        names.push("AGEN".to_string());
+    }
+    names
+}
+
 pub fn lookup_uops_mite_ms_indexed(
     mnemonic: &str,
     iform_signature: &str,
@@ -115,17 +395,14 @@ pub fn lookup_uops_mite_ms_indexed(
         mnemonic: mnemonic.to_string(),
         iform_signature: iform_signature.to_string(),
         max_op_size_bytes,
+        immediate: None,
+        uses_high8_reg: false,
+        explicit_reg_operands: Vec::new(),
+        agen: None,
     };
     let candidates = index.candidates_for(&arch_name.to_ascii_uppercase(), mnemonic);
     match match_instruction_record(&norm, candidates) {
-        Some(rec) => {
-            let mite = if rec.perf.uops_mite > 0 {
-                rec.perf.uops_mite as u32
-            } else {
-                rec.perf.uops.max(0) as u32
-            };
-            (mite, rec.perf.uops_ms as u32)
-        }
+        Some(rec) => (record_uops_mite(rec), rec.perf.uops_ms as u32),
         None => (1, 0),
     }
 }
@@ -164,6 +441,10 @@ pub fn expand_instr_instance_to_lam_uops_with_storage(
         mnemonic: instr.mnemonic.clone(),
         iform_signature: instr.iform_signature.clone(),
         max_op_size_bytes: instr.max_op_size_bytes,
+        immediate: instr.immediate,
+        uses_high8_reg: instr.uses_high8_reg,
+        explicit_reg_operands: instr.explicit_reg_operands.clone(),
+        agen: instr.agen.clone(),
     };
     let candidates = index.candidates_for(&arch_name.to_ascii_uppercase(), &instr.mnemonic);
     let record = match match_instruction_record(&norm, candidates) {
@@ -210,10 +491,11 @@ pub fn expand_instr_instance_to_lam_uops_with_storage(
             lam_idx_counter,
             storage,
             arch_name,
+            Some(record),
         ));
     }
 
-    let plans = compute_uop_plans_inner(record, arch_name);
+    let plans = compute_uop_plans_inner(record, arch_name, Some(instr));
 
     if plans.is_empty() {
         return Ok(vec![]);
@@ -227,6 +509,7 @@ pub fn expand_instr_instance_to_lam_uops_with_storage(
         lam_idx_counter,
         storage,
         arch_name,
+        Some(record),
     ))
 }
 
@@ -276,9 +559,30 @@ fn next_pseudo() -> String {
 
 fn compute_uop_plans_inner(
     record: &uica_data::InstructionRecord,
-    _arch_name: &str,
+    arch_name: &str,
+    instr: Option<&InstrInstance>,
 ) -> Vec<UopPlan> {
-    let perf = &record.perf;
+    let uses_same_reg = instr.is_some_and(instr_uses_same_reg);
+    let selected_perf;
+    let perf = if let Some(instr) = instr {
+        selected_perf = perf_for_operands(record, uses_same_reg, instr_uses_indexed_addr(instr));
+        &selected_perf
+    } else {
+        &record.perf
+    };
+    let arch = crate::micro_arch::get_micro_arch(arch_name);
+    let may_be_eliminated = instr
+        .zip(arch.as_ref())
+        .map(|(instr, arch)| {
+            perf_may_be_eliminated_with_input_regs(record, perf, &instr.input_regs, arch)
+        })
+        .unwrap_or_else(|| record_may_be_eliminated(record));
+    let use_move_elim_fallback = instr
+        .zip(arch.as_ref())
+        .map(|(instr, arch)| {
+            perf_uses_move_elim_fallback_with_input_regs(record, perf, &instr.input_regs, arch)
+        })
+        .unwrap_or(may_be_eliminated);
 
     // --- Port classification (mirrors Python's portData loop) ---
     // ports string "06" → [0,6]; "23" → [2,3]; "78" → [7,8]; "49" → [4,9]
@@ -289,6 +593,11 @@ fn compute_uop_plans_inner(
 
     let mut sorted_ports: Vec<(&String, &i32)> = perf.ports.iter().collect();
     sorted_ports.sort_by_key(|(k, _)| k.as_str());
+    let move_elim_ports;
+    if sorted_ports.is_empty() && use_move_elim_fallback {
+        move_elim_ports = crate::micro_arch::alu_ports(arch_name).join("");
+        sorted_ports.push((&move_elim_ports, &1));
+    }
     for (port_str, &count) in &sorted_ports {
         if count <= 0 {
             continue;
@@ -344,6 +653,8 @@ fn compute_uop_plans_inner(
             let name = format!("__M_{}", next_mem_id);
             next_mem_id += 1;
             vec![name]
+        } else if op.r#type == "agen" {
+            lea_agen_concrete_names(record)
         } else {
             vec![op.name.clone()]
         };
@@ -361,7 +672,21 @@ fn compute_uop_plans_inner(
 
         match op.r#type.as_str() {
             "reg" => {
-                if op.read {
+                if instr.is_some_and(|instr| {
+                    is_python_excluded_stack_or_ip_reg_operand(instr, record, &op.name)
+                }) {
+                    // Python parity: `instructions.py` excludes XED STACKPUSH/
+                    // STACKPOP pseudo-register operands from input/output regs;
+                    // stack address RSP remains as an implicit memAddr operand.
+                    continue;
+                }
+                let read_by_latency = perf.latencies.iter().any(|lr| lr.start_op == op.name);
+                if op.read || read_by_latency {
+                    // Python parity: `instructions.py` includes a register in
+                    // `instrInputRegOperands` when XML marks it read OR when
+                    // any latency row starts at that operand. Conditional-write
+                    // operands like CMOV destination registers rely on latency
+                    // rows to stay live as inputs.
                     input_reg_ops.extend(read_names.iter().cloned());
                 }
                 if op.write {
@@ -369,33 +694,51 @@ fn compute_uop_plans_inner(
                 }
             }
             "flags" => {
-                if op.read {
-                    input_flag_ops.extend(read_names.iter().cloned());
+                let read_by_latency = perf.latencies.iter().any(|lr| lr.start_op == op.name);
+                // Python parity: input flags come from `flagsR`. Some existing
+                // UIPacks lack flags_read for latency-start flag operands used by
+                // Python's SHL/ROL latency-class split; fall back only for inputs.
+                if !op.flags_read.is_empty() {
+                    input_flag_ops.extend(op.flags_read.iter().cloned());
+                } else if op.read || read_by_latency {
+                    let mut flags = op.flags.clone();
+                    flags.sort_by_key(|flag| if flag == "C" { 0 } else { 1 });
+                    input_flag_ops.extend(flags);
                 }
-                if op.write {
-                    output_flag_ops.extend(write_names.iter().cloned());
+                // Outputs must come only from `flagsW`; read-only flags are not writes.
+                if !op.flags_write.is_empty() {
+                    output_flag_ops.extend(op.flags_write.iter().cloned());
                 }
             }
-            "mem" => {
+            "mem" | "agen" => {
                 let role = op.mem_operand_role.as_deref();
                 let has_addr_metadata = op.mem_base.is_some()
                     || op.mem_index.is_some()
                     || op.mem_scale.is_some()
                     || op.mem_disp.is_some();
-                if op.is_agen || role == Some("agen") || role == Some("address") {
+                if op.r#type == "agen"
+                    || op.is_agen
+                    || role == Some("agen")
+                    || role == Some("address")
+                {
                     agen_ops.extend(concrete_names.iter().cloned());
                 }
-                if op.is_agen
+                if op.r#type == "agen"
+                    || op.is_agen
                     || role == Some("agen")
                     || role == Some("address")
                     || has_addr_metadata
                 {
                     mem_addr_ops.extend(concrete_names.iter().cloned());
                 }
-                if op.read || matches!(role, Some("read") | Some("read_write")) {
+                if op.r#type == "mem"
+                    && (op.read || matches!(role, Some("read") | Some("read_write")))
+                {
                     input_mem_ops.extend(read_names.iter().cloned());
                 }
-                if op.write || matches!(role, Some("write") | Some("read_write")) {
+                if op.r#type == "mem"
+                    && (op.write || matches!(role, Some("write") | Some("read_write")))
+                {
                     output_mem_ops.extend(write_names.iter().cloned());
                 }
             }
@@ -405,6 +748,7 @@ fn compute_uop_plans_inner(
 
     // --- Build latency dict (inOp, outOp) -> cycles ---
     let mut lat_dict: HashMap<(String, String), i32> = HashMap::new();
+    let mut lat_dict_no_sr: HashMap<(String, String), i32> = HashMap::new();
     for lr in &perf.latencies {
         let start_ops = concrete_operand_names
             .get(&lr.start_op)
@@ -416,23 +760,59 @@ fn compute_uop_plans_inner(
             .unwrap_or_else(|| vec![lr.target_op.clone()]);
         for start_op in &start_ops {
             for target_op in &target_ops {
-                lat_dict.insert((start_op.clone(), target_op.clone()), lr.cycles);
+                let cycles = record_latency_cycles_for_start(record, lr, arch_name, start_op);
+                lat_dict.insert((start_op.clone(), target_op.clone()), cycles);
+                lat_dict_no_sr.insert((start_op.clone(), target_op.clone()), cycles);
                 if let Some(sr) = lr.cycles_same_reg {
-                    // lat_SR: use for same-register special case (Python's lat_SR dict).
-                    // We use the lower of normal vs same-reg cycles.
-                    let cur = lat_dict
-                        .entry((start_op.clone(), target_op.clone()))
-                        .or_insert(lr.cycles);
-                    *cur = (*cur).min(sr);
+                    if use_move_elim_fallback || uses_same_reg {
+                        // Python parity: `instructions.py` replaces `latData`
+                        // with `lat_SR` for same-register forms, eliminated MOV
+                        // fallback uops, and `movzxSpecialCase`.
+                        lat_dict.insert((start_op.clone(), target_op.clone()), sr);
+                    } else {
+                        let cur = lat_dict
+                            .entry((start_op.clone(), target_op.clone()))
+                            .or_insert(cycles);
+                        *cur = (*cur).min(sr);
+                    }
                 }
             }
         }
     }
 
-    // --- No ports at all → zero-port (move-eliminated) or NOP ---
-    // Still create uops_mite zero-port lam uops for IDQ bookkeeping.
+    // Python parity: while constructing `Instr.inputRegOperands`, Python
+    // drops read registers whose latency to every output operand is exactly 0
+    // (zero idioms and some store-data forms). Do this after lat_dict exists
+    // so store-data uops do not acquire dependencies Python omitted.
+    if !may_be_eliminated {
+        let output_operand_names: Vec<String> = output_reg_ops
+            .iter()
+            .chain(output_flag_ops.iter())
+            .chain(output_mem_ops.iter())
+            .cloned()
+            .collect();
+        let zero_filter_lat_dict = if use_move_elim_fallback || uses_same_reg {
+            &lat_dict
+        } else {
+            &lat_dict_no_sr
+        };
+        input_reg_ops.retain(|inp| {
+            !output_operand_names.iter().all(|out| {
+                zero_filter_lat_dict
+                    .get(&(inp.clone(), out.clone()))
+                    .copied()
+                    .unwrap_or(1)
+                    == 0
+            })
+        });
+    }
+
+    // --- No ports at all → zero-port (zero idiom), NOP, or fence padding ---
+    // Python parity: `computeUopProperties` still pads `UopPropertiesList` to
+    // `retireSlots` after seeing no port data. LFENCE has one DSB/MITE slot plus
+    // MS uops, but two retire slots, so it needs two zero-port properties.
     if non_mem_pcs.is_empty() && load_pcs.is_empty() && store_addr_pcs.is_empty() {
-        let n = perf.uops_mite.max(1) as usize;
+        let n = perf.retire_slots.max(1) as usize;
         return (0..n)
             .map(|i| UopPlan {
                 ports: vec![],
@@ -839,9 +1219,14 @@ fn compute_non_mem_uop_plans(
         .latencies
         .insert("div_cycles".to_string(), div_cycles);
 
-    let mut extras: Vec<UopPlan> = Vec::new();
+    // Python parity: `computeUopProperties` stores latency-class extras with
+    // `nonMemUopProps.appendleft(...)`, but once latency classes are exhausted
+    // it appends filler uops to the right of the base uop. Keep those two
+    // Python deque directions separate.
+    let mut prepended_extras: Vec<UopPlan> = Vec::new();
+    let mut appended_extras: Vec<UopPlan> = Vec::new();
 
-    for (extra_idx, pc) in non_mem_pcs.iter().enumerate().skip(1) {
+    for pc in non_mem_pcs.iter().skip(1) {
         if let Some(lat_level) = remaining_levels.pop_front() {
             let lat_class = lat_classes.get(&lat_level).cloned().unwrap_or_default();
             let pseudo = next_pseudo();
@@ -849,7 +1234,7 @@ fn compute_non_mem_uop_plans(
             let delay = (lat_level - min_lat_level).max(0) as u32;
             let mut extra_lat = BTreeMap::new();
             extra_lat.insert(pseudo.clone(), delay);
-            extras.push(UopPlan {
+            prepended_extras.push(UopPlan {
                 ports: pc.clone(),
                 inputs: lat_class,
                 outputs: vec![pseudo],
@@ -864,7 +1249,7 @@ fn compute_non_mem_uop_plans(
             });
         } else {
             // No more latency levels: extra uop reads all inputs, writes nothing.
-            extras.push(UopPlan {
+            appended_extras.push(UopPlan {
                 ports: pc.clone(),
                 inputs: non_mem_inputs.clone(),
                 outputs: vec![],
@@ -878,21 +1263,23 @@ fn compute_non_mem_uop_plans(
                 mem_addr_index: None,
             });
         }
-        let _ = extra_idx;
     }
 
-    // Append any remaining latency-class inputs to the last extra (or base).
+    // Append any remaining latency-class inputs to Python deque's last element:
+    // right-appended filler if present, otherwise the base uop.
     while let Some(lat_level) = remaining_levels.pop_front() {
         if let Some(lat_class) = lat_classes.get(&lat_level) {
-            if let Some(last) = extras.last_mut().or(Some(&mut base_plan)) {
+            if let Some(last) = appended_extras.last_mut() {
                 last.inputs.extend(lat_class.iter().cloned());
+            } else {
+                base_plan.inputs.extend(lat_class.iter().cloned());
             }
         }
     }
 
-    // Python uses appendleft for extras; result is [extra_last..extra_first, base].
-    let mut plans: Vec<UopPlan> = extras.into_iter().rev().collect();
+    let mut plans: Vec<UopPlan> = prepended_extras.into_iter().rev().collect();
     plans.push(base_plan);
+    plans.extend(appended_extras);
     plans
 }
 
@@ -900,6 +1287,7 @@ fn compute_non_mem_uop_plans(
 // Emit lam uops from plans
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 fn emit_lam_uops(
     plans: &[UopPlan],
     instr: &InstrInstance,
@@ -908,43 +1296,105 @@ fn emit_lam_uops(
     lam_idx_counter: &mut u64,
     storage: &mut UopStorage,
     arch_name: &str,
+    record: Option<&uica_data::InstructionRecord>,
 ) -> Vec<u64> {
     let n = plans.len();
     let mut lam_idxs = Vec::with_capacity(n);
 
-    // Build a map from DataPack operand placeholder names (REG0, REG1, REG2)
-    // to actual decoded register names (RAX, R15, RFLAGS, ...).
-    //
-    // The DataPack uses generic names keyed by XML operand order.
-    // The decoder gives us actual registers split into:
-    //   input_regs:   registers that are read
-    //   output_regs:  registers that are written
-    //   reads_flags / writes_flags: RFLAGS involvement
-    //
-    // We build the map by walking the InstrInstance fields.
-    let placeholder_to_real: HashMap<String, String> = HashMap::new();
-    // We don't have per-operand decoded names mapped to REGn names here,
-    // but the operand resolver below handles this positionally.
-    let _ = placeholder_to_real;
+    let decoded_inputs: Vec<String> = instr
+        .input_regs
+        .iter()
+        .map(|r| crate::x64::get_canonical_reg(r))
+        .collect();
+    // Python parity: `Instr.inputRegOperands` excludes memory address
+    // operands. `DecodedInstruction.input_regs` includes base/index regs, so
+    // strip one address occurrence before resolving REGn placeholders; load
+    // and store-address uops add memAddrOperands separately below.
+    let mut decoded_reg_inputs = decoded_inputs.clone();
+    for mem_addr in &instr.mem_addrs {
+        if mem_addr.is_implicit_stack_operand {
+            continue;
+        }
+        for addr_reg in [mem_addr.base.as_ref(), mem_addr.index.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            let canonical = crate::x64::get_canonical_reg(addr_reg);
+            if let Some(pos) = decoded_reg_inputs.iter().position(|r| r == &canonical) {
+                decoded_reg_inputs.remove(pos);
+            }
+        }
+    }
+    let decoded_outputs: Vec<String> = instr
+        .output_regs
+        .iter()
+        .map(|r| crate::x64::get_canonical_reg(r))
+        .collect();
+    let flag_str = if instr.reads_flags || instr.writes_flags {
+        "RFLAGS"
+    } else {
+        ""
+    };
 
-    // Resolve a DataPack operand placeholder name to an actual canonical register.
-    // - Pseudo-ops (__P_N): pass through unchanged.
-    // - Flag operand names: resolve to RFLAGS.
-    // - REGn names: resolve to actual registers from InstrInstance using order.
-    // For input operands: use instr.input_regs in order, then RFLAGS.
-    // For output operands: use instr.output_regs in order, then RFLAGS.
-    let resolve_name =
+    // Python parity: `UopProperties` stores actual operand objects from
+    // `Instr.inputRegOperands` / `Instr.outputRegOperands`. DataPack REGn names
+    // must resolve through full instruction operand order, not through the
+    // local uop input/output list (e.g. DIV REG2 remains EDX even when alone).
+    let mut input_operand_map: HashMap<String, String> = HashMap::new();
+    let mut output_operand_map: HashMap<String, String> = HashMap::new();
+    if let Some(record) = record {
+        let mut read_reg_idx = 0usize;
+        let mut write_reg_idx = 0usize;
+        for operand in &record.perf.operands {
+            if operand.r#type == "reg" {
+                let read_by_latency = record
+                    .perf
+                    .latencies
+                    .iter()
+                    .any(|latency| latency.start_op == operand.name);
+                if operand.read || read_by_latency {
+                    // Python parity: same predicate as `Instr.inputRegOperands`.
+                    // Latency-start write operands map to their own decoded output
+                    // (SETCC/MOVZX dest), not blindly to next input register.
+                    if operand.read {
+                        if let Some(reg) = decoded_reg_inputs.get(read_reg_idx) {
+                            input_operand_map.insert(operand.name.clone(), reg.clone());
+                        }
+                        read_reg_idx += 1;
+                    } else if operand.write {
+                        if let Some(reg) = decoded_outputs.get(write_reg_idx) {
+                            input_operand_map.insert(operand.name.clone(), reg.clone());
+                        }
+                        if decoded_reg_inputs
+                            .get(read_reg_idx)
+                            .is_some_and(|reg| decoded_outputs.get(write_reg_idx) == Some(reg))
+                        {
+                            read_reg_idx += 1;
+                        }
+                    } else if let Some(reg) = decoded_reg_inputs.get(read_reg_idx) {
+                        input_operand_map.insert(operand.name.clone(), reg.clone());
+                        read_reg_idx += 1;
+                    }
+                }
+                if operand.write {
+                    if let Some(reg) = decoded_outputs.get(write_reg_idx) {
+                        output_operand_map.insert(operand.name.clone(), reg.clone());
+                    }
+                    write_reg_idx += 1;
+                }
+            }
+        }
+    }
+
+    let fallback_resolve_name =
         |name: &str, all_ops: &[String], decoded: &[String], flag_name: &str| -> String {
             if name.starts_with("__") || matches!(name, "C" | "SPAZO") {
                 return name.to_string();
             }
-            // Pseudo-operand role: flag operand if the DataPack name is not in the
-            // decoded register list AND we have a flag involved.
             let is_reg_placeholder = name.to_ascii_uppercase().starts_with("REG")
                 && name.len() > 3
                 && name[3..].chars().all(|c| c.is_ascii_digit());
             if is_reg_placeholder {
-                // Find index of this REGn among all REGn names in the ops list.
                 let idx = all_ops
                     .iter()
                     .filter(|o| {
@@ -959,31 +1409,34 @@ fn emit_lam_uops(
                         return decoded[i].clone();
                     }
                 }
-                // Couldn't find in decoded regs; fall back to RFLAGS if flag involved.
                 if !flag_name.is_empty() {
                     return flag_name.to_string();
                 }
                 return name.to_string();
             }
-            // Real register name: canonicalize.
             crate::x64::get_canonical_reg(name)
         };
 
-    let decoded_inputs: Vec<String> = instr
-        .input_regs
-        .iter()
-        .map(|r| crate::x64::get_canonical_reg(r))
-        .collect();
-    let decoded_outputs: Vec<String> = instr
-        .output_regs
-        .iter()
-        .map(|r| crate::x64::get_canonical_reg(r))
-        .collect();
-    let flag_str = if instr.reads_flags || instr.writes_flags {
-        "RFLAGS"
-    } else {
-        ""
+    let resolve_input = |name: &str, all_ops: &[String]| -> String {
+        if name.starts_with("__") || matches!(name, "C" | "SPAZO") {
+            return name.to_string();
+        }
+        input_operand_map
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| fallback_resolve_name(name, all_ops, &decoded_reg_inputs, flag_str))
     };
+    let resolve_output = |name: &str, all_ops: &[String]| -> String {
+        if name.starts_with("__") || matches!(name, "C" | "SPAZO") {
+            return name.to_string();
+        }
+        output_operand_map
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| fallback_resolve_name(name, all_ops, &decoded_outputs, flag_str))
+    };
+
+    let mut unfused_domain_uops = VecDeque::new();
 
     for (i, plan) in plans.iter().enumerate() {
         let is_first = i == 0;
@@ -1004,32 +1457,59 @@ fn emit_lam_uops(
         let mut inputs: Vec<String> = plan
             .inputs
             .iter()
-            .map(|s| resolve_name(s, &plan.inputs, &decoded_inputs, flag_str))
+            .map(|s| resolve_input(s, &plan.inputs))
             .collect();
+        let reads_generic_address = plan.inputs.iter().any(|input| input == "AGEN");
+        let reads_base_address = plan.is_load
+            || plan.is_store_address
+            || reads_generic_address
+            || plan
+                .inputs
+                .iter()
+                .any(|input| input == "__AGEN_ADDR" || input.starts_with("__M_"));
+        let reads_index_address = plan.is_load
+            || plan.is_store_address
+            || reads_generic_address
+            || plan
+                .inputs
+                .iter()
+                .any(|input| input == "__AGEN_ADDRI" || input.starts_with("__M_"));
+        let reads_address_operand = reads_base_address || reads_index_address;
+        if reads_address_operand {
+            inputs.retain(|input| {
+                input != "AGEN"
+                    && input != "__AGEN_ADDR"
+                    && input != "__AGEN_ADDRI"
+                    && !input.starts_with("__M_")
+            });
+        }
         let selected_mem_addr = plan.mem_addr.clone().or_else(|| {
-            if plan.is_load || plan.is_store_address {
-                plan.mem_addr_index.and_then(|idx| {
-                    instr
-                        .mem_addrs
-                        .get(idx.min(instr.mem_addrs.len().saturating_sub(1)))
-                        .cloned()
-                })
+            if plan.is_load || plan.is_store_address || reads_address_operand {
+                let idx = plan.mem_addr_index.unwrap_or(0);
+                instr
+                    .mem_addrs
+                    .get(idx.min(instr.mem_addrs.len().saturating_sub(1)))
+                    .cloned()
             } else {
                 None
             }
         });
-        if plan.is_load || plan.is_store_address {
+        if plan.is_load || plan.is_store_address || reads_address_operand {
             if let Some(mem_addr) = selected_mem_addr.as_ref() {
-                if let Some(base) = &mem_addr.base {
-                    let base = crate::x64::get_canonical_reg(base);
-                    if !inputs.contains(&base) {
-                        inputs.push(base);
+                if reads_base_address {
+                    if let Some(base) = &mem_addr.base {
+                        let base = crate::x64::get_canonical_reg(base);
+                        if !inputs.contains(&base) {
+                            inputs.push(base);
+                        }
                     }
                 }
-                if let Some(index) = &mem_addr.index {
-                    let index = crate::x64::get_canonical_reg(index);
-                    if !inputs.contains(&index) {
-                        inputs.push(index);
+                if reads_index_address {
+                    if let Some(index) = &mem_addr.index {
+                        let index = crate::x64::get_canonical_reg(index);
+                        if !inputs.contains(&index) {
+                            inputs.push(index);
+                        }
                     }
                 }
             }
@@ -1038,7 +1518,7 @@ fn emit_lam_uops(
         let outputs: Vec<String> = plan
             .outputs
             .iter()
-            .map(|s| resolve_name(s, &plan.outputs, &decoded_outputs, flag_str))
+            .map(|s| resolve_output(s, &plan.outputs))
             .collect();
 
         // Build latency map keyed on resolved output names.
@@ -1050,7 +1530,7 @@ fn emit_lam_uops(
                 let resolved = if k.starts_with("__") {
                     k.clone()
                 } else {
-                    resolve_name(k, &plan.outputs, &decoded_outputs, flag_str)
+                    resolve_output(k, &plan.outputs)
                 };
                 (resolved, v)
             })
@@ -1095,13 +1575,9 @@ fn emit_lam_uops(
 
         let uop_idx = *uop_idx_counter;
         *uop_idx_counter += 1;
-        let fused_idx = *fused_idx_counter;
-        *fused_idx_counter += 1;
-        let lam_idx = *lam_idx_counter;
-        *lam_idx_counter += 1;
-
         let uop = Uop {
             idx: uop_idx,
+            queue_idx: uop_idx,
             prop,
             actual_port: None,
             eliminated: false,
@@ -1112,29 +1588,417 @@ fn emit_lam_uops(
             renamed_input_operands: vec![],
             renamed_output_operands: vec![],
             store_buffer_entry: None,
-            fused_uop_idx: Some(fused_idx),
-            instr_instance_idx: instr.idx,
-        };
-        let fused = FusedUop {
-            idx: fused_idx,
-            unfused_uop_idxs: vec![uop_idx],
-            laminated_uop_idx: Some(lam_idx),
-            issued: None,
-            retired: None,
-            retire_idx: None,
-        };
-        let lam = LaminatedUop {
-            idx: lam_idx,
-            fused_uop_idxs: vec![fused_idx],
-            added_to_idq: None,
-            uop_source: None,
+            fused_uop_idx: None,
             instr_instance_idx: instr.idx,
         };
         storage.add_uop(uop);
-        storage.add_fused_uop(fused);
-        storage.add_laminated_uop(lam);
+        unfused_domain_uops.push_back(uop_idx);
+    }
+
+    // Python parity: `InstrInstance.__generateUops` first groups unfused
+    // uops into fused-domain uops using `retireSlots`, then groups those into
+    // laminated-domain uops using `uopsMITE + uopsMS`. Memory-domain uops on
+    // ports 2/3/7 may pull the following uop into the same fused/laminated
+    // object. This preserves Python's ROB/IDQ issue shape for stores/loads.
+    let mut fused_domain_uops = VecDeque::new();
+    let retire_slots = instr.retire_slots.max(1) as usize;
+    for i in 0..retire_slots.saturating_sub(1) {
+        let Some(uop_idx) = unfused_domain_uops.pop_front() else {
+            break;
+        };
+        let can_micro_fuse = storage.get_uop(uop_idx).is_some_and(|uop| {
+            !uop.prop.possible_ports.is_empty()
+                && uop
+                    .prop
+                    .possible_ports
+                    .iter()
+                    .any(|p| matches!(p.as_str(), "2" | "3" | "7"))
+        }) && unfused_domain_uops.len() >= retire_slots - i;
+
+        let mut members = vec![uop_idx];
+        if can_micro_fuse {
+            if let Some(next_uop_idx) = unfused_domain_uops.pop_front() {
+                members.push(next_uop_idx);
+            }
+        }
+
+        let fused_idx = *fused_idx_counter;
+        *fused_idx_counter += 1;
+        for &member in &members {
+            if let Some(uop) = storage.get_uop_mut(member) {
+                uop.fused_uop_idx = Some(fused_idx);
+            }
+        }
+        storage.add_fused_uop(FusedUop {
+            idx: fused_idx,
+            unfused_uop_idxs: members,
+            laminated_uop_idx: None,
+            issued: None,
+            retired: None,
+            retire_idx: None,
+        });
+        fused_domain_uops.push_back(fused_idx);
+    }
+
+    if !unfused_domain_uops.is_empty() {
+        let members: Vec<u64> = unfused_domain_uops.drain(..).collect();
+        let fused_idx = *fused_idx_counter;
+        *fused_idx_counter += 1;
+        for &member in &members {
+            if let Some(uop) = storage.get_uop_mut(member) {
+                uop.fused_uop_idx = Some(fused_idx);
+            }
+        }
+        storage.add_fused_uop(FusedUop {
+            idx: fused_idx,
+            unfused_uop_idxs: members,
+            laminated_uop_idx: None,
+            issued: None,
+            retired: None,
+            retire_idx: None,
+        });
+        fused_domain_uops.push_back(fused_idx);
+    }
+
+    let n_laminated_domain_uops =
+        ((instr.uops_mite + instr.uops_ms) as usize).min(fused_domain_uops.len());
+    if n_laminated_domain_uops == 0 {
+        return lam_idxs;
+    }
+
+    for i in 0..n_laminated_domain_uops.saturating_sub(1) {
+        let Some(fused_idx) = fused_domain_uops.pop_front() else {
+            break;
+        };
+        let can_laminate = storage.get_fused_uop(fused_idx).is_some_and(|fused| {
+            fused.unfused_uop_idxs.len() == 1
+                && fused.unfused_uop_idxs.first().is_some_and(|uop_idx| {
+                    storage.get_uop(*uop_idx).is_some_and(|uop| {
+                        !uop.prop.possible_ports.is_empty()
+                            && uop
+                                .prop
+                                .possible_ports
+                                .iter()
+                                .any(|p| matches!(p.as_str(), "2" | "3" | "7"))
+                    })
+                })
+        }) && fused_domain_uops.len() >= n_laminated_domain_uops - i;
+
+        let mut members = vec![fused_idx];
+        if can_laminate {
+            if let Some(next_fused_idx) = fused_domain_uops.pop_front() {
+                members.push(next_fused_idx);
+            }
+        }
+
+        let lam_idx = *lam_idx_counter;
+        *lam_idx_counter += 1;
+        for &member in &members {
+            if let Some(fused) = storage.get_fused_uop_mut(member) {
+                fused.laminated_uop_idx = Some(lam_idx);
+            }
+        }
+        storage.add_laminated_uop(LaminatedUop {
+            idx: lam_idx,
+            fused_uop_idxs: members,
+            added_to_idq: None,
+            uop_source: None,
+            instr_instance_idx: instr.idx,
+        });
+        lam_idxs.push(lam_idx);
+    }
+
+    if !fused_domain_uops.is_empty() {
+        let members: Vec<u64> = fused_domain_uops.drain(..).collect();
+        let lam_idx = *lam_idx_counter;
+        *lam_idx_counter += 1;
+        for &member in &members {
+            if let Some(fused) = storage.get_fused_uop_mut(member) {
+                fused.laminated_uop_idx = Some(lam_idx);
+            }
+        }
+        storage.add_laminated_uop(LaminatedUop {
+            idx: lam_idx,
+            fused_uop_idxs: members,
+            added_to_idq: None,
+            uop_source: None,
+            instr_instance_idx: instr.idx,
+        });
         lam_idxs.push(lam_idx);
     }
 
     lam_idxs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{compute_uop_plans, compute_uop_plans_inner};
+    use std::collections::BTreeMap;
+    use uica_data::{
+        load_manifest_pack, DataPackIndex, InstructionRecord, LatencyRecord, OperandRecord,
+        PerfRecord, PerfVariantRecord,
+    };
+
+    fn operand(name: &str, kind: &str, read: bool, write: bool) -> OperandRecord {
+        OperandRecord {
+            name: name.to_string(),
+            r#type: kind.to_string(),
+            read,
+            write,
+            implicit: false,
+            flags: vec![],
+            flags_read: vec![],
+            flags_write: vec![],
+            mem_base: None,
+            mem_index: None,
+            mem_scale: None,
+            mem_disp: None,
+            is_agen: false,
+            mem_operand_role: None,
+        }
+    }
+
+    #[test]
+    fn cmov_latency_class_pseudo_uop_precedes_base_uop() {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../uica-data/generated/manifest.json");
+        let pack = load_manifest_pack(manifest, "HSW").unwrap();
+        let index = DataPackIndex::new(pack);
+        let record = index
+            .candidates_for("HSW", "CMOVG")
+            .iter()
+            .find(|record| record.iform == "CMOVNLE_GPRv_GPRv")
+            .expect("CMOVNLE_GPRv_GPRv record");
+
+        let plans = compute_uop_plans(record, "HSW");
+
+        assert_eq!(plans.len(), 2);
+        assert_eq!(plans[0].ports, vec!["0", "6"]);
+        assert_eq!(plans[0].inputs, vec!["REG1", "SPAZO"]);
+        assert!(plans[0].outputs.iter().all(|op| op.starts_with("__P_")));
+        assert_eq!(plans[1].ports, vec!["0", "1", "5", "6"]);
+        assert!(plans[1].inputs.iter().any(|op| op.starts_with("__P_")));
+    }
+
+    #[test]
+    fn eliminated_mov_uses_same_reg_latency_for_fallback_uop() {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../uica-data/generated/manifest.json");
+        let pack = load_manifest_pack(manifest, "HSW").unwrap();
+        let index = DataPackIndex::new(pack);
+        let record = index
+            .candidates_for("HSW", "MOV")
+            .iter()
+            .find(|record| {
+                super::record_may_be_eliminated(record) && record.string == "MOV_89 (R64, R64)"
+            })
+            .expect("eliminable MOV_89 (R64, R64) record");
+
+        assert!(super::record_may_be_eliminated(record));
+        let plans = compute_uop_plans(record, "HSW");
+
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].latencies.get("REG0"), Some(&1));
+    }
+
+    #[test]
+    fn same_reg_perf_variant_overrides_base_ports() {
+        let record = InstructionRecord {
+            arch: "HSW".to_string(),
+            iform: "PCMPGTB_XMMdq_XMMdq".to_string(),
+            string: "PCMPGTB (XMM, XMM)".to_string(),
+            imm_zero: false,
+            perf: PerfRecord {
+                uops: 1,
+                retire_slots: 1,
+                uops_mite: 1,
+                uops_ms: 0,
+                tp: None,
+                ports: BTreeMap::from([("15".to_string(), 1)]),
+                div_cycles: 0,
+                may_be_eliminated: false,
+                complex_decoder: false,
+                n_available_simple_decoders: 0,
+                lcp_stall: false,
+                implicit_rsp_change: 0,
+                can_be_used_by_lsd: false,
+                cannot_be_in_dsb_due_to_jcc_erratum: false,
+                no_micro_fusion: false,
+                no_macro_fusion: false,
+                operands: vec![
+                    operand("REG0", "reg", false, true),
+                    operand("REG1", "reg", true, false),
+                ],
+                latencies: vec![LatencyRecord {
+                    start_op: "REG1".to_string(),
+                    target_op: "REG0".to_string(),
+                    cycles: 1,
+                    cycles_addr: None,
+                    cycles_addr_index: None,
+                    cycles_mem: None,
+                    cycles_same_reg: Some(0),
+                }],
+                variants: BTreeMap::from([(
+                    "same_reg".to_string(),
+                    PerfVariantRecord {
+                        uops: Some(0),
+                        retire_slots: Some(1),
+                        uops_mite: None,
+                        uops_ms: None,
+                        tp: None,
+                        ports: Some(BTreeMap::new()),
+                        div_cycles: None,
+                        complex_decoder: None,
+                        n_available_simple_decoders: None,
+                    },
+                )]),
+            },
+        };
+        let mut instr = super::super::types::InstrInstance::new(
+            0,
+            0,
+            0,
+            0,
+            4,
+            "pcmpgtb".to_string(),
+            "pcmpgtb xmm0, xmm0".to_string(),
+        );
+        instr.input_regs = vec!["XMM0".to_string()];
+        instr.output_regs = vec!["XMM0".to_string()];
+        instr.explicit_reg_operands = vec!["XMM0".to_string(), "XMM0".to_string()];
+
+        let plans = compute_uop_plans_inner(&record, "HSW", Some(&instr));
+
+        assert_eq!(plans.len(), 1);
+        assert!(plans[0].ports.is_empty());
+    }
+
+    #[test]
+    fn lfence_zero_port_plans_keep_retire_slot_padding() {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../uica-data/generated/manifest.json");
+        let pack = load_manifest_pack(manifest, "HSW").unwrap();
+        let index = DataPackIndex::new(pack);
+        let record = index
+            .candidates_for("HSW", "LFENCE")
+            .iter()
+            .find(|record| record.iform == "LFENCE")
+            .expect("LFENCE record");
+
+        let plans = compute_uop_plans(record, "HSW");
+
+        assert_eq!(record.perf.retire_slots, 2);
+        assert_eq!(super::record_uops_mite(record), 1);
+        assert_eq!(plans.len(), 2);
+        assert!(plans.iter().all(|plan| plan.ports.is_empty()));
+    }
+
+    #[test]
+    fn shift_by_cl_cw_flags_feed_special_pseudo_uop() {
+        let mut ports = BTreeMap::new();
+        ports.insert("06".to_string(), 3);
+        let mut flags = operand("REG2", "flags", false, true);
+        flags.flags = vec!["SPAZO".to_string(), "C".to_string()];
+        flags.flags_read = vec!["C".to_string(), "SPAZO".to_string()];
+        flags.flags_write = vec!["C".to_string(), "SPAZO".to_string()];
+
+        let record = InstructionRecord {
+            arch: "HSW".to_string(),
+            iform: "SHL_GPRv_CL_D3r4".to_string(),
+            string: "SHL (R64, CL)".to_string(),
+            imm_zero: false,
+            perf: PerfRecord {
+                uops: 3,
+                retire_slots: 3,
+                uops_mite: 3,
+                uops_ms: 0,
+                tp: None,
+                ports,
+                div_cycles: 0,
+                may_be_eliminated: false,
+                complex_decoder: false,
+                n_available_simple_decoders: 0,
+                lcp_stall: false,
+                implicit_rsp_change: 0,
+                can_be_used_by_lsd: false,
+                cannot_be_in_dsb_due_to_jcc_erratum: false,
+                no_micro_fusion: false,
+                no_macro_fusion: false,
+                operands: vec![
+                    operand("REG0", "reg", true, true),
+                    operand("REG1", "reg", true, false),
+                    flags,
+                ],
+                latencies: vec![
+                    LatencyRecord {
+                        start_op: "REG0".to_string(),
+                        target_op: "REG0".to_string(),
+                        cycles: 1,
+                        cycles_addr: None,
+                        cycles_addr_index: None,
+                        cycles_mem: None,
+                        cycles_same_reg: None,
+                    },
+                    LatencyRecord {
+                        start_op: "REG0".to_string(),
+                        target_op: "REG2".to_string(),
+                        cycles: 2,
+                        cycles_addr: None,
+                        cycles_addr_index: None,
+                        cycles_mem: None,
+                        cycles_same_reg: None,
+                    },
+                    LatencyRecord {
+                        start_op: "REG1".to_string(),
+                        target_op: "REG0".to_string(),
+                        cycles: 1,
+                        cycles_addr: None,
+                        cycles_addr_index: None,
+                        cycles_mem: None,
+                        cycles_same_reg: None,
+                    },
+                    LatencyRecord {
+                        start_op: "REG1".to_string(),
+                        target_op: "REG2".to_string(),
+                        cycles: 2,
+                        cycles_addr: None,
+                        cycles_addr_index: None,
+                        cycles_mem: None,
+                        cycles_same_reg: None,
+                    },
+                    LatencyRecord {
+                        start_op: "REG2".to_string(),
+                        target_op: "REG0".to_string(),
+                        cycles: 0,
+                        cycles_addr: None,
+                        cycles_addr_index: None,
+                        cycles_mem: None,
+                        cycles_same_reg: None,
+                    },
+                    LatencyRecord {
+                        start_op: "REG2".to_string(),
+                        target_op: "REG2".to_string(),
+                        cycles: 2,
+                        cycles_addr: None,
+                        cycles_addr_index: None,
+                        cycles_mem: None,
+                        cycles_same_reg: None,
+                    },
+                ],
+                variants: Default::default(),
+            },
+        };
+
+        let plans = compute_uop_plans(&record, "HSW");
+
+        assert_eq!(plans.len(), 3);
+        assert_eq!(plans[0].inputs, vec!["REG0", "REG1"]);
+        assert!(plans[0].outputs.iter().any(|op| op.starts_with("__P_")));
+        assert_eq!(plans[1].inputs, vec!["C", "SPAZO"]);
+        assert_eq!(plans[1].outputs.len(), 1);
+        assert!(plans[1].outputs[0].starts_with("__P_"));
+        assert_eq!(plans[2].inputs.len(), 2);
+        assert!(plans[2].inputs.iter().all(|op| op.starts_with("__P_")));
+        assert_eq!(plans[2].outputs, vec!["C", "SPAZO"]);
+    }
 }

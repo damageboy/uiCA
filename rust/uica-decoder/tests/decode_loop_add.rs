@@ -17,3 +17,12 @@ fn decodes_loop_add_bytes() {
         Some("jne")
     );
 }
+
+#[test]
+fn decodes_extended_low8_register_names_like_xed() {
+    let bytes = [0x41_u8, 0x0f, 0xb6, 0xcc]; // movzx ecx, r12b
+    let instructions = decode_raw(&bytes).expect("decode should succeed");
+
+    assert_eq!(instructions[0].input_regs, vec!["R12B"]);
+    assert_eq!(instructions[0].explicit_reg_operands, vec!["ECX", "R12B"]);
+}

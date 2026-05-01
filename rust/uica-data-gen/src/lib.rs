@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use uica_data::{
-    encode_uipack, read_uipack_header, DataPack, InstructionRecord, PerfRecord,
+    encode_uipack, read_uipack_header, DataPack, InstructionRecord, PerfRecord, PerfVariantRecord,
     DATAPACK_MANIFEST_FILE_NAME, DATAPACK_SCHEMA_VERSION, UIPACK_CHECKSUM_FNV1A64, UIPACK_VERSION,
 };
 
@@ -116,6 +116,8 @@ fn parse_xml_to_packs(xml_path: &Path) -> Result<BTreeMap<String, DataPack>> {
                 arch: arch_name.to_string(),
                 iform: iform.to_string(),
                 string: string.to_string(),
+                imm_zero: parse_bool_opt_attr(instruction, &["immzero", "immZero"])
+                    .unwrap_or(false),
                 perf: parse_perf(instruction, measurement)?,
             };
             dedup.insert(
@@ -230,6 +232,15 @@ fn parse_perf(
                 .or_else(|| lat.attribute("min_cycles"))
                 .and_then(|s| s.parse::<i32>().ok())
                 .unwrap_or(1);
+            let cycles_addr = lat
+                .attribute("cycles_addr")
+                .and_then(|s| s.parse::<i32>().ok());
+            let cycles_addr_index = lat
+                .attribute("cycles_addr_index")
+                .and_then(|s| s.parse::<i32>().ok());
+            let cycles_mem = lat
+                .attribute("cycles_mem")
+                .and_then(|s| s.parse::<i32>().ok());
             let cycles_same_reg = lat
                 .attribute("cycles_same_reg")
                 .and_then(|s| s.parse::<i32>().ok());
@@ -237,6 +248,9 @@ fn parse_perf(
                 start_op: start_name,
                 target_op: target_name,
                 cycles,
+                cycles_addr,
+                cycles_addr_index,
+                cycles_mem,
                 cycles_same_reg,
             })
         })
@@ -252,23 +266,52 @@ fn parse_perf(
     let uops_mite = measurement
         .attribute("uops_MITE")
         .unwrap_or("1")
-        .parse::<i32>()?;
+        .parse::<i32>()?
+        .max(1);
     let uops_ms = measurement
         .attribute("uops_MS")
         .unwrap_or("0")
         .parse::<i32>()?;
-    let tp = if let Some(value) = measurement.attribute("TP_unrolled") {
-        Some(value.parse::<f64>()?)
-    } else if let Some(value) = measurement.attribute("TP_loop") {
-        Some(value.parse::<f64>()?)
-    } else {
-        None
-    };
+
+    // Python parity: `convertXML.py` only writes perfData['TP'] for
+    // divider-like instructions and serializing/locked instructions. Generic
+    // `TP_loop`/`TP_unrolled` measurements must not become `Instr.TP`, because
+    // `Scheduler.checkUopReady()` uses `Instr.TP` to block same-instruction
+    // issue, not as analytical throughput metadata.
+    let raw_div_cycles = parse_u32_attr(measurement, &["div_cycles", "divCycles"]);
+    let mut div_cycles = raw_div_cycles.unwrap_or(0);
+    let mut tp = None;
+    if let Some(raw_div_cycles) = raw_div_cycles {
+        let tp_unrolled =
+            parse_python_int_float_attr(measurement, "TP_unrolled")?.unwrap_or(raw_div_cycles);
+        if tp_unrolled <= raw_div_cycles {
+            div_cycles = tp_unrolled;
+        } else {
+            tp = Some(tp_unrolled as f64);
+        }
+    }
+    if matches!(
+        instruction.attribute("string"),
+        Some("CPUID" | "MFENCE" | "PAUSE" | "RDTSC")
+    ) || parse_bool_attr(instruction, &["locked"])
+    {
+        let mut tps = Vec::new();
+        for attr in ["TP_loop", "TP_unrolled"] {
+            if let Some(parsed) = parse_python_int_float_attr(measurement, attr)? {
+                tps.push(parsed);
+            }
+        }
+        if let Some(min_tp) = tps.into_iter().min() {
+            tp = Some(min_tp as f64);
+        }
+    }
+
     let ports = measurement
         .attribute("ports")
         .map(parse_ports)
         .transpose()?
         .unwrap_or_default();
+    let variants = parse_perf_variants(measurement, instruction)?;
 
     let implicit_rsp_change =
         parse_i32_attr(instruction, &["implicitRSPChange", "implicit_rsp_change"]).unwrap_or(0);
@@ -284,7 +327,7 @@ fn parse_perf(
         uops_ms,
         tp,
         ports,
-        div_cycles: parse_u32_attr(measurement, &["div_cycles", "divCycles"]).unwrap_or(0),
+        div_cycles,
         may_be_eliminated: parse_bool_attr(instruction, &["mayBeEliminated", "may_be_eliminated"]),
         complex_decoder: parse_bool_attr(instruction, &["complexDecoder", "complex_decoder"]),
         n_available_simple_decoders: parse_u32_attr(
@@ -306,7 +349,89 @@ fn parse_perf(
         no_macro_fusion: parse_bool_attr(instruction, &["noMacroFusion", "no_macro_fusion"]),
         operands,
         latencies,
+        variants,
     })
+}
+
+fn parse_perf_variants(
+    measurement: roxmltree::Node<'_, '_>,
+    instruction: roxmltree::Node<'_, '_>,
+) -> Result<BTreeMap<String, PerfVariantRecord>> {
+    let mut variants = BTreeMap::new();
+    for (xml_suffix, variant_name) in [("_indexed", "indexed"), ("_same_reg", "same_reg")] {
+        let (div_cycles, tp) = parse_variant_div_cycles_and_tp(
+            measurement,
+            instruction,
+            xml_suffix,
+            parse_u32_attr(measurement, &[&format!("div_cycles{xml_suffix}")]),
+        )?;
+        let uops = parse_i32_attr(measurement, &[&format!("uops{xml_suffix}")]);
+        let ports = measurement
+            .attribute(format!("ports{xml_suffix}").as_str())
+            .map(parse_ports)
+            .transpose()?
+            .or_else(|| (uops == Some(0)).then(BTreeMap::new));
+        let variant = PerfVariantRecord {
+            uops,
+            retire_slots: parse_i32_attr(measurement, &[&format!("uops_retire_slots{xml_suffix}")])
+                .map(|slots| slots.max(1)),
+            uops_mite: parse_i32_attr(measurement, &[&format!("uops_MITE{xml_suffix}")])
+                .map(|uops| uops.max(1)),
+            uops_ms: parse_i32_attr(measurement, &[&format!("uops_MS{xml_suffix}")]),
+            tp,
+            ports,
+            div_cycles,
+            complex_decoder: parse_bool_opt_attr(
+                measurement,
+                &[&format!("complex_decoder{xml_suffix}")],
+            ),
+            n_available_simple_decoders: parse_u32_attr(
+                measurement,
+                &[&format!("available_simple_decoders{xml_suffix}")],
+            ),
+        };
+
+        if variant != PerfVariantRecord::default() {
+            variants.insert(variant_name.to_string(), variant);
+        }
+    }
+    Ok(variants)
+}
+
+fn parse_variant_div_cycles_and_tp(
+    measurement: roxmltree::Node<'_, '_>,
+    instruction: roxmltree::Node<'_, '_>,
+    suffix: &str,
+    raw_div_cycles: Option<u32>,
+) -> Result<(Option<u32>, Option<f64>)> {
+    let mut div_cycles = raw_div_cycles;
+    let mut tp = None;
+    if let Some(raw_div_cycles) = raw_div_cycles {
+        let attr = format!("TP_unrolled{suffix}");
+        let tp_unrolled =
+            parse_python_int_float_attr(measurement, &attr)?.unwrap_or(raw_div_cycles);
+        if tp_unrolled <= raw_div_cycles {
+            div_cycles = Some(tp_unrolled);
+        } else {
+            tp = Some(tp_unrolled as f64);
+        }
+    }
+    if matches!(
+        instruction.attribute("string"),
+        Some("CPUID" | "MFENCE" | "PAUSE" | "RDTSC")
+    ) || parse_bool_attr(instruction, &["locked"])
+    {
+        let mut tps = Vec::new();
+        for attr in [format!("TP_loop{suffix}"), format!("TP_unrolled{suffix}")] {
+            if let Some(parsed) = parse_python_int_float_attr(measurement, &attr)? {
+                tps.push(parsed);
+            }
+        }
+        if let Some(min_tp) = tps.into_iter().min() {
+            tp = Some(min_tp as f64);
+        }
+    }
+    Ok((div_cycles, tp))
 }
 
 #[derive(Clone, Copy)]
@@ -327,7 +452,8 @@ fn parse_flag_groups(node: roxmltree::Node<'_, '_>, access: FlagAccess) -> Vec<S
         let Some(group) = group else { continue };
         let access_matches = match access {
             FlagAccess::Any => true,
-            FlagAccess::Read => attr.value().contains('r'),
+            // Python convertXML.py treats both `r` and `cw` as flagsR.
+            FlagAccess::Read => attr.value().contains('r') || attr.value().contains("cw"),
             FlagAccess::Write => attr.value().contains('w'),
         };
         if access_matches && !groups.iter().any(|existing| existing == group) {
@@ -342,6 +468,13 @@ fn parse_u32_attr(node: roxmltree::Node<'_, '_>, names: &[&str]) -> Option<u32> 
         .iter()
         .find_map(|name| node.attribute(*name))
         .and_then(|value| value.parse().ok())
+}
+
+fn parse_python_int_float_attr(node: roxmltree::Node<'_, '_>, name: &str) -> Result<Option<u32>> {
+    node.attribute(name)
+        .map(|value| value.parse::<f64>().map(|parsed| parsed as u32))
+        .transpose()
+        .map_err(Into::into)
 }
 
 fn parse_i32_attr(node: roxmltree::Node<'_, '_>, names: &[&str]) -> Option<i32> {

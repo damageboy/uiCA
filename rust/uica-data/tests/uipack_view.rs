@@ -35,6 +35,7 @@ fn sample_pack() -> DataPack {
                 arch: "SKL".to_string(),
                 iform: "ADD_GPRv_GPRv".to_string(),
                 string: "ADD".to_string(),
+                imm_zero: false,
                 perf: PerfRecord {
                     operands: vec![],
                     latencies: vec![],
@@ -54,12 +55,14 @@ fn sample_pack() -> DataPack {
                     cannot_be_in_dsb_due_to_jcc_erratum: false,
                     no_micro_fusion: false,
                     no_macro_fusion: false,
+                    variants: Default::default(),
                 },
             },
             InstructionRecord {
                 arch: "SKL".to_string(),
                 iform: "IMUL_GPRv_GPRv".to_string(),
                 string: "IMUL".to_string(),
+                imm_zero: false,
                 perf: PerfRecord {
                     operands: vec![],
                     latencies: vec![],
@@ -79,6 +82,7 @@ fn sample_pack() -> DataPack {
                     cannot_be_in_dsb_due_to_jcc_erratum: false,
                     no_micro_fusion: false,
                     no_macro_fusion: false,
+                    variants: Default::default(),
                 },
             },
         ],

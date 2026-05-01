@@ -32,6 +32,9 @@ pub struct InstructionRecord {
     pub arch: String,
     pub iform: String,
     pub string: String,
+    /// XML `immzero` attribute; Python uses it during XED/XML attribute matching.
+    #[serde(default)]
+    pub imm_zero: bool,
     pub perf: PerfRecord,
 }
 
@@ -82,8 +85,39 @@ pub struct LatencyRecord {
     pub start_op: String,
     pub target_op: String,
     pub cycles: i32,
+    /// Address-base latency (`cycles_addr` in uops.info / `addr` in Python).
+    #[serde(default)]
+    pub cycles_addr: Option<i32>,
+    /// Address-index latency (`cycles_addr_index` in uops.info / `addrI` in Python).
+    #[serde(default)]
+    pub cycles_addr_index: Option<i32>,
+    /// Memory-data latency (`cycles_mem` in uops.info / `mem` in Python).
+    #[serde(default)]
+    pub cycles_mem: Option<i32>,
     /// for same-register cases (lat_SR in Python)
     pub cycles_same_reg: Option<i32>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PerfVariantRecord {
+    #[serde(default)]
+    pub uops: Option<i32>,
+    #[serde(default)]
+    pub retire_slots: Option<i32>,
+    #[serde(default)]
+    pub uops_mite: Option<i32>,
+    #[serde(default)]
+    pub uops_ms: Option<i32>,
+    #[serde(default)]
+    pub tp: Option<f64>,
+    #[serde(default)]
+    pub ports: Option<BTreeMap<String, i32>>,
+    #[serde(default)]
+    pub div_cycles: Option<u32>,
+    #[serde(default)]
+    pub complex_decoder: Option<bool>,
+    #[serde(default)]
+    pub n_available_simple_decoders: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -94,6 +128,9 @@ pub struct PerfRecord {
     pub uops_ms: i32,
     pub tp: Option<f64>,
     pub ports: BTreeMap<String, i32>,
+    /// Python `perfData` suffix variants, e.g. `_indexed` -> `_I` fields.
+    #[serde(default)]
+    pub variants: BTreeMap<String, PerfVariantRecord>,
     #[serde(default)]
     pub div_cycles: u32,
     #[serde(default)]

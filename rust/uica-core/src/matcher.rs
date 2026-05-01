@@ -10,6 +10,16 @@ pub struct NormalizedInstr {
     /// Zero when not known. Used to disambiguate records whose iforms share
     /// the same signature (e.g. MOV_GPRv_GPRv_89 has R16/R32/R64 variants).
     pub max_op_size_bytes: u8,
+    /// Immediate value, used like Python's XML attr predicates (`immzero`) to
+    /// distinguish zero-immediate records from general immediate records.
+    pub immediate: Option<i64>,
+    /// True when an explicit operand uses AH/BH/CH/DH; mirrors Python/XED
+    /// R8h vs R8l attribute matching for uops.info records.
+    pub uses_high8_reg: bool,
+    /// Explicit register operands in instruction operand order for R8h/R8l matching.
+    pub explicit_reg_operands: Vec<String>,
+    /// XED `agen` attribute for LEA addressing forms (e.g. B_IS_D8).
+    pub agen: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,21 +62,14 @@ pub fn match_instruction_record<'a>(
             })
             .collect();
         if !sig_matches.is_empty() {
-            if max_size > 0 {
-                let size_tag = match max_size {
-                    8 => "R64",
-                    4 => "R32",
-                    2 => "R16",
-                    1 => "R8",
-                    _ => "",
-                };
-                if !size_tag.is_empty() {
-                    if let Some(hit) = sig_matches.iter().find(|c| c.string.contains(size_tag)) {
-                        return Some(hit);
-                    }
-                }
-            }
-            return sig_matches.into_iter().next();
+            return best_record_match(
+                sig_matches,
+                max_size,
+                instruction.immediate,
+                instruction.uses_high8_reg,
+                &instruction.explicit_reg_operands,
+                instruction.agen.as_deref(),
+            );
         }
     }
 
@@ -76,25 +79,163 @@ pub fn match_instruction_record<'a>(
         .filter(|c| normalize_mnemonic(&c.string) == normalized_mnemonic)
         .collect();
     if !string_matches.is_empty() {
-        if max_size > 0 {
-            let size_tag = match max_size {
-                8 => "R64",
-                4 => "R32",
-                2 => "R16",
-                1 => "R8",
-                _ => "",
-            };
-            if !size_tag.is_empty() {
-                if let Some(hit) = string_matches.iter().find(|c| c.string.contains(size_tag)) {
-                    return Some(hit);
-                }
-            }
-        }
-        return string_matches.into_iter().next();
+        return best_record_match(
+            string_matches,
+            max_size,
+            instruction.immediate,
+            instruction.uses_high8_reg,
+            &instruction.explicit_reg_operands,
+            instruction.agen.as_deref(),
+        );
     }
-    candidates
+    let iform_matches: Vec<&InstructionRecord> = candidates
         .iter()
-        .find(|candidate| normalize_iform_prefix(&candidate.iform) == normalized_mnemonic)
+        .filter(|candidate| normalize_iform_prefix(&candidate.iform) == normalized_mnemonic)
+        .collect();
+    best_record_match(
+        iform_matches,
+        max_size,
+        instruction.immediate,
+        instruction.uses_high8_reg,
+        &instruction.explicit_reg_operands,
+        instruction.agen.as_deref(),
+    )
+}
+
+fn best_record_match<'a>(
+    candidates: Vec<&'a InstructionRecord>,
+    max_size: u8,
+    immediate: Option<i64>,
+    uses_high8_reg: bool,
+    explicit_reg_operands: &[String],
+    agen: Option<&str>,
+) -> Option<&'a InstructionRecord> {
+    let size_tag = match max_size {
+        8 => "R64",
+        4 => "R32",
+        2 => "R16",
+        1 => "R8",
+        _ => "",
+    };
+    let sized: Vec<&InstructionRecord> = if size_tag.is_empty() {
+        candidates
+    } else {
+        let filtered: Vec<&InstructionRecord> = candidates
+            .iter()
+            .copied()
+            .filter(|c| c.string.contains(size_tag))
+            .collect();
+        if filtered.is_empty() {
+            candidates
+        } else {
+            filtered
+        }
+    };
+
+    let sized: Vec<&InstructionRecord> = if let Some(agen) = agen {
+        let lea_prefix = format!("LEA_{agen} ");
+        let filtered: Vec<&InstructionRecord> = sized
+            .iter()
+            .copied()
+            .filter(|c| c.string.starts_with(&lea_prefix))
+            .collect();
+        if filtered.is_empty() {
+            sized
+        } else {
+            filtered
+        }
+    } else {
+        sized
+    };
+
+    let sized: Vec<&InstructionRecord> = if sized
+        .iter()
+        .any(|c| c.string.contains("R8h") || c.string.contains("R8l"))
+    {
+        let explicit_tags = explicit_r8_tags(explicit_reg_operands);
+        let filtered: Vec<&InstructionRecord> = if explicit_tags.is_empty() {
+            sized
+                .iter()
+                .copied()
+                .filter(|c| {
+                    if uses_high8_reg {
+                        c.string.contains("R8h")
+                    } else {
+                        c.string.contains("R8l") && !c.string.contains("R8h")
+                    }
+                })
+                .collect()
+        } else {
+            sized
+                .iter()
+                .copied()
+                .filter(|c| record_r8_tags(&c.string) == explicit_tags)
+                .collect()
+        };
+        if filtered.is_empty() {
+            sized
+        } else {
+            filtered
+        }
+    } else {
+        sized
+    };
+
+    if let Some(imm) = immediate {
+        let has_immzero_metadata = sized.iter().any(|c| c.imm_zero);
+        let is_zero_record = |record: &InstructionRecord| {
+            record.imm_zero
+                || (!has_immzero_metadata && legacy_zero_immediate_string(&record.string))
+        };
+        if imm == 0 {
+            if let Some(hit) = sized.iter().find(|c| is_zero_record(c)) {
+                return Some(*hit);
+            }
+        } else if let Some(hit) = sized.iter().find(|c| !is_zero_record(c)) {
+            return Some(*hit);
+        }
+    }
+
+    sized.into_iter().next()
+}
+
+fn legacy_zero_immediate_string(string: &str) -> bool {
+    string.contains(", 0)") || string.contains("(0)") || string.contains("(0,")
+}
+
+fn explicit_r8_tags(regs: &[String]) -> Vec<&'static str> {
+    regs.iter()
+        .filter(|reg| crate::x64::get_reg_size(reg) == 8)
+        .map(|reg| {
+            if crate::x64::is_high8_reg(reg) {
+                "R8h"
+            } else {
+                "R8l"
+            }
+        })
+        .collect()
+}
+
+fn record_r8_tags(string: &str) -> Vec<&'static str> {
+    let Some(operands) = string
+        .split_once('(')
+        .and_then(|(_, rest)| rest.strip_suffix(')'))
+    else {
+        return Vec::new();
+    };
+    operands
+        .split(',')
+        .filter_map(|operand| {
+            let operand = operand.trim();
+            if operand.contains("R8h") {
+                Some("R8h")
+            } else if operand.contains("R8l") {
+                Some("R8l")
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 /// True if the record's iform starts with `<mnemonic>_<signature>` (with an
@@ -102,7 +243,12 @@ pub fn match_instruction_record<'a>(
 /// Comparison is case-insensitive because uops.info iforms retain the
 /// lowercase `v`/`z`/`w`/`b` size tags from Intel SDM (e.g. `ADC_GPRv_GPRv`).
 fn iform_matches_signature(iform: &str, mnemonic: &str, signature: &str) -> bool {
-    let expected_prefix = format!("{}_{}", mnemonic, signature);
+    let normalized_signature = if mnemonic == "LEA" {
+        signature.replace("MEM", "AGEN")
+    } else {
+        signature.to_string()
+    };
+    let expected_prefix = format!("{}_{}", mnemonic, normalized_signature);
     if iform.eq_ignore_ascii_case(&expected_prefix) {
         return true;
     }
@@ -127,6 +273,7 @@ pub fn normalize_mnemonic(text: &str) -> String {
 
 fn canonical_mnemonic_alias(mnemonic: &str) -> &str {
     match mnemonic {
+        "JE" => "JZ",
         "JNE" => "JNZ",
         "CMOVNLE" => "CMOVG",
         "SETZ" => "SETE",

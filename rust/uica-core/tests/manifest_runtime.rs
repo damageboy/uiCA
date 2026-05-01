@@ -97,6 +97,7 @@ fn sample_pack(
             arch: arch.to_string(),
             iform: format!("{mnemonic}_GPRv_GPRv"),
             string: string.to_string(),
+            imm_zero: false,
             perf: PerfRecord {
                 operands: vec![
                     OperandRecord {
@@ -136,6 +137,9 @@ fn sample_pack(
                     start_op: "REG1".to_string(),
                     target_op: "REG0".to_string(),
                     cycles: 1,
+                    cycles_addr: None,
+                    cycles_addr_index: None,
+                    cycles_mem: None,
                     cycles_same_reg: None,
                 }],
                 uops,
@@ -157,6 +161,7 @@ fn sample_pack(
                 cannot_be_in_dsb_due_to_jcc_erratum: false,
                 no_micro_fusion: false,
                 no_macro_fusion: false,
+                variants: Default::default(),
             },
         }],
     }
@@ -249,6 +254,129 @@ fn dsb_multi_slot_instruction_expands_real_laminated_uops_once() {
 }
 
 #[test]
+fn stack_pointer_changes_disable_lsd_like_python_getinstructions() {
+    let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../uica-data/generated/manifest.json");
+    let pack = load_manifest_pack(&manifest_path, "HSW").unwrap();
+    let arch = uica_core::get_micro_arch("HSW").unwrap();
+
+    // push rax; pop rbx; add rbx, rcx; dec rdx; jnz back
+    // Python `getInstructions()` derives `implicitRSPChange` from XED STACKPUSH/
+    // STACKPOP operands, so PUSH/POP cannot use LSD even if pack rows lack
+    // XML-derived implicit_rsp_change metadata.
+    let decoded =
+        uica_decoder::decode_raw(&[0x50, 0x5b, 0x48, 0x01, 0xcb, 0x48, 0xff, 0xca, 0x75, 0xf6])
+            .unwrap();
+    let base_instances = uica_core::sim::types::build_instruction_instances(&decoded, 0);
+
+    assert_eq!(base_instances[0].implicit_rsp_change, -8);
+    assert_eq!(base_instances[1].implicit_rsp_change, 8);
+    assert_eq!(base_instances[0].mem_addrs[0].disp, 0);
+    assert!(base_instances[0].mem_addrs[0].is_implicit_stack_operand);
+
+    let ret_imm = uica_core::sim::types::build_instruction_instances(
+        &uica_decoder::decode_raw(&[0xc2, 0x10, 0x00]).unwrap(),
+        0,
+    );
+    assert_eq!(ret_imm[0].implicit_rsp_change, 8);
+
+    let enter = uica_core::sim::types::build_instruction_instances(
+        &uica_decoder::decode_raw(&[0xc8, 0x10, 0x00, 0x00]).unwrap(),
+        0,
+    );
+    assert_eq!(enter[0].implicit_rsp_change, -8);
+    assert_eq!(enter[0].input_regs, vec!["RBP".to_string()]);
+    assert_eq!(enter[0].output_regs, vec!["RBP".to_string()]);
+
+    let mut storage = uica_core::sim::uop_storage::UopStorage::new();
+    let mut uop_idx = 0;
+    let mut fused_idx = 0;
+    let mut lam_idx = 0;
+    uica_core::sim::uop_expand::expand_instr_instance_to_lam_uops_with_storage(
+        &enter[0],
+        &mut uop_idx,
+        &mut fused_idx,
+        &mut lam_idx,
+        &mut storage,
+        "HSW",
+        &pack,
+        None,
+    )
+    .unwrap();
+    assert!(storage.uops.values().any(|uop| {
+        uop.prop
+            .input_operands
+            .contains(&uica_core::sim::types::OperandKey::Reg("RBP".to_string()))
+            || uop
+                .prop
+                .output_operands
+                .contains(&uica_core::sim::types::OperandKey::Reg("RBP".to_string()))
+    }));
+
+    let push_rsp = uica_core::sim::types::build_instruction_instances(
+        &uica_decoder::decode_raw(&[0x54]).unwrap(),
+        0,
+    );
+    assert_eq!(push_rsp[0].input_regs, vec!["RSP".to_string()]);
+    assert!(push_rsp[0].output_regs.is_empty());
+
+    let pop_rsp = uica_core::sim::types::build_instruction_instances(
+        &uica_decoder::decode_raw(&[0x5c]).unwrap(),
+        0,
+    );
+    assert!(pop_rsp[0].input_regs.is_empty());
+    assert_eq!(pop_rsp[0].output_regs, vec!["RSP".to_string()]);
+
+    let pushf = uica_core::sim::types::build_instruction_instances(
+        &uica_decoder::decode_raw(&[0x9c]).unwrap(),
+        0,
+    );
+    assert_eq!(pushf[0].implicit_rsp_change, -8);
+    assert!(pushf[0].mem_addrs[0].is_implicit_stack_operand);
+
+    for instrs in [
+        push_rsp,
+        ret_imm,
+        uica_core::sim::types::build_instruction_instances(
+            &uica_decoder::decode_raw(&[0xff, 0xd0]).unwrap(),
+            0,
+        ),
+    ] {
+        let mut storage = uica_core::sim::uop_storage::UopStorage::new();
+        let mut uop_idx = 0;
+        let mut fused_idx = 0;
+        let mut lam_idx = 0;
+        uica_core::sim::uop_expand::expand_instr_instance_to_lam_uops_with_storage(
+            &instrs[0],
+            &mut uop_idx,
+            &mut fused_idx,
+            &mut lam_idx,
+            &mut storage,
+            "HSW",
+            &pack,
+            None,
+        )
+        .unwrap();
+        assert!(storage.uops.values().all(|uop| {
+            uop.prop.input_operands.iter().all(|op| {
+                !matches!(op, uica_core::sim::types::OperandKey::Reg(reg) if reg.starts_with("REG"))
+            }) && uop.prop.output_operands.iter().all(|op| {
+                !matches!(op, uica_core::sim::types::OperandKey::Reg(reg) if reg.starts_with("REG"))
+            })
+        }));
+    }
+
+    let frontend = uica_core::sim::FrontEnd::new(arch, false, base_instances, 0, &pack);
+
+    assert_eq!(frontend.uop_source.as_deref(), Some("DSB"));
+    assert!(frontend
+        .all_generated_instr_instances
+        .iter()
+        .take(2)
+        .all(|inst| !inst.can_be_used_by_lsd));
+}
+
+#[test]
 fn binary_manifest_pack_supports_index_matcher_and_perf_lookup() {
     let temp = tempdir().unwrap();
     let manifest_path = write_manifest_fixture(
@@ -265,8 +393,12 @@ fn binary_manifest_pack_supports_index_matcher_and_perf_lookup() {
     let matched = match_instruction_record(
         &NormalizedInstr {
             max_op_size_bytes: 0,
+            immediate: None,
             iform_signature: String::new(),
             mnemonic: "mov".to_string(),
+            uses_high8_reg: false,
+            explicit_reg_operands: Vec::new(),
+            agen: None,
         },
         candidates,
     )
@@ -371,6 +503,33 @@ fn engine_trace_uses_manifest_uipack_from_env_path() {
     }
 
     assert_eq!(env::var_os("UICA_RUST_DATAPACK"), original);
+}
+
+#[test]
+fn event_trace_emits_executed_events_for_zero_port_uops() {
+    let _lock = env_lock().lock().unwrap();
+    let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../uica-data/generated/manifest.json");
+    let temp = tempdir().unwrap();
+    let trace_path = temp.path().join("events.trace");
+
+    let _env = EnvVarGuard::set("UICA_RUST_DATAPACK", &manifest_path);
+    // xor rax, rax; dec rcx; jnz -6
+    let trace = uica_core::engine::engine_trace(
+        &[0x48, 0x31, 0xc0, 0x48, 0xff, 0xc9, 0x75, 0xf6],
+        &Invocation {
+            arch: "HSW".to_string(),
+            ..Invocation::default()
+        },
+    )
+    .unwrap();
+    trace.finish_to_path(&trace_path).unwrap();
+
+    let trace_text = std::fs::read_to_string(trace_path).unwrap();
+    assert!(
+        trace_text.lines().any(|line| line.contains(" E instr=0 ")),
+        "zero-port XOR uop should still emit Python E events:\n{trace_text}"
+    );
 }
 
 #[test]

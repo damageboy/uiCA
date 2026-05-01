@@ -34,6 +34,26 @@
 			"justMyCode": false
 		},
 		{
+			"name": "Python: uiCA add_loop HSW (JSON + eventTrace)",
+			"type": "debugpy",
+			"request": "launch",
+			"program": "${workspaceFolder}/uiCA.py",
+			"python": "${workspaceFolder}/.venv/bin/python3",
+			"args": [
+				"tests/fixtures/add_loop_001.o",
+				"-arch",
+				"HSW",
+				"-json",
+				"/tmp/py_add_loop_hsw.json",
+				"-eventTrace",
+				"/tmp/py_add_loop_hsw.trace",
+				"-TPonly"
+			],
+			"cwd": "${workspaceFolder}",
+			"console": "integratedTerminal",
+			"justMyCode": false
+		},
+		{
 			"name": "Python: uiCA fusion_jcc HSW (TPonly)",
 			"type": "debugpy",
 			"request": "launch",
@@ -67,6 +87,24 @@
 				"/tmp/rust_add_loop_skl.json",
 				"--event-trace",
 				"/tmp/rust_add_loop_skl.trace",
+				"--tp-only"
+			],
+			"cwd": "${workspaceFolder}",
+			"preLaunchTask": "cargo build (debug)"
+		},
+		{
+			"name": "Rust: uica-cli add_loop HSW (JSON + eventTrace)",
+			"type": "lldb",
+			"request": "launch",
+			"program": "${workspaceFolder}/target/debug/uica-cli",
+			"args": [
+				"tests/fixtures/add_loop_001.o",
+				"--arch",
+				"HSW",
+				"--json",
+				"/tmp/rust_add_loop_hsw.json",
+				"--event-trace",
+				"/tmp/rust_add_loop_hsw.trace",
 				"--tp-only"
 			],
 			"cwd": "${workspaceFolder}",

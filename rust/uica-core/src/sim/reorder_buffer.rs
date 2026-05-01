@@ -11,6 +11,8 @@ use super::uop_storage::UopStorage;
 pub struct ReorderBuffer {
     pub arch: MicroArchConfig,
     pub uops: VecDeque<u64>, // fused uop indices
+    /// Python parity: `ReorderBuffer.retireQueue`, drained by runSimulation.
+    pub retire_queue: VecDeque<u64>,
 }
 
 impl ReorderBuffer {
@@ -18,6 +20,7 @@ impl ReorderBuffer {
         Self {
             arch,
             uops: VecDeque::new(),
+            retire_queue: VecDeque::new(),
         }
     }
 
@@ -59,6 +62,7 @@ impl ReorderBuffer {
 
             if all_executed {
                 self.uops.pop_front();
+                self.retire_queue.push_back(fused_idx);
                 let fused = storage.get_fused_uop_mut(fused_idx).unwrap();
                 fused.retired = Some(clock);
                 fused.retire_idx = Some(n_retired_in_same_cycle);

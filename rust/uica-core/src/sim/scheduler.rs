@@ -34,7 +34,7 @@ pub struct Scheduler {
     pub next_p49_port: String,
     pub next_p78_port: String,
     pub uops_dispatched_in_prev_cycle: Vec<u64>,
-    pub ready_queue: HashMap<String, Vec<(u64, u64)>>, // min-heap by (idx, uop_idx)
+    pub ready_queue: HashMap<String, Vec<(u64, u64)>>, // min-heap by Python Uop.idx, uop_idx
     pub ready_div_uops: Vec<(u64, u64)>,
     pub uops_ready_in_cycle: BTreeMap<u32, Vec<u64>>,
     pub non_ready_uops: Vec<u64>,
@@ -101,10 +101,10 @@ impl Scheduler {
                         );
                     }
                     if uop.prop.div_cycles > 0 {
-                        self.ready_div_uops.push((uop.idx, uop.idx));
+                        self.ready_div_uops.push((uop.queue_idx, uop_idx));
                     } else if let Some(ref port) = uop.actual_port {
                         if let Some(queue) = self.ready_queue.get_mut(port) {
-                            queue.push((uop.idx, uop.idx));
+                            queue.push((uop.queue_idx, uop_idx));
                         }
                     }
                 }

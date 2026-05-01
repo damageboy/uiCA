@@ -11,14 +11,17 @@ use std::path::Path;
 #[cfg(not(target_family = "wasm"))]
 use std::fs::File;
 
-use crate::{DataPack, InstructionRecord, LatencyRecord, OperandRecord, PerfRecord};
+use crate::{
+    DataPack, InstructionRecord, LatencyRecord, OperandRecord, PerfRecord, PerfVariantRecord,
+};
 
 pub const UIPACK_MAGIC: [u8; 8] = *b"UIPACK\0\0";
-pub const UIPACK_VERSION: u16 = 3;
+pub const UIPACK_VERSION: u16 = 4;
 pub const UIPACK_CHECKSUM_FNV1A64: u16 = 1;
 
 const UIPACK_HEADER_SIZE: usize = 64;
-const UIPACK_RECORD_SIZE: usize = 80;
+const UIPACK_RECORD_SIZE_V3: usize = 80;
+const UIPACK_RECORD_SIZE: usize = 88;
 const UIPACK_PORT_ENTRY_SIZE: usize = 8;
 const UIPACK_ALIGNMENT: usize = 8;
 const CHECKSUM_OFFSET: usize = 24;
@@ -232,9 +235,10 @@ impl<'a> UiPackView<'a> {
             )));
         }
 
+        let record_size = record_size_for_version(self.header.version)?;
         let start = usize::try_from(self.header.records_offset).unwrap()
-            + usize::try_from(index).unwrap() * UIPACK_RECORD_SIZE;
-        let entry = read_record_entry(&self.bytes[start..start + UIPACK_RECORD_SIZE]);
+            + usize::try_from(index).unwrap() * record_size;
+        let entry = read_record_entry(&self.bytes[start..start + record_size], self.header.version);
         let iform = read_string_ref(self.strings, entry.iform_offset)?;
         let string = read_string_ref(self.strings, entry.string_offset)?;
         validate_record_ports_range(entry, self.header.ports_count)?;
@@ -267,6 +271,7 @@ impl<'a> UiPackView<'a> {
                 arch: self.arch().to_string(),
                 iform: record.iform().to_string(),
                 string: record.string().to_string(),
+                imm_zero: record.imm_zero(),
                 perf: PerfRecord {
                     uops: record.perf().uops(),
                     retire_slots: record.perf().retire_slots(),
@@ -288,6 +293,7 @@ impl<'a> UiPackView<'a> {
                     no_macro_fusion: record.perf().no_macro_fusion(),
                     operands: record.operands()?,
                     latencies: record.latencies()?,
+                    variants: record.variants()?,
                 },
             });
         }
@@ -336,6 +342,10 @@ impl<'a> UiPackRecordView<'a> {
         }
     }
 
+    pub fn imm_zero(&self) -> bool {
+        self.entry.flags & (1 << 8) != 0
+    }
+
     pub fn ports(&self) -> Result<Vec<UiPackPortView<'a>>, UiPackError> {
         let ports_start = usize::try_from(self.entry.ports_start)
             .map_err(|_| UiPackError::InvalidFormat("uipack ports range overflow".to_string()))?;
@@ -369,6 +379,17 @@ impl<'a> UiPackRecordView<'a> {
             self.entry.latencies_offset,
             self.entry.latencies_size,
             "latencies",
+        )?)?)
+    }
+
+    pub fn variants(&self) -> Result<BTreeMap<String, PerfVariantRecord>, UiPackError> {
+        if self.entry.variants_size == 0 {
+            return Ok(BTreeMap::new());
+        }
+        Ok(serde_json::from_slice(self.blob(
+            self.entry.variants_offset,
+            self.entry.variants_size,
+            "variants",
         )?)?)
     }
 
@@ -536,6 +557,7 @@ pub fn encode_uipack(pack: &DataPack, arch: &str) -> Result<Vec<u8>, UiPackError
         })?;
         let operands = serde_json::to_vec(&record.perf.operands)?;
         let latencies = serde_json::to_vec(&record.perf.latencies)?;
+        let variants = serde_json::to_vec(&record.perf.variants)?;
 
         raw_records.push(RawRecordEntry {
             iform_offset,
@@ -554,12 +576,14 @@ pub fn encode_uipack(pack: &DataPack, arch: &str) -> Result<Vec<u8>, UiPackError
                 | (u32::from(record.perf.can_be_used_by_lsd) << 4)
                 | (u32::from(record.perf.cannot_be_in_dsb_due_to_jcc_erratum) << 5)
                 | (u32::from(record.perf.no_micro_fusion) << 6)
-                | (u32::from(record.perf.no_macro_fusion) << 7),
+                | (u32::from(record.perf.no_macro_fusion) << 7)
+                | (u32::from(record.imm_zero) << 8),
             div_cycles: record.perf.div_cycles,
             n_available_simple_decoders: record.perf.n_available_simple_decoders,
             implicit_rsp_change: record.perf.implicit_rsp_change,
             operands,
             latencies,
+            variants,
         });
     }
 
@@ -595,6 +619,12 @@ pub fn encode_uipack(pack: &DataPack, arch: &str) -> Result<Vec<u8>, UiPackError
             .map_err(|_| UiPackError::InvalidFormat("uipack latencies too large".to_string()))?;
         blobs.extend_from_slice(&raw.latencies);
 
+        let variants_offset = u32::try_from(blobs_offset + blobs.len())
+            .map_err(|_| UiPackError::InvalidFormat("uipack too large".to_string()))?;
+        let variants_size = u32::try_from(raw.variants.len())
+            .map_err(|_| UiPackError::InvalidFormat("uipack variants too large".to_string()))?;
+        blobs.extend_from_slice(&raw.variants);
+
         record_entries.push(RecordEntry {
             iform_offset: raw.iform_offset,
             string_offset: raw.string_offset,
@@ -613,6 +643,8 @@ pub fn encode_uipack(pack: &DataPack, arch: &str) -> Result<Vec<u8>, UiPackError
             div_cycles: raw.div_cycles,
             n_available_simple_decoders: raw.n_available_simple_decoders,
             implicit_rsp_change: raw.implicit_rsp_change,
+            variants_offset,
+            variants_size,
         });
     }
     let file_len = u64::try_from(blobs_offset + blobs.len())
@@ -693,7 +725,7 @@ pub fn read_uipack_header(bytes: &[u8]) -> Result<UiPackHeader, UiPackError> {
         schema_offset: read_u32(bytes, 60),
     };
 
-    if header.version != UIPACK_VERSION {
+    if !matches!(header.version, 3 | UIPACK_VERSION) {
         return Err(UiPackError::InvalidFormat(format!(
             "unsupported uipack version {}",
             header.version
@@ -731,7 +763,7 @@ pub fn read_uipack_header(bytes: &[u8]) -> Result<UiPackHeader, UiPackError> {
         "records",
         header.records_offset,
         header.records_count,
-        UIPACK_RECORD_SIZE,
+        record_size_for_version(header.version)?,
         bytes.len(),
         header.header_size as usize,
     )?;
@@ -802,6 +834,7 @@ struct RawRecordEntry {
     implicit_rsp_change: i32,
     operands: Vec<u8>,
     latencies: Vec<u8>,
+    variants: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -823,6 +856,8 @@ struct RecordEntry {
     div_cycles: u32,
     n_available_simple_decoders: u32,
     implicit_rsp_change: i32,
+    variants_offset: u32,
+    variants_size: u32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -957,6 +992,16 @@ fn write_header(dst: &mut [u8], header: &UiPackHeader) {
     dst[60..64].copy_from_slice(&header.schema_offset.to_le_bytes());
 }
 
+fn record_size_for_version(version: u16) -> Result<usize, UiPackError> {
+    match version {
+        3 => Ok(UIPACK_RECORD_SIZE_V3),
+        UIPACK_VERSION => Ok(UIPACK_RECORD_SIZE),
+        _ => Err(UiPackError::InvalidFormat(format!(
+            "unsupported uipack version {version}"
+        ))),
+    }
+}
+
 fn write_record_entry(dst: &mut [u8], record: &RecordEntry) {
     dst[0..4].copy_from_slice(&record.iform_offset.to_le_bytes());
     dst[4..8].copy_from_slice(&record.string_offset.to_le_bytes());
@@ -975,7 +1020,9 @@ fn write_record_entry(dst: &mut [u8], record: &RecordEntry) {
     dst[60..64].copy_from_slice(&record.div_cycles.to_le_bytes());
     dst[64..68].copy_from_slice(&record.n_available_simple_decoders.to_le_bytes());
     dst[68..72].copy_from_slice(&record.implicit_rsp_change.to_le_bytes());
-    dst[72..80].fill(0);
+    dst[72..76].copy_from_slice(&record.variants_offset.to_le_bytes());
+    dst[76..80].copy_from_slice(&record.variants_size.to_le_bytes());
+    dst[80..88].fill(0);
 }
 
 fn write_port_entry(dst: &mut [u8], port: &PortEntry) {
@@ -983,7 +1030,7 @@ fn write_port_entry(dst: &mut [u8], port: &PortEntry) {
     dst[4..8].copy_from_slice(&port.count.to_le_bytes());
 }
 
-fn read_record_entry(src: &[u8]) -> RecordEntry {
+fn read_record_entry(src: &[u8], version: u16) -> RecordEntry {
     RecordEntry {
         iform_offset: read_u32(src, 0),
         string_offset: read_u32(src, 4),
@@ -1002,6 +1049,8 @@ fn read_record_entry(src: &[u8]) -> RecordEntry {
         div_cycles: read_u32(src, 60),
         n_available_simple_decoders: read_u32(src, 64),
         implicit_rsp_change: read_i32(src, 68),
+        variants_offset: if version >= 4 { read_u32(src, 72) } else { 0 },
+        variants_size: if version >= 4 { read_u32(src, 76) } else { 0 },
     }
 }
 

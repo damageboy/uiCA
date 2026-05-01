@@ -223,10 +223,13 @@ pub fn compute_dsb_limit(
         .take(instructions.len() - 1)
         .map(|i| i.size)
         .sum();
+    // Python parity: `facile.computeDSBLimit()` uses six DSB entries per
+    // 32-byte block for this analytical limit, independent of DSB issue width.
+    const DSB_ENTRIES_PER_BLOCK: f64 = 6.0;
     if (code_length + alignment_offset) / 32 == alignment_offset / 32 {
-        Some((n_uops as f64 / arch.dsb_width as f64).ceil())
+        Some((n_uops as f64 / DSB_ENTRIES_PER_BLOCK).ceil())
     } else {
-        Some(n_uops as f64 / arch.dsb_width as f64)
+        Some(n_uops as f64 / DSB_ENTRIES_PER_BLOCK)
     }
 }
 

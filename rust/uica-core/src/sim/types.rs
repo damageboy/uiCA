@@ -55,6 +55,9 @@ pub struct MemAddr {
     pub index: Option<String>,
     pub scale: i32,
     pub disp: i64,
+    /// Python parity: `RegOperand.isImplicitStackOperand` on RSP address operands
+    /// created by STACKPUSH/STACKPOP. FrontEnd stack-sync ignores these operands.
+    pub is_implicit_stack_operand: bool,
 }
 
 impl OperandKey {
@@ -126,6 +129,10 @@ pub struct UopProperties {
 #[derive(Debug)]
 pub struct Uop {
     pub idx: u64,
+    /// Python parity: scheduler heap key mirrors `Uop.idx` allocation order.
+    /// Reg-merge uops are stored early in Rust but Python creates them in
+    /// `Renamer.cycle()`, so renamer assigns this key when injecting them.
+    pub queue_idx: u64,
     pub prop: UopProperties,
     pub actual_port: Option<String>,
     pub eliminated: bool,
@@ -259,6 +266,12 @@ pub struct InstrInstance {
     pub iform_signature: String,
     /// Max operand register size bytes (0=unknown); used for record disambiguation.
     pub max_op_size_bytes: u8,
+    /// True when explicit operand uses AH/BH/CH/DH; disambiguates R8h/R8l records.
+    pub uses_high8_reg: bool,
+    /// Explicit register operands in instruction operand order; mirrors XED attrs.
+    pub explicit_reg_operands: Vec<String>,
+    /// XED `agen` attribute for LEA addressing forms (e.g. B_IS_D8).
+    pub agen: Option<String>,
 
     // Decoder properties
     pub is_branch_instr: bool,
@@ -332,6 +345,9 @@ impl InstrInstance {
             immediate: None,
             iform_signature: String::new(),
             max_op_size_bytes: 0,
+            uses_high8_reg: false,
+            explicit_reg_operands: Vec::new(),
+            agen: None,
             is_branch_instr: false,
             complex_decoder: false,
             n_available_simple_decoders: 4,
@@ -392,12 +408,14 @@ pub fn recompute_macro_fusion_and_is_last(instances: &mut [InstrInstance]) {
         }
     }
 
+    // Python parity: `Instr.isLastDecodedInstr()` is true for the last
+    // instruction, and also for the next-to-last instruction when it is
+    // macro-fused with the final branch. The macro-fused branch has no uops,
+    // so DSB/summary code observes the previous instruction as last decoded.
     let last_idx = instances.len() - 1;
-    instances[last_idx].is_last_decoded_instr = !instances[last_idx].macro_fused_with_next_instr;
-    for i in 0..last_idx {
-        if instances[i].macro_fused_with_next_instr {
-            instances[i + 1].is_last_decoded_instr = true;
-        }
+    instances[last_idx].is_last_decoded_instr = true;
+    if last_idx > 0 && instances[last_idx - 1].macro_fused_with_next_instr {
+        instances[last_idx - 1].is_last_decoded_instr = true;
     }
 }
 
@@ -453,14 +471,25 @@ pub fn build_instruction_instances(
                 index: m.index.clone(),
                 scale: m.scale,
                 disp: m.disp,
+                is_implicit_stack_operand: m.is_implicit_stack_operand,
             })
             .collect();
+        // Python parity: `getInstructions()` computes `implicitRSPChange`
+        // from decoded XED STACKPUSH/STACKPOP operands before applying XML
+        // performance rows. Preserve decoded stack-pointer effects here.
+        inst.implicit_rsp_change = dec.implicit_rsp_change;
         inst.immediate = dec.immediate;
         inst.iform_signature = dec.iform_signature.clone();
         inst.max_op_size_bytes = dec.max_op_size_bytes;
+        inst.uses_high8_reg = dec.uses_high8_reg;
+        inst.explicit_reg_operands = dec.explicit_reg_operands.clone();
+        inst.agen = dec.agen.clone();
 
         // Detect conditional branches for decoder and macro-fusion handling.
         inst.is_branch_instr = is_conditional_branch(&dec.mnemonic);
+        inst.is_serializing_instr = is_serializing_instr(&dec.mnemonic);
+        inst.is_load_serializing = is_load_serializing(&dec.mnemonic);
+        inst.is_store_serializing = is_store_serializing(&dec.mnemonic);
 
         // Detect macro-fusible instructions
         inst.is_macro_fusible_with_next = is_macro_fusible(&dec.mnemonic);
@@ -505,4 +534,48 @@ fn is_conditional_branch(mnemonic: &str) -> bool {
 
 fn is_macro_fusible(mnemonic: &str) -> bool {
     matches!(mnemonic, "dec" | "cmp" | "sub" | "test" | "inc" | "and")
+}
+
+fn is_serializing_instr(mnemonic: &str) -> bool {
+    matches!(
+        mnemonic,
+        "lfence"
+            | "cpuid"
+            | "iret"
+            | "iretd"
+            | "rsm"
+            | "invd"
+            | "invept"
+            | "invlpg"
+            | "invvpid"
+            | "lgdt"
+            | "lidt"
+            | "lldt"
+            | "ltr"
+            | "wbinvd"
+            | "wrmsr"
+    )
+}
+
+fn is_load_serializing(mnemonic: &str) -> bool {
+    matches!(mnemonic, "mfence" | "lfence")
+}
+
+fn is_store_serializing(mnemonic: &str) -> bool {
+    matches!(mnemonic, "mfence" | "sfence")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_instruction_instances;
+
+    #[test]
+    fn lfence_is_serializing_like_python_getinstructions() {
+        let decoded = uica_decoder::decode_raw(&[0x0f, 0xae, 0xe8]).unwrap();
+        let instances = build_instruction_instances(&decoded, 0);
+
+        assert!(instances[0].is_serializing_instr);
+        assert!(instances[0].is_load_serializing);
+        assert!(!instances[0].is_store_serializing);
+    }
 }

@@ -11,8 +11,8 @@ use crate::x64::{get_canonical_reg, get_reg_size, is_gp_reg};
 
 use super::reorder_buffer::ReorderBuffer;
 use super::types::{
-    next_renamed_operand_identity, share, AbstractValueKey, MemAddr, OperandKey, RenamedOperand,
-    Shared, StoreBufferEntry,
+    next_renamed_operand_identity, share, AbstractValueKey, InstrInstance, MemAddr, OperandKey,
+    RenamedOperand, Shared, StoreBufferEntry,
 };
 use super::uop_storage::UopStorage;
 
@@ -146,6 +146,9 @@ pub struct Renamer {
     pub cur_store_buffer_entry: Option<Shared<StoreBufferEntry>>,
     pub store_buffer_entry_dict: HashMap<StoreBufferKey, Shared<StoreBufferEntry>>,
     pub last_reg_merge_issued: Option<u64>,
+    /// Python parity: `Renamer.curInstrPseudoOpDict` persists pseudo operands
+    /// across rename cycles until `isLastUopOfInstr` clears it.
+    pub cur_instr_pseudo_op_dict: HashMap<OperandKey, Shared<RenamedOperand>>,
 }
 
 impl Renamer {
@@ -170,6 +173,7 @@ impl Renamer {
             cur_store_buffer_entry: None,
             store_buffer_entry_dict: HashMap::new(),
             last_reg_merge_issued: None,
+            cur_instr_pseudo_op_dict: HashMap::new(),
         }
     }
 
@@ -178,6 +182,8 @@ impl Renamer {
         idq: &mut VecDeque<u64>,
         storage: &mut UopStorage,
         reorder_buffer: &ReorderBuffer,
+        next_uop_queue_idx: &mut u64,
+        all_generated_instr_instances: &mut [InstrInstance],
     ) -> Vec<u64> {
         self.renamer_active_cycle += 1;
 
@@ -210,6 +216,12 @@ impl Renamer {
                         break;
                     }
                     if self.last_reg_merge_issued != Some(first_uop_idx) {
+                        self.assign_reg_merge_queue_idxs(
+                            &merge_fused_idxs,
+                            storage,
+                            next_uop_queue_idx,
+                            all_generated_instr_instances,
+                        );
                         fused_uop_idxs.extend(merge_fused_idxs);
                         self.last_reg_merge_issued = Some(first_uop_idx);
                         break;
@@ -263,6 +275,44 @@ impl Renamer {
             .filter_map(|lam_idx| storage.get_laminated_uop(lam_idx))
             .flat_map(|lam| lam.fused_uop_idxs.iter().copied())
             .collect()
+    }
+
+    fn assign_reg_merge_queue_idxs(
+        &mut self,
+        fused_uop_idxs: &[u64],
+        storage: &mut UopStorage,
+        next_uop_queue_idx: &mut u64,
+        all_generated_instr_instances: &mut [InstrInstance],
+    ) {
+        // Python parity: `Renamer.cycle()` constructs `Uop(mergeProp, ...)`
+        // when merge uops are injected. Rust stores merge uops earlier so the
+        // IDQ can reference them; assign scheduler heap order at Python's
+        // injection point instead of using early storage ids.
+        for &fused_idx in fused_uop_idxs {
+            let Some(fused) = storage.get_fused_uop(fused_idx).cloned() else {
+                continue;
+            };
+            let lam_idx = fused.laminated_uop_idx;
+            for uop_idx in fused.unfused_uop_idxs {
+                let Some(uop) = storage.get_uop_mut(uop_idx) else {
+                    continue;
+                };
+                if uop.prop.is_reg_merge_uop {
+                    uop.queue_idx = *next_uop_queue_idx;
+                    *next_uop_queue_idx += 1;
+                    if let Some(lam_idx) = lam_idx {
+                        if let Some(instr_i) = all_generated_instr_instances
+                            .iter_mut()
+                            .find(|instr_i| instr_i.idx == uop.instr_instance_idx)
+                        {
+                            if !instr_i.reg_merge_uops.contains(&lam_idx) {
+                                instr_i.reg_merge_uops.push(lam_idx);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn apply_move_elimination(&mut self, fused_uop_idxs: &[u64], storage: &mut UopStorage) {
@@ -389,7 +439,8 @@ impl Renamer {
                 }
             }
 
-            let mut pseudo_dict: HashMap<OperandKey, Shared<RenamedOperand>> = HashMap::new();
+            let mut pseudo_dict = std::mem::take(&mut self.cur_instr_pseudo_op_dict);
+            let mut group_finished = false;
 
             for &uop_idx in &all_uop_idxs {
                 let (
@@ -460,6 +511,17 @@ impl Renamer {
                 for (i, output) in output_ops.iter().enumerate() {
                     let renamed = if eliminated {
                         self.renamed_op_for_eliminated_move(&input_ops, output)
+                    } else if is_zero_port && input_ops.is_empty() && !output_ops.is_empty() {
+                        // Python parity: zero-uop instructions (e.g. `xor r,r`)
+                        // still publish `RenamedOperand(uop=uop, ready=-1)` so
+                        // later consumers keep dependency identity in traces.
+                        share(RenamedOperand {
+                            ready: Some(-1),
+                            uop_idx: Some(uop_idx),
+                            latency: None,
+                            operand: Some(output.clone()),
+                            identity: next_renamed_operand_identity(),
+                        })
                     } else if is_zero_port {
                         renamed_inputs
                             .get(i)
@@ -522,6 +584,7 @@ impl Renamer {
                 }
 
                 if is_last {
+                    group_finished = true;
                     let pending_eliminated = self
                         .pending_commit_eliminated
                         .remove(&inst_idx)
@@ -531,7 +594,12 @@ impl Renamer {
                         self.rename_dict.extend(pending);
                     }
                     self.abs_val_gen.finish_cur_instr();
+                    pseudo_dict.clear();
                 }
+            }
+
+            if !group_finished {
+                self.cur_instr_pseudo_op_dict = pseudo_dict;
             }
         }
     }

@@ -24,7 +24,11 @@ use super::types::{
     recompute_macro_fusion_and_is_last, FusedUop, InstrInstance, LaminatedUop, OperandKey, Uop,
     UopProperties, UopSource,
 };
-use super::uop_expand::expand_instr_instance_to_lam_uops_with_storage;
+use super::uop_expand::{
+    expand_instr_instance_to_lam_uops_with_storage, instr_uses_indexed_addr, instr_uses_same_reg,
+    perf_for_operands, perf_may_be_eliminated_with_input_regs, perf_uops_mite,
+    record_may_be_eliminated,
+};
 use super::uop_storage::UopStorage;
 
 fn populate_instr_instance_metadata(
@@ -38,31 +42,49 @@ fn populate_instr_instance_metadata(
         mnemonic: instr_i.mnemonic.clone(),
         iform_signature: instr_i.iform_signature.clone(),
         max_op_size_bytes: instr_i.max_op_size_bytes,
+        immediate: instr_i.immediate,
+        uses_high8_reg: instr_i.uses_high8_reg,
+        explicit_reg_operands: instr_i.explicit_reg_operands.clone(),
+        agen: instr_i.agen.clone(),
     };
     let candidates = pack_index.candidates_for(&arch_name.to_ascii_uppercase(), &instr_i.mnemonic);
     if let Some(record) = crate::matcher::match_instruction_record(&norm, candidates) {
-        instr_i.uops_mite = if record.perf.uops_mite > 0 {
-            record.perf.uops_mite as u32
-        } else {
-            record.perf.uops.max(0) as u32
-        };
-        instr_i.uops_ms = record.perf.uops_ms.max(0) as u32;
-        instr_i.div_cycles = record.perf.div_cycles;
-        instr_i.retire_slots = record.perf.retire_slots.max(1) as u32;
-        instr_i.instr_tp = record.perf.tp.map(|tp| tp.ceil().max(0.0) as u32);
+        // Python parity: `getInstructions()` overlays `_SR` fields for
+        // same-register forms, then `_I` fields for indexed memory forms.
+        let perf = perf_for_operands(
+            record,
+            instr_uses_same_reg(instr_i),
+            instr_uses_indexed_addr(instr_i),
+        );
+        instr_i.uops_mite = perf_uops_mite(&perf);
+        instr_i.uops_ms = perf.uops_ms.max(0) as u32;
+        instr_i.div_cycles = perf.div_cycles;
+        instr_i.retire_slots = perf.retire_slots.max(1) as u32;
+        instr_i.instr_tp = perf.tp.map(|tp| tp.ceil().max(0.0) as u32);
         instr_i.instr_str = record.string.clone();
-        instr_i.may_be_eliminated = record.perf.may_be_eliminated;
-        instr_i.complex_decoder = record.perf.complex_decoder;
-        instr_i.n_available_simple_decoders = record.perf.n_available_simple_decoders;
-        instr_i.lcp_stall = record.perf.lcp_stall;
-        instr_i.implicit_rsp_change = record.perf.implicit_rsp_change;
-        instr_i.can_be_used_by_lsd = record.perf.can_be_used_by_lsd;
+        if instr_i.implicit_rsp_change == 0 {
+            instr_i.implicit_rsp_change = record.perf.implicit_rsp_change;
+        }
+        instr_i.may_be_eliminated = crate::micro_arch::get_micro_arch(arch_name)
+            .map(|arch| {
+                perf_may_be_eliminated_with_input_regs(record, &perf, &instr_i.input_regs, &arch)
+            })
+            .unwrap_or_else(|| record_may_be_eliminated(record));
+        instr_i.complex_decoder = perf.complex_decoder;
+        instr_i.n_available_simple_decoders = perf.n_available_simple_decoders;
+        instr_i.lcp_stall = perf.lcp_stall;
+        instr_i.can_be_used_by_lsd = perf.uops_ms <= 0
+            && instr_i.implicit_rsp_change == 0
+            && !instr_i
+                .output_regs
+                .iter()
+                .any(|reg| crate::x64::is_high8_reg(reg));
         instr_i.cannot_be_in_dsb_due_to_jcc_erratum =
             record.perf.cannot_be_in_dsb_due_to_jcc_erratum;
-        instr_i.no_micro_fusion = record.perf.no_micro_fusion || no_micro_fusion;
-        instr_i.no_macro_fusion = record.perf.no_macro_fusion || no_macro_fusion;
+        instr_i.no_micro_fusion = perf.no_micro_fusion || no_micro_fusion;
+        instr_i.no_macro_fusion = perf.no_macro_fusion || no_macro_fusion;
         if no_micro_fusion {
-            instr_i.retire_slots = (record.perf.uops.max(0) as u32)
+            instr_i.retire_slots = (perf.uops.max(0) as u32)
                 .max(instr_i.uops_mite + instr_i.uops_ms)
                 .max(1);
             instr_i.uops_mite = instr_i.retire_slots.saturating_sub(instr_i.uops_ms);
@@ -533,8 +555,13 @@ impl FrontEnd {
     pub fn cycle(&mut self, clock: u32) {
         // 1. Issue stage (renamer)
         let issue_uops = if !self.reorder_buffer.is_full() && !self.scheduler.is_full() {
-            self.renamer
-                .cycle(&mut self.idq, &mut self.uop_storage, &self.reorder_buffer)
+            self.renamer.cycle(
+                &mut self.idq,
+                &mut self.uop_storage,
+                &self.reorder_buffer,
+                &mut self.uop_idx_counter,
+                &mut self.all_generated_instr_instances,
+            )
         } else {
             vec![]
         };
@@ -861,6 +888,7 @@ impl FrontEnd {
 
         self.uop_storage.add_uop(Uop {
             idx: uop_idx,
+            queue_idx: uop_idx,
             prop,
             actual_port: None,
             eliminated: false,
@@ -1036,13 +1064,9 @@ impl FrontEnd {
             if let Some(lam) = self.uop_storage.get_laminated_uop_mut(sync_lam_idx) {
                 lam.added_to_idq = None;
             }
-            if let Some(stored) = self
-                .all_generated_instr_instances
-                .iter_mut()
-                .find(|stored| stored.idx == instr.idx)
-            {
-                stored.reg_merge_uops.push(sync_lam_idx);
-            }
+            // Python parity: `instrI.regMergeUops` is appended by
+            // `Renamer.cycle()` when merge uops are injected, not when the
+            // front end discovers merge properties.
         }
 
         for reg in instr.input_regs.iter().chain(instr.output_regs.iter()) {
@@ -1107,7 +1131,8 @@ impl FrontEnd {
                 .iter()
                 .any(|r| crate::x64::get_canonical_reg(r) == "RSP")
                 || first_uop.prop.mem_addr.as_ref().is_some_and(|m| {
-                    m.base.as_deref() == Some("RSP") || m.index.as_deref() == Some("RSP")
+                    !m.is_implicit_stack_operand
+                        && (m.base.as_deref() == Some("RSP") || m.index.as_deref() == Some("RSP"))
                 });
             if uses_rsp {
                 requires_sync = true;
@@ -1172,6 +1197,7 @@ impl FrontEnd {
         };
         self.uop_storage.add_uop(Uop {
             idx: uop_idx,
+            queue_idx: uop_idx,
             prop,
             actual_port: None,
             eliminated: false,

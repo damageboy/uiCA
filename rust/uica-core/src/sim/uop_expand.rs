@@ -263,8 +263,8 @@ fn legacy_adc_sbb_complex_with_two_simple_decoders(
         && perf_uops_mite(perf) == 2
         && perf.uops_ms <= 0
         && matches!(record.iform.split('_').next().unwrap_or(""), "ADC" | "SBB")
-        && perf.ports.get("0156") == Some(&1)
-        && perf.ports.get("06") == Some(&1)
+        && ((perf.ports.get("0156") == Some(&1) && perf.ports.get("06") == Some(&1))
+            || (perf.ports.get("015") == Some(&1) && perf.ports.get("05") == Some(&1)))
 }
 
 pub(crate) fn perf_for_operands(

@@ -92,9 +92,9 @@ pub fn decode_raw(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
         let iform = cbuf_to_string(&raw.iform);
         let agen = nonempty(cbuf_to_string(&raw.agen));
 
-        let (input_regs, output_regs) = decoded_regs(&raw);
+        let (input_regs, output_regs) = decoded_regs(&raw, &disasm);
         let (has_memory_read, has_memory_write, mem_addrs) = decoded_mem_addrs(&raw);
-        let explicit_reg_operands = decoded_explicit_regs(&raw);
+        let explicit_reg_operands = decoded_explicit_regs(&raw, &disasm);
 
         instructions.push(DecodedInstruction {
             ip: offset as u64,
@@ -129,13 +129,13 @@ pub fn decode_raw(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn decoded_regs(raw: &uica_xed_inst_t) -> (Vec<String>, Vec<String>) {
+fn decoded_regs(raw: &uica_xed_inst_t, disasm: &str) -> (Vec<String>, Vec<String>) {
     let mut input_regs = Vec::new();
     let mut output_regs = Vec::new();
 
     for reg in raw.regs.iter().take(raw.reg_count as usize) {
         let name = cbuf_to_string(&reg.name);
-        if name.is_empty() {
+        if name.is_empty() || is_default_k0_mask(&name, disasm) {
             continue;
         }
         if access_reads_register(reg.access) {
@@ -191,7 +191,7 @@ fn decoded_mem_addrs(raw: &uica_xed_inst_t) -> (bool, bool, Vec<DecodedMemAddr>)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn decoded_explicit_regs(raw: &uica_xed_inst_t) -> Vec<String> {
+fn decoded_explicit_regs(raw: &uica_xed_inst_t, disasm: &str) -> Vec<String> {
     let mut regs = Vec::new();
     for reg in raw
         .explicit_regs
@@ -199,11 +199,18 @@ fn decoded_explicit_regs(raw: &uica_xed_inst_t) -> Vec<String> {
         .take(raw.explicit_reg_count as usize)
     {
         let name = cbuf_to_string(reg);
-        if !name.is_empty() {
+        if !name.is_empty() && !is_default_k0_mask(&name, disasm) {
             regs.push(name);
         }
     }
     regs
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn is_default_k0_mask(name: &str, disasm: &str) -> bool {
+    // Python parity: `instructions.py` ignores XED's implicit K0 mask unless
+    // the assembly text explicitly contains `k0`.
+    name == "K0" && !disasm.to_ascii_lowercase().contains("k0")
 }
 
 #[cfg(not(target_arch = "wasm32"))]

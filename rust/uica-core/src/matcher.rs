@@ -148,6 +148,8 @@ fn best_record_match<'a>(
         sized
     };
 
+    let sized: Vec<&InstructionRecord> = prefer_explicit_mask_form(sized, explicit_reg_operands);
+
     let sized: Vec<&InstructionRecord> = if sized
         .iter()
         .any(|c| c.string.contains("R8h") || c.string.contains("R8l"))
@@ -201,6 +203,38 @@ fn best_record_match<'a>(
 
 fn legacy_zero_immediate_string(string: &str) -> bool {
     string.contains(", 0)") || string.contains("(0)") || string.contains("(0,")
+}
+
+fn prefer_explicit_mask_form<'a>(
+    candidates: Vec<&'a InstructionRecord>,
+    explicit_reg_operands: &[String],
+) -> Vec<&'a InstructionRecord> {
+    let has_mask_alternatives = candidates.iter().any(|c| has_evex_mask_operand(&c.string))
+        && candidates.iter().any(|c| !has_evex_mask_operand(&c.string));
+    if !has_mask_alternatives {
+        return candidates;
+    }
+
+    let has_explicit_mask = explicit_reg_operands
+        .iter()
+        .any(|reg| reg.to_ascii_uppercase().starts_with('K'));
+    let filtered: Vec<&InstructionRecord> = candidates
+        .iter()
+        .copied()
+        .filter(|c| has_evex_mask_operand(&c.string) == has_explicit_mask)
+        .collect();
+    if filtered.is_empty() {
+        candidates
+    } else {
+        filtered
+    }
+}
+
+fn has_evex_mask_operand(string: &str) -> bool {
+    // Python parity: XED reports implicit K0 for unmasked EVEX instructions,
+    // but `instructions.py` drops K0 unless asm explicitly contains `k0`.
+    // uops.info marks the opmask operand as a bare `K` between operands.
+    string.contains(", K,")
 }
 
 fn explicit_r8_tags(regs: &[String]) -> Vec<&'static str> {

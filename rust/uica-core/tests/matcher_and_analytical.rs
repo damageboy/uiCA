@@ -299,6 +299,60 @@ fn matches_high8_record_even_when_larger_dest_sets_max_size() {
 }
 
 #[test]
+fn prefers_unmasked_evex_record_when_k0_is_implicit() {
+    let instr = NormalizedInstr {
+        max_op_size_bytes: 64,
+        immediate: None,
+        iform_signature: "ZMMu64_MASKmskw_MEMu64_AVX512".to_string(),
+        mnemonic: "vmovdqu64".to_string(),
+        uses_high8_reg: false,
+        explicit_reg_operands: vec!["ZMM0".to_string()],
+        agen: None,
+    };
+    let candidates = vec![
+        record(
+            "VMOVDQU64_ZMMu64_MASKmskw_MEMu64_AVX512",
+            "VMOVDQU64 (ZMM, K, M512)",
+        ),
+        record(
+            "VMOVDQU64_ZMMu64_MASKmskw_MEMu64_AVX512",
+            "VMOVDQU64 (ZMM, M512)",
+        ),
+    ];
+
+    let matched = match_instruction_record(&instr, &candidates).expect("candidate should match");
+
+    assert_eq!(matched.string, "VMOVDQU64 (ZMM, M512)");
+}
+
+#[test]
+fn prefers_masked_evex_record_when_mask_is_explicit() {
+    let instr = NormalizedInstr {
+        max_op_size_bytes: 64,
+        immediate: None,
+        iform_signature: "ZMMu64_MASKmskw_MEMu64_AVX512".to_string(),
+        mnemonic: "vmovdqu64".to_string(),
+        uses_high8_reg: false,
+        explicit_reg_operands: vec!["ZMM0".to_string(), "K1".to_string()],
+        agen: None,
+    };
+    let candidates = vec![
+        record(
+            "VMOVDQU64_ZMMu64_MASKmskw_MEMu64_AVX512",
+            "VMOVDQU64 (ZMM, K, M512)",
+        ),
+        record(
+            "VMOVDQU64_ZMMu64_MASKmskw_MEMu64_AVX512",
+            "VMOVDQU64 (ZMM, M512)",
+        ),
+    ];
+
+    let matched = match_instruction_record(&instr, &candidates).expect("candidate should match");
+
+    assert_eq!(matched.string, "VMOVDQU64 (ZMM, K, M512)");
+}
+
+#[test]
 fn matches_low8_record_without_high8_substring() {
     let instr = NormalizedInstr {
         max_op_size_bytes: 1,

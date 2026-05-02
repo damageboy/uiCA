@@ -43,6 +43,18 @@ fn decodes_extended_low8_register_names_like_xed() {
 }
 
 #[test]
+fn evex_default_k0_mask_is_not_reported_as_input() {
+    // vmovdqu64 zmm0, zmmword ptr [rsi]
+    let instructions =
+        decode_raw(&[0x62_u8, 0xf1, 0xfe, 0x48, 0x6f, 0x06]).expect("decode should succeed");
+    let inst = &instructions[0];
+
+    assert_eq!(inst.disasm, "vmovdqu64 zmm0, zmmword ptr [rsi]");
+    assert!(!inst.input_regs.iter().any(|reg| reg == "K0"));
+    assert!(!inst.explicit_reg_operands.iter().any(|reg| reg == "K0"));
+}
+
+#[test]
 fn decodes_memory_operands_and_immediates() {
     let bytes = [0x48_u8, 0x83, 0x44, 0x8b, 0x10, 0x05]; // add qword ptr [rbx+rcx*4+0x10], 5
     let instructions = decode_raw(&bytes).expect("decode should succeed");

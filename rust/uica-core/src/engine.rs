@@ -1072,7 +1072,23 @@ fn is_decoded_zero_idiom(decoded: &uica_decoder::DecodedInstruction) -> bool {
 }
 
 fn round2(v: f64) -> f64 {
-    (v * 100.0).round() / 100.0
+    // Python parity: uiCA.py reports summary limits and simulated TP via
+    // `round(value, 2)`, which uses ties-to-even rather than Rust's
+    // half-away-from-zero `f64::round`. BHive raw blocks can hit exact .005
+    // ties (e.g. predecoder 1.125 -> 1.12), so mirror Python rounding here.
+    let scaled = v * 100.0;
+    let lower = scaled.floor();
+    let frac = scaled - lower;
+    let rounded = if (frac - 0.5).abs() <= f64::EPSILON {
+        if (lower as i64).rem_euclid(2) == 0 {
+            lower
+        } else {
+            lower + 1.0
+        }
+    } else {
+        scaled.round()
+    };
+    rounded / 100.0
 }
 
 fn estimate_iterations(cycles: u32, throughput: f64, min_iterations: u32) -> u32 {
@@ -2073,6 +2089,12 @@ mod tests {
                 },
             }],
         }
+    }
+
+    #[test]
+    fn round2_mirrors_python_ties_to_even() {
+        assert_eq!(round2(1.125), 1.12);
+        assert_eq!(round2(1.135), 1.14);
     }
 
     #[test]

@@ -329,11 +329,22 @@ fn parse_perf(
         ports,
         div_cycles,
         may_be_eliminated: parse_bool_attr(instruction, &["mayBeEliminated", "may_be_eliminated"]),
-        complex_decoder: parse_bool_attr(instruction, &["complexDecoder", "complex_decoder"]),
+        complex_decoder: parse_bool_attr(measurement, &["complex_decoder", "complexDecoder"])
+            || parse_bool_attr(instruction, &["complexDecoder", "complex_decoder"]),
         n_available_simple_decoders: parse_u32_attr(
-            instruction,
-            &["nAvailableSimpleDecoders", "n_available_simple_decoders"],
+            measurement,
+            &[
+                "available_simple_decoders",
+                "nAvailableSimpleDecoders",
+                "n_available_simple_decoders",
+            ],
         )
+        .or_else(|| {
+            parse_u32_attr(
+                instruction,
+                &["nAvailableSimpleDecoders", "n_available_simple_decoders"],
+            )
+        })
         .unwrap_or(0),
         lcp_stall: parse_bool_attr(instruction, &["lcpStall", "lcp_stall"]),
         implicit_rsp_change,

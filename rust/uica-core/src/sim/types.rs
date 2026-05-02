@@ -491,8 +491,9 @@ pub fn build_instruction_instances(
         inst.is_load_serializing = is_load_serializing(&dec.mnemonic);
         inst.is_store_serializing = is_store_serializing(&dec.mnemonic);
 
-        // Detect macro-fusible instructions
-        inst.is_macro_fusible_with_next = is_macro_fusible(&dec.mnemonic);
+        // Detect macro-fusible instructions.
+        inst.is_macro_fusible_with_next =
+            is_macro_fusible(&dec.mnemonic, dec.has_memory_read || dec.has_memory_write);
 
         instances.push(inst);
         instance_idx += 1;
@@ -532,8 +533,15 @@ fn is_conditional_branch(mnemonic: &str) -> bool {
     )
 }
 
-fn is_macro_fusible(mnemonic: &str) -> bool {
-    matches!(mnemonic, "dec" | "cmp" | "sub" | "test" | "inc" | "and")
+fn is_macro_fusible(mnemonic: &str, has_memory_operand: bool) -> bool {
+    // Python parity: `Instr.macroFusibleWith` is XML-form specific. Current
+    // UIPacks do not expose it, so mirror matched Python scalar forms: ADD is
+    // included, memory forms such as `CMP (M8, I8)` are not.
+    !has_memory_operand
+        && matches!(
+            mnemonic,
+            "add" | "dec" | "cmp" | "sub" | "test" | "inc" | "and"
+        )
 }
 
 fn is_serializing_instr(mnemonic: &str) -> bool {

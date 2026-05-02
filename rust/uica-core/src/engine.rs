@@ -78,6 +78,8 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
             n_available_simple_decoders: arch.n_decoders.saturating_sub(1),
             can_be_used_by_lsd: true,
             no_macro_fusion: false,
+            lcp_stall: false,
+            has_memory_operand: decoded_instr.has_memory_read || decoded_instr.has_memory_write,
             // Python parity: absent `archData.instrData[iform]` becomes
             // UnknownInstr with empty input/output operand lists. Matched
             // instructions fill these from record/XED operands below.
@@ -130,8 +132,14 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
                 // simulator still emits zero-port bookkeeping uops.
                 fact.port_data.clear();
             }
-            fact.complex_decoder = perf.complex_decoder;
-            fact.n_available_simple_decoders = perf.n_available_simple_decoders;
+            let (complex_decoder, n_available_simple_decoders) =
+                crate::sim::uop_expand::python_decoder_shape_from_record(
+                    record,
+                    &perf,
+                    arch.n_decoders,
+                );
+            fact.complex_decoder = complex_decoder;
+            fact.n_available_simple_decoders = n_available_simple_decoders;
             if result.invocation.no_micro_fusion {
                 retire_slots = (perf.uops.max(0) as u32)
                     .max(fact.uops_mite + fact.uops_ms)
@@ -158,6 +166,7 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
                     .iter()
                     .any(|reg| crate::x64::is_high8_reg(reg));
             fact.no_macro_fusion = perf.no_macro_fusion || result.invocation.no_macro_fusion;
+            fact.lcp_stall = perf.lcp_stall;
             fact.may_be_eliminated = crate::sim::uop_expand::perf_may_be_eliminated_with_input_regs(
                 record,
                 &perf,
@@ -246,7 +255,6 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
     result.summary.bottlenecks_predicted = bottlenecks;
 
     // Run simulator to generate cycles JSON and final simulated counts.
-    let use_python_simulated_summary = mode == "loop";
     let mut lsd_active = false;
     let mut lsd_unroll_count = 1u32;
     if let Ok((frontend, uops_for_round, final_clock)) =
@@ -256,19 +264,28 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
         lsd_unroll_count = frontend.lsd_unroll_count;
         result.summary.iterations_simulated = uops_for_round.len() as u32;
         result.summary.cycles_simulated = final_clock + 1;
-        if use_python_simulated_summary {
-            if let Some(simulated_throughput) =
-                compute_simulated_throughput(&frontend, &uops_for_round)
-            {
-                // Python parity: JSON `TP` is derived from `uopsForRound` retirement
-                // samples, then passed into `getBottlenecks`.
-                result.summary.throughput_cycles_per_iteration = Some(simulated_throughput);
-            }
+        if let Some(simulated_throughput) = compute_simulated_throughput(&frontend, &uops_for_round)
+        {
+            // Python parity: JSON `TP` is derived from `uopsForRound` retirement
+            // samples for both loop and unroll mode, then passed into
+            // `getBottlenecks`.
+            result.summary.throughput_cycles_per_iteration = Some(simulated_throughput);
         }
+        refresh_summary_limits_from_python_bottlenecks(
+            &mut result.summary,
+            &decoded,
+            &loop_facts,
+            &arch,
+            mode == "loop",
+            normalized_invocation.alignment_offset,
+            &frontend,
+        );
         align_frontend_limits_with_simulated_sources(&mut result.summary, &frontend);
-        if use_python_simulated_summary {
-            append_python_runtime_bottlenecks(&mut result.summary, &frontend, &uops_for_round);
+        if let Some(throughput) = result.summary.throughput_cycles_per_iteration {
+            result.summary.bottlenecks_predicted =
+                predicted_bottlenecks(&result.summary.limits, throughput);
         }
+        append_python_runtime_bottlenecks(&mut result.summary, &frontend, &uops_for_round);
         result.cycles = build_cycles_json(&frontend, final_clock);
         result.instructions = build_instructions_json(&frontend);
     } else {
@@ -308,6 +325,8 @@ struct LoopInstrFacts {
     n_available_simple_decoders: u32,
     can_be_used_by_lsd: bool,
     no_macro_fusion: bool,
+    lcp_stall: bool,
+    has_memory_operand: bool,
     input_operands: Vec<String>,
     output_operands: Vec<String>,
     latencies: BTreeMap<(String, String), i32>,
@@ -370,6 +389,160 @@ fn align_frontend_limits_with_simulated_sources(
     if let Some(throughput) = summary.throughput_cycles_per_iteration {
         summary.bottlenecks_predicted = predicted_bottlenecks(&summary.limits, throughput);
     }
+}
+
+fn refresh_summary_limits_from_python_bottlenecks(
+    summary: &mut Summary,
+    decoded: &[uica_decoder::DecodedInstruction],
+    facts: &[LoopInstrFacts],
+    arch: &MicroArchConfig,
+    loop_mode: bool,
+    alignment_offset: u32,
+    frontend: &crate::sim::FrontEnd,
+) {
+    // Python parity: `getBottlenecks` recomputes frontend/issue/port limits
+    // from simulated instruction sources for both loop and unroll mode.
+    let has_mite = frontend
+        .all_generated_instr_instances
+        .iter()
+        .any(|instr| instr.source == Some(crate::sim::UopSource::Mite));
+    let has_dsb = frontend
+        .all_generated_instr_instances
+        .iter()
+        .any(|instr| instr.source == Some(crate::sim::UopSource::Dsb));
+    let has_lsd = frontend
+        .all_generated_instr_instances
+        .iter()
+        .any(|instr| instr.source == Some(crate::sim::UopSource::Lsd));
+
+    let frontend_instrs = facts_to_analytical_instructions(facts);
+    let frontend_limits = compute_frontend_limits(&frontend_instrs, arch, alignment_offset);
+    let mut limits = empty_limits();
+
+    if has_mite {
+        if !has_dsb && !has_lsd {
+            if let Some(predecoder) =
+                compute_predecode_limit(decoded, facts, loop_mode, alignment_offset)
+            {
+                limits.insert("predecoder".to_string(), Some(round2(predecoder)));
+            }
+        }
+        if let Some(decoder) = frontend_limits.decoder {
+            limits.insert("decoder".to_string(), Some(round2(decoder)));
+        }
+    }
+    if has_dsb {
+        if let Some(dsb) = frontend_limits.dsb {
+            limits.insert("dsb".to_string(), Some(round2(dsb)));
+        }
+    }
+    if has_lsd {
+        if let Some(lsd) = frontend_limits.lsd {
+            limits.insert("lsd".to_string(), Some(round2(lsd)));
+        }
+    }
+
+    limits.insert(
+        "issue".to_string(),
+        Some(round2(compute_issue_limit(
+            issue_retire_slots(facts, &frontend_instrs),
+            arch.issue_width as i32,
+        ))),
+    );
+    limits.insert(
+        "ports".to_string(),
+        Some(round2(compute_port_usage_limit(
+            &facts_to_port_usage_inputs(facts, &frontend_instrs, arch.name),
+        ))),
+    );
+
+    let latency_instrs = facts_to_latency_instructions(facts);
+    let latency_graph = generate_latency_graph(&latency_instrs);
+    limits.insert(
+        "dependencies".to_string(),
+        Some(round2(
+            compute_maximum_latency_for_graph(&latency_graph).max_cycle_ratio,
+        )),
+    );
+
+    summary.limits = limits;
+}
+
+fn compute_predecode_limit(
+    decoded: &[uica_decoder::DecodedInstruction],
+    facts: &[LoopInstrFacts],
+    loop_mode: bool,
+    alignment_offset: u32,
+) -> Option<f64> {
+    if decoded.is_empty() {
+        return None;
+    }
+
+    let code_length: u32 = decoded.iter().map(|instr| instr.len).sum();
+    if code_length == 0 {
+        return None;
+    }
+    let unroll = if loop_mode {
+        1
+    } else {
+        16 / gcd_u32(code_length, 16)
+    };
+    let n_b16_blocks = (unroll * code_length).div_ceil(16) as usize;
+    let mut last_byte_in_block = vec![0u32; n_b16_blocks];
+    let mut opcode_crosses_block = vec![0u32; n_b16_blocks];
+    let mut lcp_in_block = vec![0u32; n_b16_blocks];
+
+    let alignment = (alignment_offset % 16) as i64;
+    let mut cur_addr = if alignment == 0 { 0 } else { -16 + alignment };
+    let stop_addr = (unroll * code_length) as i64;
+    for (idx, instr) in decoded.iter().cycle().enumerate() {
+        if cur_addr >= stop_addr {
+            break;
+        }
+        let instr_len = instr.len as i64;
+        let next_addr = cur_addr + instr_len;
+        let end_block = (next_addr - 1).div_euclid(16);
+        let nominal_opcode_block = (cur_addr + instr.pos_nominal_opcode as i64).div_euclid(16);
+        cur_addr = next_addr;
+
+        if (0..n_b16_blocks as i64).contains(&end_block) {
+            last_byte_in_block[end_block as usize] += 1;
+        }
+        if (0..n_b16_blocks as i64).contains(&nominal_opcode_block) {
+            let block = nominal_opcode_block as usize;
+            if nominal_opcode_block != end_block {
+                opcode_crosses_block[block] += 1;
+            }
+            if facts
+                .get(idx % decoded.len())
+                .is_some_and(|fact| fact.lcp_stall)
+            {
+                lcp_in_block[block] += 1;
+            }
+        }
+    }
+
+    let mut cycles = 0u32;
+    for block in 0..n_b16_blocks {
+        cycles += (last_byte_in_block[block] + opcode_crosses_block[block]).div_ceil(5);
+        let prev = if block == 0 {
+            n_b16_blocks - 1
+        } else {
+            block - 1
+        };
+        let prev_cycles = (last_byte_in_block[prev] + opcode_crosses_block[prev]).div_ceil(5);
+        cycles += (3 * lcp_in_block[block]).saturating_sub(prev_cycles.saturating_sub(1));
+    }
+    Some(cycles as f64 / unroll as f64)
+}
+
+fn gcd_u32(mut a: u32, mut b: u32) -> u32 {
+    while b != 0 {
+        let r = a % b;
+        a = b;
+        b = r;
+    }
+    a
 }
 
 fn compute_loop_model(
@@ -831,8 +1004,10 @@ fn facts_to_analytical_instructions(facts: &[LoopInstrFacts]) -> Vec<AnalyticalI
                 size: fact.size,
                 macro_fused_with_prev: false,
                 macro_fused_with_next: false,
-                macro_fusible_with_next: is_macro_fusible_mnemonic(&mnemonic)
-                    && !fact.no_macro_fusion,
+                macro_fusible_with_next: is_macro_fusible_mnemonic(
+                    &mnemonic,
+                    fact.has_memory_operand,
+                ) && !fact.no_macro_fusion,
                 is_branch: is_conditional_jump(&mnemonic),
                 complex_decoder: fact.complex_decoder,
                 n_available_simple_decoders: fact.n_available_simple_decoders,
@@ -854,8 +1029,15 @@ fn facts_to_analytical_instructions(facts: &[LoopInstrFacts]) -> Vec<AnalyticalI
     out
 }
 
-fn is_macro_fusible_mnemonic(mnemonic: &str) -> bool {
-    matches!(mnemonic, "dec" | "cmp" | "sub" | "test" | "inc" | "and")
+fn is_macro_fusible_mnemonic(mnemonic: &str, has_memory_operand: bool) -> bool {
+    // Python parity: `Instr.macroFusibleWith` is XML-form specific. Current
+    // UIPacks do not expose it, so mirror matched Python scalar forms: ADD is
+    // included, memory forms such as `CMP (M8, I8)` are not.
+    !has_memory_operand
+        && matches!(
+            mnemonic,
+            "add" | "dec" | "cmp" | "sub" | "test" | "inc" | "and"
+        )
 }
 
 fn issue_retire_slots(facts: &[LoopInstrFacts], instrs: &[AnalyticalInstruction]) -> i32 {

@@ -27,7 +27,7 @@ use super::types::{
 use super::uop_expand::{
     expand_instr_instance_to_lam_uops_with_storage, instr_uses_indexed_addr, instr_uses_same_reg,
     perf_for_operands, perf_may_be_eliminated_with_input_regs, perf_uops_mite,
-    record_may_be_eliminated,
+    python_decoder_shape_from_record, record_may_be_eliminated,
 };
 use super::uop_storage::UopStorage;
 
@@ -70,8 +70,13 @@ fn populate_instr_instance_metadata(
                 perf_may_be_eliminated_with_input_regs(record, &perf, &instr_i.input_regs, &arch)
             })
             .unwrap_or_else(|| record_may_be_eliminated(record));
-        instr_i.complex_decoder = perf.complex_decoder;
-        instr_i.n_available_simple_decoders = perf.n_available_simple_decoders;
+        let (complex_decoder, n_available_simple_decoders) = python_decoder_shape_from_record(
+            record,
+            &perf,
+            crate::micro_arch::get_micro_arch(arch_name).map_or(4, |arch| arch.n_decoders),
+        );
+        instr_i.complex_decoder = complex_decoder;
+        instr_i.n_available_simple_decoders = n_available_simple_decoders;
         instr_i.lcp_stall = perf.lcp_stall;
         instr_i.can_be_used_by_lsd = perf.uops_ms <= 0
             && instr_i.implicit_rsp_change == 0
@@ -677,8 +682,11 @@ impl FrontEnd {
                 }
                 lam_idxs
             } else if self.uop_source.as_deref() == Some("MITE") {
-                self.predecoder.cycle(clock);
-                let decoded = self.decoder.cycle(clock);
+                self.predecoder
+                    .cycle(clock, &mut self.all_generated_instr_instances);
+                let decoded = self
+                    .decoder
+                    .cycle(clock, &mut self.all_generated_instr_instances);
                 let mut lam_idxs = Vec::new();
                 for instr_i in &decoded {
                     if instr_i.macro_fused_with_prev_instr {

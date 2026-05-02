@@ -179,6 +179,45 @@ fn quick_add_loop_model_matches_expected_outputs() {
 }
 
 #[test]
+fn unrolled_mite_cycle_json_keeps_predecode_events() {
+    // Python parity: `FrontEnd.allGeneratedInstrInstances` points at same
+    // InstrInstance objects mutated by PreDecoder/Decoder, so unrolled MITE
+    // traces keep addedToIQ/removedFromIQ lifecycle events.
+    let code = hex::decode("4183ff0119c083e00885c98945c4b8010000000f4fc139c2").unwrap();
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../uica-data/generated/manifest.json");
+    let pack = uica_data::load_manifest_pack(&manifest, "SKL").unwrap();
+    let result = uica_core::engine::engine_with_pack(
+        &code,
+        &Invocation {
+            arch: "SKL".to_string(),
+            min_cycles: 500,
+            ..Invocation::default()
+        },
+        &pack,
+    );
+
+    assert_eq!(
+        result.cycles[0]["addedToIQ"].as_array().map(Vec::len),
+        Some(5)
+    );
+    assert!(result
+        .cycles
+        .iter()
+        .any(|cycle| cycle.get("removedFromIQ").is_some()));
+    assert_eq!(
+        result.cycles[5]["addedToIDQ"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(result.summary.throughput_cycles_per_iteration, Some(3.01));
+    assert_eq!(result.summary.limits.get("predecoder"), Some(&Some(3.0)));
+    assert_eq!(
+        result.summary.bottlenecks_predicted,
+        vec!["Predecoder".to_string()]
+    );
+}
+
+#[test]
 fn flag_chain_bottlenecks_use_simulated_throughput() {
     // Python parity: JSON summary passes simulated TP into getBottlenecks().
     let code = hex::decode("4801d84819d14d11c849ffca75f2").unwrap();

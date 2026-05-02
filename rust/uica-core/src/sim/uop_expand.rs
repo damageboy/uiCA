@@ -216,6 +216,37 @@ pub(crate) fn perf_uops_mite(perf: &uica_data::PerfRecord) -> u32 {
     perf.uops_mite.max(1) as u32
 }
 
+pub(crate) fn python_decoder_shape_from_record(
+    record: &uica_data::InstructionRecord,
+    perf: &uica_data::PerfRecord,
+    n_decoders: u32,
+) -> (bool, u32) {
+    // Python parity: `instructions.py getInstructions()` reads
+    // `complDec`/`sDec` from perfData, then derives `complexDecoder` after
+    // variants are applied:
+    // `if (not complexDecoder) and (uopsMS or (uopsMITE + uopsMS > 1))`.
+    let uops_mite = perf_uops_mite(perf);
+    let uops_ms = perf.uops_ms.max(0) as u32;
+    let derived_complex = !perf.complex_decoder && (uops_ms > 0 || uops_mite + uops_ms > 1);
+
+    // Compatibility for UIPacks produced before data-gen preserved
+    // measurement-level `complex_decoder`/`available_simple_decoders`.
+    // Python marks CMOVcc as one-uop complex with `sDec = nDecoders - 1`.
+    let legacy_cmov_complex = !perf.complex_decoder
+        && perf.n_available_simple_decoders == 0
+        && record.iform.starts_with("CMOV");
+
+    let complex_decoder = perf.complex_decoder || derived_complex || legacy_cmov_complex;
+    let n_available_simple_decoders = if legacy_cmov_complex {
+        n_decoders.saturating_sub(1)
+    } else if derived_complex && perf.n_available_simple_decoders == 0 {
+        n_decoders
+    } else {
+        perf.n_available_simple_decoders
+    };
+    (complex_decoder, n_available_simple_decoders)
+}
+
 pub(crate) fn perf_for_operands(
     record: &uica_data::InstructionRecord,
     uses_same_reg: bool,

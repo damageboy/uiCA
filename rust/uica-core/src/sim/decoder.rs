@@ -13,6 +13,22 @@ use crate::sim::types::InstrInstance;
 
 type SharedQueue = Rc<RefCell<VecDeque<InstrInstance>>>;
 
+fn mark_removed_from_iq(
+    instr_i: &InstrInstance,
+    clock: u32,
+    all_generated_instr_instances: &mut [InstrInstance],
+) {
+    // Python parity: `allGeneratedInstrInstances` and `instructionQueue`
+    // contain the same InstrInstance object. Rust queues are cloned values, so
+    // mirror Decoder.removedFromIQ on canonical generated instance at decode.
+    if let Some(generated) = all_generated_instr_instances
+        .iter_mut()
+        .find(|generated| generated.idx == instr_i.idx)
+    {
+        generated.removed_from_iq = Some(clock);
+    }
+}
+
 /// Mirrors Python `class Decoder` exactly.
 pub struct Decoder {
     pub arch: MicroArchConfig,
@@ -30,7 +46,11 @@ impl Decoder {
     /// Port of Decoder.cycle from uiCA.py.
     ///
     /// Returns decoded InstrInstances; FrontEnd maps them to existing laminated uops.
-    pub fn cycle(&mut self, clock: u32) -> Vec<InstrInstance> {
+    pub fn cycle(
+        &mut self,
+        clock: u32,
+        all_generated_instr_instances: &mut [InstrInstance],
+    ) -> Vec<InstrInstance> {
         let mut decoded_instrs = Vec::new();
         let mut n_decoded_instrs = 0;
         let mut remaining_decoder_slots = self.arch.n_decoders;
@@ -44,6 +64,7 @@ impl Decoder {
             if instr_i.macro_fused_with_prev_instr {
                 let mut inst = self.instruction_queue.borrow_mut().pop_front().unwrap();
                 inst.removed_from_iq = Some(clock);
+                mark_removed_from_iq(&inst, clock, all_generated_instr_instances);
                 continue;
             }
 
@@ -87,6 +108,7 @@ impl Decoder {
             // All checks passed, decode this instruction
             let mut inst = self.instruction_queue.borrow_mut().pop_front().unwrap();
             inst.removed_from_iq = Some(clock);
+            mark_removed_from_iq(&inst, clock, all_generated_instr_instances);
             decoded_instrs.push(inst);
 
             if instr_i.uops_ms > 0 {

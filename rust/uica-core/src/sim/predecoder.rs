@@ -39,7 +39,7 @@ impl PreDecoder {
     }
 
     /// Port of PreDecoder.cycle from uiCA.py.
-    pub fn cycle(&mut self, clock: u32) {
+    pub fn cycle(&mut self, clock: u32, all_generated_instr_instances: &mut [InstrInstance]) {
         if self.stalled == 0 {
             if self.pre_dec_queue.is_empty()
                 && (self.partial_instr_i.is_some() || !self.b16_block_queue.is_empty())
@@ -111,6 +111,16 @@ impl PreDecoder {
                 let mut queue = self.instruction_queue.borrow_mut();
                 for mut instr_i in self.pre_dec_queue.drain(..) {
                     instr_i.predecoded = Some(clock);
+                    // Python parity: `allGeneratedInstrInstances` and the
+                    // predecoder queue hold the same InstrInstance object.
+                    // Rust queues carry cloned values, so mirror the mutation
+                    // at PreDecoder timing on the canonical generated instance.
+                    if let Some(generated) = all_generated_instr_instances
+                        .iter_mut()
+                        .find(|generated| generated.idx == instr_i.idx)
+                    {
+                        generated.predecoded = Some(clock);
+                    }
                     queue.push_back(instr_i);
                 }
             }

@@ -55,3 +55,43 @@ fn raw_cli_accepts_run_config_flags_and_writes_v1_json() {
     assert_eq!(value["summary"]["iterations_simulated"], 20);
     assert_eq!(value["summary"]["cycles_simulated"], 600);
 }
+
+#[test]
+fn raw_cli_writes_trace_and_graph_html_reports() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let raw = temp.path().join("loop.bin");
+    let trace = temp.path().join("trace.html");
+    let graph = temp.path().join("graph.html");
+    std::fs::write(&raw, [0x48, 0x01, 0xd8]).expect("raw input should be written");
+
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../uica-data/generated/manifest.json");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_uica-cli"))
+        .env("UICA_RUST_DATAPACK", manifest)
+        .arg(&raw)
+        .arg("--raw")
+        .arg("--arch")
+        .arg("SKL")
+        .arg("--min-cycles")
+        .arg("8")
+        .arg("--min-iterations")
+        .arg("1")
+        .arg("--trace")
+        .arg(&trace)
+        .arg("--graph")
+        .arg(&graph)
+        .output()
+        .expect("cli should run");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let trace_html = std::fs::read_to_string(&trace).expect("trace report should be written");
+    let graph_html = std::fs::read_to_string(&graph).expect("graph report should be written");
+    assert!(trace_html.contains("var tableData = ["));
+    assert!(trace_html.contains("Execution Trace"));
+    assert!(graph_html.contains("Plotly.newPlot"));
+    assert!(graph_html.contains("Toggle interpolation mode"));
+}

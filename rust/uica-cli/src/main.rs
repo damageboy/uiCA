@@ -39,6 +39,14 @@ struct Cli {
     #[arg(long = "event-trace", value_name = "PATH")]
     event_trace: Option<PathBuf>,
 
+    /// Write Python-compatible HTML execution trace to PATH.
+    #[arg(long = "trace", value_name = "PATH", num_args = 0..=1, default_missing_value = "trace.html")]
+    trace: Option<PathBuf>,
+
+    /// Write Python-compatible HTML cumulative graph to PATH.
+    #[arg(long = "graph", value_name = "PATH", num_args = 0..=1, default_missing_value = "graph.html")]
+    graph: Option<PathBuf>,
+
     /// Alignment offset within a 64-byte cache line (0..63).
     #[arg(long = "alignment-offset", default_value_t = 0)]
     alignment_offset: u32,
@@ -109,7 +117,39 @@ fn run() -> Result<()> {
             .with_context(|| format!("failed to write event trace {}", path.display()))?;
     }
 
-    let result = engine(&bytes, &invocation);
+    let wants_reports = args.trace.is_some() || args.graph.is_some();
+    let output = if wants_reports {
+        uica_core::engine::engine_output(&bytes, &invocation, true)
+            .map_err(|e| anyhow!("report engine failed: {e}"))?
+    } else {
+        uica_core::engine::EngineOutput {
+            result: engine(&bytes, &invocation),
+            reports: None,
+        }
+    };
+    let result = output.result;
+
+    if let Some(path) = &args.trace {
+        let reports = output
+            .reports
+            .as_ref()
+            .ok_or_else(|| anyhow!("report engine did not produce trace data"))?;
+        let html = uica_core::report::render_trace_html(&reports.trace)
+            .map_err(|e| anyhow!("trace report render failed: {e}"))?;
+        fs::write(path, html)
+            .with_context(|| format!("failed to write trace report {}", path.display()))?;
+    }
+
+    if let Some(path) = &args.graph {
+        let reports = output
+            .reports
+            .as_ref()
+            .ok_or_else(|| anyhow!("report engine did not produce graph data"))?;
+        let html = uica_core::report::render_graph_html(&reports.graph)
+            .map_err(|e| anyhow!("graph report render failed: {e}"))?;
+        fs::write(path, html)
+            .with_context(|| format!("failed to write graph report {}", path.display()))?;
+    }
 
     if let Some(path) = &args.json {
         let json = serde_json::to_vec_pretty(&result)?;
@@ -166,6 +206,10 @@ mod tests {
             "--simple-front-end",
             "--event-trace",
             "events.trace",
+            "--trace",
+            "trace.html",
+            "--graph",
+            "graph.html",
         ])
         .expect("args should parse");
 
@@ -182,6 +226,24 @@ mod tests {
         assert!(cli.no_macro_fusion);
         assert!(cli.simple_front_end);
         assert_eq!(cli.event_trace, Some(PathBuf::from("events.trace")));
+        assert_eq!(cli.trace, Some(PathBuf::from("trace.html")));
+        assert_eq!(cli.graph, Some(PathBuf::from("graph.html")));
+    }
+
+    #[test]
+    fn html_report_flags_default_paths_when_value_omitted() {
+        let cli = Cli::try_parse_from([
+            "uica-cli",
+            "snippet.o",
+            "--arch",
+            "SKL",
+            "--trace",
+            "--graph",
+        ])
+        .expect("html report flags should parse with default paths");
+
+        assert_eq!(cli.trace, Some(PathBuf::from("trace.html")));
+        assert_eq!(cli.graph, Some(PathBuf::from("graph.html")));
     }
 
     #[test]
@@ -206,6 +268,8 @@ mod tests {
         assert!(!cli.no_macro_fusion);
         assert!(!cli.simple_front_end);
         assert_eq!(cli.event_trace, None);
+        assert_eq!(cli.trace, None);
+        assert_eq!(cli.graph, None);
     }
 
     #[test]

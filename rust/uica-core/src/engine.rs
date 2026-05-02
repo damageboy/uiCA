@@ -12,7 +12,8 @@ use uica_model::{Invocation, Summary, UicaResult};
 use crate::analytical::{
     compute_final_prediction, compute_frontend_limits, compute_issue_limit,
     compute_maximum_latency_for_graph, compute_port_usage_limit, generate_latency_graph,
-    AnalyticalInstruction, AnalyticalLatencyInstruction, InstructionPortUsage,
+    AnalyticalInstruction, AnalyticalLatencyInstruction, AnalyticalMemOperand,
+    InstructionPortUsage,
 };
 use crate::matcher::{match_instruction_record, NormalizedInstr};
 use crate::micro_arch::{get_micro_arch, MicroArchConfig};
@@ -80,13 +81,37 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
             no_macro_fusion: false,
             lcp_stall: decoded_instr.has_66_prefix && decoded_instr.immediate_width_bits == 16,
             has_memory_operand: decoded_instr.has_memory_read || decoded_instr.has_memory_write,
+            instr_str: String::new(),
+            input_mem_operands: decoded_instr
+                .mem_addrs
+                .iter()
+                .filter(|_| decoded_instr.has_memory_read)
+                .map(|mem| AnalyticalMemOperand {
+                    base: mem.base.as_deref().map(crate::x64::get_canonical_reg),
+                    index: mem.index.as_deref().map(crate::x64::get_canonical_reg),
+                    disp: mem.disp,
+                })
+                .collect(),
+            mem_addr_operands: decoded_instr
+                .mem_addrs
+                .iter()
+                .flat_map(|mem| [mem.base.as_ref(), mem.index.as_ref()])
+                .flatten()
+                .map(|reg| crate::x64::get_canonical_reg(reg))
+                .collect(),
             // Python parity: absent `archData.instrData[iform]` becomes
             // UnknownInstr with empty input/output operand lists. Matched
             // instructions fill these from record/XED operands below.
             input_operands: Vec::new(),
             output_operands: Vec::new(),
             latencies: BTreeMap::new(),
+            mem_addr_latency_pairs: std::collections::BTreeSet::new(),
             may_be_eliminated: false,
+            eliminated_move_input: None,
+            eliminated_move_output_is_32_bit: decoded_instr
+                .output_regs
+                .first()
+                .is_some_and(|reg| crate::x64::get_reg_size(reg) == 32),
             // UnknownInstr still participates in frontend/issue loop modeling
             // with default uopsMITE=1 and retireSlots=1.
             matched: true,
@@ -122,6 +147,7 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
                 perf.uops.max(0)
             };
             let mut retire_slots = perf.retire_slots.max(1);
+            fact.instr_str = record.string.clone();
             fact.uops = uops;
             fact.uops_mite = crate::sim::uop_expand::perf_uops_mite(&perf);
             fact.uops_ms = perf.uops_ms.max(0) as u32;
@@ -181,9 +207,20 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
                     &arch,
                 );
             let (input_map, output_map) = mapped_record_operands(record, decoded_instr);
+            fact.eliminated_move_input = input_map
+                .values()
+                .flatten()
+                .next()
+                .map(|operand| operand.value.clone());
             fact.input_operands = flatten_input_operand_map(&input_map);
             fact.output_operands = flatten_operand_map(&output_map);
             fact.latencies = map_record_latencies_to_decoded(
+                record,
+                decoded_instr,
+                arch.name,
+                uses_sr_fallback_for_analytics || uses_same_reg,
+            );
+            fact.mem_addr_latency_pairs = map_record_mem_addr_latency_pairs(
                 record,
                 decoded_instr,
                 arch.name,
@@ -333,10 +370,16 @@ struct LoopInstrFacts {
     no_macro_fusion: bool,
     lcp_stall: bool,
     has_memory_operand: bool,
+    instr_str: String,
     input_operands: Vec<String>,
     output_operands: Vec<String>,
+    input_mem_operands: Vec<AnalyticalMemOperand>,
+    mem_addr_operands: Vec<String>,
+    mem_addr_latency_pairs: std::collections::BTreeSet<(String, String)>,
     latencies: BTreeMap<(String, String), i32>,
     may_be_eliminated: bool,
+    eliminated_move_input: Option<String>,
+    eliminated_move_output_is_32_bit: bool,
     matched: bool,
 }
 
@@ -467,7 +510,7 @@ fn refresh_summary_limits_from_python_bottlenecks(
     );
 
     let latency_instrs = facts_to_latency_instructions(facts);
-    let latency_graph = generate_latency_graph(&latency_instrs);
+    let latency_graph = generate_latency_graph(&latency_instrs, arch.fast_pointer_chasing);
     limits.insert(
         "dependencies".to_string(),
         Some(round2(
@@ -681,7 +724,7 @@ fn compute_loop_model(
     let frontend_limits = compute_frontend_limits(&frontend_instrs, arch, 0);
 
     let latency_instrs = facts_to_latency_instructions(facts);
-    let latency_graph = generate_latency_graph(&latency_instrs);
+    let latency_graph = generate_latency_graph(&latency_instrs, arch.fast_pointer_chasing);
     let max_latency = compute_maximum_latency_for_graph(&latency_graph).max_cycle_ratio;
     let dependencies = if max_latency > 0.0 {
         Some(round2(max_latency))
@@ -1029,6 +1072,39 @@ fn map_record_latencies_to_decoded(
     latencies
 }
 
+fn map_record_mem_addr_latency_pairs(
+    record: &uica_data::InstructionRecord,
+    decoded: &uica_decoder::DecodedInstruction,
+    _arch_name: &str,
+    _use_same_reg_latencies: bool,
+) -> std::collections::BTreeSet<(String, String)> {
+    let (input_map, output_map) = mapped_record_operands(record, decoded);
+    let mut pairs = std::collections::BTreeSet::new();
+    for latency in &record.perf.latencies {
+        if latency.cycles < 0 {
+            continue;
+        }
+        let Some(inputs) = input_map.get(&latency.start_op) else {
+            continue;
+        };
+        let Some(outputs) = output_map.get(&latency.target_op) else {
+            continue;
+        };
+        for input in inputs {
+            if !matches!(
+                input.kind,
+                LatencyInputKind::MemAddrBase | LatencyInputKind::MemAddrIndex
+            ) {
+                continue;
+            }
+            for output in outputs {
+                pairs.insert((input.value.clone(), output.clone()));
+            }
+        }
+    }
+    pairs
+}
+
 fn record_latency_cycles_for_decoded_input(
     record: &uica_data::InstructionRecord,
     latency: &uica_data::LatencyRecord,
@@ -1097,10 +1173,17 @@ fn facts_to_latency_instructions(facts: &[LoopInstrFacts]) -> Vec<AnalyticalLate
         .iter()
         .filter(|fact| !is_conditional_jump(&canonical_loop_mnemonic(&fact.mnemonic)))
         .map(|fact| AnalyticalLatencyInstruction {
+            instr_str: fact.instr_str.clone(),
+            uops: fact.uops,
             input_operands: fact.input_operands.clone(),
             output_operands: fact.output_operands.clone(),
+            input_mem_operands: fact.input_mem_operands.clone(),
+            mem_addr_operands: fact.mem_addr_operands.clone(),
+            mem_addr_latency_pairs: fact.mem_addr_latency_pairs.clone(),
             latencies: fact.latencies.clone(),
             may_be_eliminated: fact.may_be_eliminated,
+            eliminated_move_input: fact.eliminated_move_input.clone(),
+            eliminated_move_output_is_32_bit: fact.eliminated_move_output_is_32_bit,
         })
         .collect()
 }

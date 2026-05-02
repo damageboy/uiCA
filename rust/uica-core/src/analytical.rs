@@ -44,11 +44,25 @@ pub struct LatencyGraph {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AnalyticalMemOperand {
+    pub base: Option<String>,
+    pub index: Option<String>,
+    pub disp: i64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AnalyticalLatencyInstruction {
+    pub instr_str: String,
+    pub uops: i32,
     pub input_operands: Vec<String>,
     pub output_operands: Vec<String>,
+    pub input_mem_operands: Vec<AnalyticalMemOperand>,
+    pub mem_addr_operands: Vec<String>,
+    pub mem_addr_latency_pairs: BTreeSet<(String, String)>,
     pub latencies: BTreeMap<(String, String), i32>,
     pub may_be_eliminated: bool,
+    pub eliminated_move_input: Option<String>,
+    pub eliminated_move_output_is_32_bit: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -268,11 +282,34 @@ pub fn compute_final_prediction(limits: &BTreeMap<String, Option<f64>>) -> Analy
     }
 }
 
-pub fn generate_latency_graph(instructions: &[AnalyticalLatencyInstruction]) -> LatencyGraph {
-    let mut prev_write: BTreeMap<String, (usize, String)> = BTreeMap::new();
-    for (idx, instr) in instructions.iter().enumerate() {
-        for output in &instr.output_operands {
-            prev_write.insert(output.clone(), (idx, output.clone()));
+pub fn generate_latency_graph(
+    instructions: &[AnalyticalLatencyInstruction],
+    fast_pointer_chasing: bool,
+) -> LatencyGraph {
+    let prev_write_for_move = python_prev_write_for_move(instructions);
+    let mut prev_write: BTreeMap<String, (usize, String, bool)> = BTreeMap::new();
+
+    let process_outputs =
+        |idx: usize,
+         instr: &AnalyticalLatencyInstruction,
+         prev_write: &mut BTreeMap<String, (usize, String, bool)>| {
+            let fast_ptr_chasing = analytical_fast_ptr_chasing(
+                instructions,
+                &prev_write_for_move,
+                &*prev_write,
+                instr,
+                fast_pointer_chasing,
+            );
+            for output in &instr.output_operands {
+                prev_write.insert(output.clone(), (idx, output.clone(), fast_ptr_chasing));
+            }
+        };
+
+    // Python parity: `facile.generateLatencyGraph()` primes `prevWriteToKey`
+    // by processing `instructions * 2` before adding graph edges.
+    for _ in 0..2 {
+        for (idx, instr) in instructions.iter().enumerate() {
+            process_outputs(idx, instr, &mut prev_write);
         }
     }
 
@@ -288,7 +325,8 @@ pub fn generate_latency_graph(instructions: &[AnalyticalLatencyInstruction]) -> 
         nodes_for_instr.push(nodes);
 
         for input in &instr.input_operands {
-            let Some((prev_idx, prev_output)) = prev_write.get(input).cloned() else {
+            let Some((prev_idx, prev_output, fast_ptr_chasing)) = prev_write.get(input).cloned()
+            else {
                 continue;
             };
             let prev_instr = &instructions[prev_idx];
@@ -308,6 +346,18 @@ pub fn generate_latency_graph(instructions: &[AnalyticalLatencyInstruction]) -> 
                         .get(&(prev_input.clone(), prev_output.clone()))
                         .copied()
                         .filter(|lat| *lat > 0)
+                        .map(|lat| {
+                            if fast_ptr_chasing
+                                && prev_instr
+                                    .mem_addr_latency_pairs
+                                    .contains(&(prev_input.clone(), prev_output.clone()))
+                                && !prev_instr.input_mem_operands.is_empty()
+                            {
+                                lat - 1
+                            } else {
+                                lat
+                            }
+                        })
                 };
                 let Some(latency) = latency else {
                     continue;
@@ -327,15 +377,107 @@ pub fn generate_latency_graph(instructions: &[AnalyticalLatencyInstruction]) -> 
             }
         }
 
-        for output in &instr.output_operands {
-            prev_write.insert(output.clone(), (idx, output.clone()));
-        }
+        process_outputs(idx, instr, &mut prev_write);
     }
 
     LatencyGraph {
         nodes_for_instr,
         edges_for_node,
     }
+}
+
+fn analytical_fast_ptr_chasing(
+    instructions: &[AnalyticalLatencyInstruction],
+    prev_write_for_move: &BTreeMap<usize, Option<usize>>,
+    prev_write: &BTreeMap<String, (usize, String, bool)>,
+    instr: &AnalyticalLatencyInstruction,
+    fast_pointer_chasing: bool,
+) -> bool {
+    let Some(mem) = instr.input_mem_operands.first() else {
+        return false;
+    };
+    if !fast_pointer_chasing || mem.disp < 0 || mem.disp >= 2048 {
+        return false;
+    }
+    let Some(base) = &mem.base else {
+        return false;
+    };
+    let Some((base_idx, _, _)) = prev_write.get(base) else {
+        return false;
+    };
+    let Some((base_idx, base_renamed_by_32_bit_move)) =
+        resolve_python_non_eliminated_move_writer(instructions, prev_write_for_move, *base_idx)
+    else {
+        return false;
+    };
+    if base_renamed_by_32_bit_move {
+        return false;
+    }
+    let base_instr = &instructions[base_idx];
+    if !matches!(
+        base_instr.instr_str.as_str(),
+        "MOV (R64, M64)"
+            | "MOV (RAX, M64)"
+            | "MOV (R32, M32)"
+            | "MOV (EAX, M32)"
+            | "MOVSXD (R64, M32)"
+            | "POP (R64)"
+    ) {
+        return false;
+    }
+    mem.index.as_ref().is_none_or(|index| {
+        prev_write.get(index).is_some_and(|(index_idx, _, _)| {
+            resolve_python_non_eliminated_move_writer(instructions, prev_write_for_move, *index_idx)
+                .is_some_and(|(resolved_idx, _)| instructions[resolved_idx].uops == 0)
+        })
+    })
+}
+
+fn resolve_python_non_eliminated_move_writer(
+    instructions: &[AnalyticalLatencyInstruction],
+    prev_write_for_move: &BTreeMap<usize, Option<usize>>,
+    mut idx: usize,
+) -> Option<(usize, bool)> {
+    // Python parity: `facile.generateLatencyGraph()` follows
+    // `prevNonEliminatedWriteForMove` for eliminated MOV producers and tracks
+    // whether the path contains a 32-bit eliminated move.
+    let mut seen = BTreeSet::new();
+    let mut renamed_by_32_bit_move = false;
+    loop {
+        if !seen.insert(idx) {
+            return None;
+        }
+        let instr = &instructions[idx];
+        if !instr.may_be_eliminated {
+            return Some((idx, renamed_by_32_bit_move));
+        }
+        if instr.eliminated_move_output_is_32_bit {
+            renamed_by_32_bit_move = true;
+        }
+        idx = (*prev_write_for_move.get(&idx)?)?;
+    }
+}
+
+fn python_prev_write_for_move(
+    instructions: &[AnalyticalLatencyInstruction],
+) -> BTreeMap<usize, Option<usize>> {
+    let mut prev_write_to_reg = BTreeMap::new();
+    let mut prev_write_for_move = BTreeMap::new();
+    for _ in 0..2 {
+        for (idx, instr) in instructions.iter().enumerate() {
+            if instr.may_be_eliminated {
+                let prev = instr
+                    .eliminated_move_input
+                    .as_ref()
+                    .and_then(|input| prev_write_to_reg.get(input).copied());
+                prev_write_for_move.insert(idx, prev);
+            }
+            for output in &instr.output_operands {
+                prev_write_to_reg.insert(output.clone(), idx);
+            }
+        }
+    }
+    prev_write_for_move
 }
 
 pub fn compute_maximum_latency_for_graph(graph: &LatencyGraph) -> MaximumLatencyResult {
@@ -511,7 +653,7 @@ mod tests {
                 (("RBP".to_string(), "MEM:RSP::0:0".to_string()), 2),
                 (("RSP".to_string(), "MEM:RSP::0:0".to_string()), 11),
             ]),
-            may_be_eliminated: false,
+            ..Default::default()
         };
         let pop = AnalyticalLatencyInstruction {
             input_operands: vec!["RSP".to_string(), "MEM:RSP::0:0".to_string()],
@@ -520,10 +662,10 @@ mod tests {
                 (("MEM:RSP::0:0".to_string(), "RBP".to_string()), 2),
                 (("RSP".to_string(), "RBP".to_string()), 5),
             ]),
-            may_be_eliminated: false,
+            ..Default::default()
         };
 
-        let graph = generate_latency_graph(&[push, pop]);
+        let graph = generate_latency_graph(&[push, pop], false);
         let mem_edges = graph.edges_for_node.get("i0:RBP").unwrap();
         assert!(mem_edges
             .iter()
@@ -532,5 +674,138 @@ mod tests {
             compute_maximum_latency_for_graph(&graph).max_cycle_ratio,
             2.0
         );
+    }
+
+    #[test]
+    fn latency_graph_mirrors_python_fast_pointer_chasing_reduction() {
+        let load_ptr = AnalyticalLatencyInstruction {
+            instr_str: "MOV (R64, M64)".to_string(),
+            uops: 1,
+            input_operands: vec!["RAX".to_string(), "MEM:RAX::1:0".to_string()],
+            output_operands: vec!["RAX".to_string()],
+            input_mem_operands: vec![AnalyticalMemOperand {
+                base: Some("RAX".to_string()),
+                index: None,
+                disp: 0,
+            }],
+            mem_addr_operands: vec!["RAX".to_string()],
+            latencies: BTreeMap::from([
+                (("RAX".to_string(), "RAX".to_string()), 5),
+                (("MEM:RAX::1:0".to_string(), "RAX".to_string()), 2),
+            ]),
+            ..Default::default()
+        };
+        let load_value = AnalyticalLatencyInstruction {
+            instr_str: "MOV (R32, M32)".to_string(),
+            uops: 1,
+            input_operands: vec!["RAX".to_string(), "MEM:RAX::1:8".to_string()],
+            output_operands: vec!["RAX".to_string()],
+            input_mem_operands: vec![AnalyticalMemOperand {
+                base: Some("RAX".to_string()),
+                index: None,
+                disp: 8,
+            }],
+            mem_addr_operands: vec!["RAX".to_string()],
+            mem_addr_latency_pairs: BTreeSet::from([("RAX".to_string(), "RAX".to_string())]),
+            latencies: BTreeMap::from([
+                (("RAX".to_string(), "RAX".to_string()), 5),
+                (("MEM:RAX::1:8".to_string(), "RAX".to_string()), 2),
+            ]),
+            ..Default::default()
+        };
+        let shr = AnalyticalLatencyInstruction {
+            instr_str: "SHR (R32, I8)".to_string(),
+            uops: 1,
+            input_operands: vec!["RAX".to_string()],
+            output_operands: vec!["RAX".to_string()],
+            latencies: BTreeMap::from([(("RAX".to_string(), "RAX".to_string()), 1)]),
+            ..Default::default()
+        };
+
+        let graph = generate_latency_graph(&[load_ptr, load_value, shr], true);
+        let addr_edges = graph.edges_for_node.get("i1:RAX").unwrap();
+        assert!(addr_edges
+            .iter()
+            .any(|edge| edge.target == "i2:RAX" && edge.cost == 4 && edge.time == 0));
+    }
+
+    #[test]
+    fn fast_pointer_chasing_follows_python_eliminated_move_chain() {
+        let load_ptr = AnalyticalLatencyInstruction {
+            instr_str: "MOV (R64, M64)".to_string(),
+            uops: 1,
+            input_operands: vec!["RAX".to_string(), "MEM:RAX::1:0".to_string()],
+            output_operands: vec!["RAX".to_string()],
+            input_mem_operands: vec![AnalyticalMemOperand {
+                base: Some("RAX".to_string()),
+                index: None,
+                disp: 0,
+            }],
+            mem_addr_latency_pairs: BTreeSet::from([("RAX".to_string(), "RAX".to_string())]),
+            latencies: BTreeMap::from([(("RAX".to_string(), "RAX".to_string()), 5)]),
+            ..Default::default()
+        };
+        let eliminated_mov64 = AnalyticalLatencyInstruction {
+            instr_str: "MOV (R64, R64)".to_string(),
+            input_operands: vec!["RAX".to_string()],
+            output_operands: vec!["RBX".to_string()],
+            may_be_eliminated: true,
+            eliminated_move_input: Some("RAX".to_string()),
+            ..Default::default()
+        };
+        let load_value = AnalyticalLatencyInstruction {
+            instr_str: "MOV (R32, M32)".to_string(),
+            uops: 1,
+            input_operands: vec!["RBX".to_string(), "MEM:RBX::1:8".to_string()],
+            output_operands: vec!["RCX".to_string()],
+            input_mem_operands: vec![AnalyticalMemOperand {
+                base: Some("RBX".to_string()),
+                index: None,
+                disp: 8,
+            }],
+            mem_addr_latency_pairs: BTreeSet::from([("RBX".to_string(), "RCX".to_string())]),
+            latencies: BTreeMap::from([(("RBX".to_string(), "RCX".to_string()), 5)]),
+            ..Default::default()
+        };
+        let use_value = AnalyticalLatencyInstruction {
+            input_operands: vec!["RCX".to_string()],
+            output_operands: vec!["RCX".to_string()],
+            latencies: BTreeMap::from([(("RCX".to_string(), "RCX".to_string()), 1)]),
+            ..Default::default()
+        };
+
+        let graph = generate_latency_graph(
+            &[
+                load_ptr.clone(),
+                eliminated_mov64,
+                load_value.clone(),
+                use_value.clone(),
+            ],
+            true,
+        );
+        assert!(graph
+            .edges_for_node
+            .get("i2:RBX")
+            .unwrap()
+            .iter()
+            .any(|edge| edge.target == "i3:RCX" && edge.cost == 4));
+
+        let eliminated_mov32 = AnalyticalLatencyInstruction {
+            instr_str: "MOV (R32, R32)".to_string(),
+            input_operands: vec!["RAX".to_string()],
+            output_operands: vec!["RBX".to_string()],
+            may_be_eliminated: true,
+            eliminated_move_input: Some("RAX".to_string()),
+            eliminated_move_output_is_32_bit: true,
+            ..Default::default()
+        };
+        let graph =
+            generate_latency_graph(&[load_ptr, eliminated_mov32, load_value, use_value], true);
+        assert!(graph
+            .edges_for_node
+            .get("i2:RBX")
+            .unwrap()
+            .iter()
+            .any(|edge| edge.target == "i3:RCX" && edge.cost == 5));
     }
 }

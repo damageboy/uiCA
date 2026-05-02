@@ -637,80 +637,38 @@ fn mem_address_latency_feeds_dependency_limit_like_python() {
 
 #[test]
 fn jne_alias_matches_jnz_record_in_engine_path() {
+    // Python/XED exposes opcode 75 as JNZ, while Rust disassembly can surface
+    // JNE spelling. Use manifest data so this verifies the real engine path
+    // instead of stale synthetic branch timing.
     let code = hex::decode("4801d875fb").unwrap(); // add rax, rbx; jne back
-    let invocation = Invocation {
-        arch: "SKL".to_string(),
-        min_cycles: 500,
-        ..Invocation::default()
-    };
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../uica-data/generated/manifest.json");
+    let pack = uica_data::load_manifest_pack(&manifest, "SKL").unwrap();
 
-    let pack = DataPack {
-        schema_version: "uica-instructions-pack-v1".to_string(),
-        instructions: vec![
-            InstructionRecord {
-                arch: "SKL".to_string(),
-                iform: "ADD_GPRv_GPRv".to_string(),
-                string: "ADD".to_string(),
-                imm_zero: false,
-                perf: PerfRecord {
-                    operands: vec![],
-                    latencies: vec![],
-                    uops: 1,
-                    retire_slots: 1,
-                    uops_mite: 1,
-                    uops_ms: 0,
-                    tp: Some(1.0),
-                    ports: BTreeMap::from([(String::from("0"), 1)]),
-                    div_cycles: 0,
-                    may_be_eliminated: false,
-                    complex_decoder: false,
-                    n_available_simple_decoders: 0,
-                    lcp_stall: false,
-                    implicit_rsp_change: 0,
-                    can_be_used_by_lsd: false,
-                    cannot_be_in_dsb_due_to_jcc_erratum: false,
-                    no_micro_fusion: false,
-                    no_macro_fusion: false,
-                    variants: Default::default(),
-                },
-            },
-            InstructionRecord {
-                arch: "SKL".to_string(),
-                iform: "JNZ_RELBRb".to_string(),
-                string: "JNZ".to_string(),
-                imm_zero: false,
-                perf: PerfRecord {
-                    operands: vec![],
-                    latencies: vec![],
-                    uops: 8,
-                    retire_slots: 8,
-                    uops_mite: 8,
-                    uops_ms: 0,
-                    tp: Some(8.0),
-                    ports: BTreeMap::from([(String::from("6"), 8)]),
-                    div_cycles: 0,
-                    may_be_eliminated: false,
-                    complex_decoder: false,
-                    n_available_simple_decoders: 0,
-                    lcp_stall: false,
-                    implicit_rsp_change: 0,
-                    can_be_used_by_lsd: false,
-                    cannot_be_in_dsb_due_to_jcc_erratum: false,
-                    no_micro_fusion: false,
-                    no_macro_fusion: false,
-                    variants: Default::default(),
-                },
-            },
-        ],
-    };
+    let result = uica_core::engine::engine_with_pack(
+        &code,
+        &Invocation {
+            arch: "SKL".to_string(),
+            min_cycles: 500,
+            ..Invocation::default()
+        },
+        &pack,
+    );
 
-    let result = uica_core::engine::engine_with_pack(&code, &invocation, &pack);
     assert_eq!(result.summary.mode, "loop");
-    assert_eq!(result.summary.throughput_cycles_per_iteration, Some(8.0));
-    assert_eq!(result.summary.limits.get("ports"), Some(&Some(8.0)));
+    assert_eq!(result.summary.throughput_cycles_per_iteration, Some(1.0));
+    assert_eq!(result.summary.iterations_simulated, 491);
+    assert_eq!(result.summary.limits.get("dsb"), Some(&Some(1.0)));
+    assert_eq!(result.summary.limits.get("issue"), Some(&Some(0.25)));
+    assert_eq!(result.summary.limits.get("dependencies"), Some(&Some(1.0)));
+    assert_eq!(result.summary.limits.get("ports"), Some(&Some(1.0)));
     assert_eq!(
         result.summary.bottlenecks_predicted,
-        vec!["Ports".to_string()]
+        vec![
+            "DSB".to_string(),
+            "Dependencies".to_string(),
+            "Ports".to_string()
+        ]
     );
 }
 
@@ -789,7 +747,7 @@ fn empty_pack_uses_python_unknown_instr_defaults() {
     assert_eq!(result.summary.iterations_simulated, 494);
     assert_eq!(result.summary.limits.get("dsb"), Some(&Some(1.0)));
     assert_eq!(result.summary.limits.get("issue"), Some(&Some(0.5)));
-    assert_eq!(result.summary.limits.get("dependencies"), Some(&None));
+    assert_eq!(result.summary.limits.get("dependencies"), Some(&Some(0.0)));
     assert_eq!(result.summary.limits.get("ports"), Some(&Some(0.0)));
     assert_eq!(
         result.summary.bottlenecks_predicted,

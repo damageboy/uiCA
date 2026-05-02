@@ -295,6 +295,13 @@ pub fn generate_latency_graph(instructions: &[AnalyticalLatencyInstruction]) -> 
             for prev_input in &prev_instr.input_operands {
                 let latency = if prev_instr.may_be_eliminated {
                     Some(0)
+                } else if !is_memory_operand_key(prev_input) && is_memory_operand_key(input) {
+                    // Python parity: `facile.generateLatencyGraph()` uses a
+                    // zero edge when a previous non-memory input contributes to
+                    // a later memory operand (`not MemOperand -> MemOperand`).
+                    // This keeps store-address inputs from adding data latency
+                    // to a later load from the same abstract address.
+                    Some(0)
                 } else {
                     prev_instr
                         .latencies
@@ -359,6 +366,10 @@ pub fn compute_maximum_latency_for_graph(graph: &LatencyGraph) -> MaximumLatency
         edges_on_max_cycle,
         strongly_connected_components: components,
     }
+}
+
+fn is_memory_operand_key(operand: &str) -> bool {
+    operand.starts_with("MEM:")
 }
 
 fn find_strongly_connected_components(graph: &LatencyGraph) -> Vec<Vec<String>> {
@@ -485,4 +496,41 @@ fn lsd_unroll_count(entries: &[LsdUnrollEntry], n_uops: u32) -> u32 {
 
 fn normalize_port_set(ports: &str) -> BTreeSet<char> {
     ports.chars().filter(|ch| !ch.is_whitespace()).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn latency_graph_mirrors_python_non_mem_to_mem_zero_edge() {
+        let push = AnalyticalLatencyInstruction {
+            input_operands: vec!["RBP".to_string(), "RSP".to_string()],
+            output_operands: vec!["MEM:RSP::0:0".to_string()],
+            latencies: BTreeMap::from([
+                (("RBP".to_string(), "MEM:RSP::0:0".to_string()), 2),
+                (("RSP".to_string(), "MEM:RSP::0:0".to_string()), 11),
+            ]),
+            may_be_eliminated: false,
+        };
+        let pop = AnalyticalLatencyInstruction {
+            input_operands: vec!["RSP".to_string(), "MEM:RSP::0:0".to_string()],
+            output_operands: vec!["RBP".to_string()],
+            latencies: BTreeMap::from([
+                (("MEM:RSP::0:0".to_string(), "RBP".to_string()), 2),
+                (("RSP".to_string(), "RBP".to_string()), 5),
+            ]),
+            may_be_eliminated: false,
+        };
+
+        let graph = generate_latency_graph(&[push, pop]);
+        let mem_edges = graph.edges_for_node.get("i0:RBP").unwrap();
+        assert!(mem_edges
+            .iter()
+            .any(|edge| { edge.target == "i1:MEM:RSP::0:0" && edge.cost == 0 && edge.time == 0 }));
+        assert_eq!(
+            compute_maximum_latency_for_graph(&graph).max_cycle_ratio,
+            2.0
+        );
+    }
 }

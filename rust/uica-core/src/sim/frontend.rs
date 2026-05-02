@@ -1197,8 +1197,13 @@ impl FrontEnd {
             output_operands: vec![OperandKey::Reg("RSP".to_string())],
             latencies_by_operand,
             instr_tp: None,
-            instr_str: String::new(),
-            immediate: None,
+            // Python parity: `StackSyncUop` stores the original `instrI.instr`.
+            // Renamer abstract-value updates therefore use that instruction's
+            // `instrStr`/immediate, so a stack sync before `MOV RBP, RSP`
+            // preserves the RSP abstract value and keeps store-forwarding keys
+            // for PUSH/POP stack slots aligned.
+            instr_str: instr.instr_str.clone(),
+            immediate: instr.immediate,
             is_load_serializing: false,
             is_store_serializing: false,
             mem_addr: None,

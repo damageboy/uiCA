@@ -43,7 +43,17 @@ def case_dir_for_id(case_id: str) -> Path:
 
 
 def case_manifest_path(case_id: str) -> Path:
-    return case_dir_for_id(case_id) / "case.toml"
+    curated_path = case_dir_for_id(case_id) / "case.toml"
+    if curated_path.exists():
+        return curated_path
+
+    if "/" in case_id:
+        corpus, name = case_id.split("/", 1)
+        corpus_path = verification_root() / "corpora" / corpus / "cases" / f"{name}.toml"
+        if corpus_path.exists() or corpus != "curated":
+            return corpus_path
+
+    return curated_path
 
 
 def snippet_path(case_id: str) -> Path:
@@ -110,6 +120,27 @@ def assemble_case_snippet(case_id: str, out_dir: Path) -> Path:
     return obj
 
 
+def prepare_case_input(
+    case_id: str, case_manifest: dict[str, Any], out_dir: Path
+) -> tuple[Path, bool]:
+    input_config = case_manifest.get("input", {})
+    if input_config.get("format") != "hex":
+        return assemble_case_snippet(case_id, out_dir), False
+
+    hex_text = "".join(str(input_config.get("hex", "")).split())
+    if not hex_text or len(hex_text) % 2:
+        raise ValueError(f"invalid raw hex input for case {case_id}")
+
+    try:
+        raw_bytes = bytes.fromhex(hex_text)
+    except ValueError as exc:
+        raise ValueError(f"invalid raw hex input for case {case_id}") from exc
+
+    raw_path = out_dir / "snippet.bin"
+    raw_path.write_bytes(raw_bytes)
+    return raw_path, True
+
+
 def _append_python_run_config_flags(cmd: list[str], run_config: dict[str, Any]) -> None:
     """Python uiCA.py uses single-dash camelCase flags (argparse convention)."""
     if "alignmentOffset" in run_config:
@@ -155,6 +186,7 @@ def run_python_uica(
     run_config: dict[str, Any],
     *,
     uica_commit: str,
+    raw: bool = False,
 ) -> None:
     cmd = [
         sys.executable,
@@ -166,6 +198,9 @@ def run_python_uica(
         str(out_json),
         "-TPonly",
     ]
+
+    if raw:
+        cmd.append("-raw")
 
     _append_python_run_config_flags(cmd, run_config)
 
@@ -182,6 +217,7 @@ def run_rust_uica(
     run_config: dict[str, Any],
     *,
     uica_commit: str,
+    raw: bool = False,
 ) -> None:
     cmd = [
         str(rust_bin),
@@ -192,6 +228,9 @@ def run_rust_uica(
         str(out_json),
         "--tp-only",
     ]
+
+    if raw:
+        cmd.append("--raw")
 
     _append_rust_run_config_flags(cmd, run_config)
 

@@ -1,0 +1,20 @@
+id = "bhive/hsw_000229_63b9a7ac"
+description = "BHive HSW raw basic block sample"
+tags = ["bhive", "raw", "hsw"]
+
+[input]
+format = "hex"
+hex = "415741564155415455534881ecb8060000488b9c24f8060000488b8424f00600004889b424c800000048895424584889fe48894c24384c8944247048895c2478488b9c24000700004889c248894424304c898c24a000000048895c2450488b9c240807000048895c2460488b9c241807000048899c24d8000000488b9c242007000048899c24b00000000fb69c2410070000889c24d700000064488b1c252800000048899c24a806000031db488d9c24900100004889df48899c24f8000000"
+source = "https://raw.githubusercontent.com/ithemal/bhive/master/benchmark/throughput/hsw.csv"
+measuredCyclesPer100Iterations = 2314.0
+measuredCyclesPerIteration = 23.14
+
+[run]
+arches = ["HSW"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

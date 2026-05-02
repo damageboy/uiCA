@@ -12,12 +12,12 @@ if __package__ in (None, ""):
 
 from verification.tools.canonicalize import canonicalize_result
 from verification.tools.common import (
-    assemble_case_snippet,
     case_manifest_path,
     get_git_commit_short,
     load_case_manifest,
     load_json,
     load_profile,
+    prepare_case_input,
     run_python_uica,
     run_rust_uica,
 )
@@ -133,7 +133,7 @@ def capture_case_arch(
 
     with tempfile.TemporaryDirectory() as td:
         work = Path(td)
-        obj = assemble_case_snippet(case_id, work)
+        obj, is_raw = prepare_case_input(case_id, case_manifest, work)
         out_json = work / "result.json"
         if engine == "rust":
             rust_bin_path = rust_bin
@@ -146,6 +146,7 @@ def capture_case_arch(
                 arch,
                 case_manifest.get("run", {}),
                 uica_commit=golden_tag,
+                raw=is_raw,
             )
         else:
             run_python_uica(
@@ -154,6 +155,7 @@ def capture_case_arch(
                 arch,
                 case_manifest.get("run", {}),
                 uica_commit=golden_tag,
+                raw=is_raw,
             )
         result = load_json(out_json)
 

@@ -18,6 +18,29 @@ use crate::analytical::{
 use crate::matcher::{match_instruction_record, NormalizedInstr};
 use crate::micro_arch::{get_micro_arch, MicroArchConfig};
 
+#[derive(Clone, Debug, Default)]
+pub struct EngineOutput {
+    pub result: UicaResult,
+    pub reports: Option<uica_model::ReportBundle>,
+}
+
+pub fn engine_output(
+    code: &[u8],
+    invocation: &Invocation,
+    include_reports: bool,
+) -> Result<EngineOutput, String> {
+    let Some(pack) = load_default_pack(&invocation.arch) else {
+        if include_reports {
+            return Err(format!("uipack data not found for {}", invocation.arch));
+        }
+        return Ok(EngineOutput {
+            result: fallback_result(code, invocation),
+            reports: None,
+        });
+    };
+    engine_output_with_pack(code, invocation, &pack, include_reports)
+}
+
 pub fn engine(code: &[u8], invocation: &Invocation) -> UicaResult {
     if let Some(pack) = load_default_pack(&invocation.arch) {
         return engine_with_pack(code, invocation, &pack);
@@ -26,7 +49,12 @@ pub fn engine(code: &[u8], invocation: &Invocation) -> UicaResult {
     fallback_result(code, invocation)
 }
 
-pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -> UicaResult {
+fn engine_with_pack_internal(
+    code: &[u8],
+    invocation: &Invocation,
+    pack: &DataPack,
+    include_reports: bool,
+) -> Result<EngineOutput, String> {
     let normalized_invocation = Invocation {
         arch: invocation.arch.to_ascii_uppercase(),
         ..invocation.clone()
@@ -37,14 +65,25 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
         ..UicaResult::default()
     };
 
+    let mut reports = None;
     let arch = match get_micro_arch(&normalized_invocation.arch) {
         Some(arch) => arch,
-        None => return fallback_result(code, &normalized_invocation),
+        None => {
+            return Ok(EngineOutput {
+                result: fallback_result(code, &normalized_invocation),
+                reports: None,
+            })
+        }
     };
 
     let decoded = match decode_raw(code) {
         Ok(decoded) => decoded,
-        Err(_) => return fallback_result(code, &normalized_invocation),
+        Err(_) => {
+            return Ok(EngineOutput {
+                result: fallback_result(code, &normalized_invocation),
+                reports: None,
+            })
+        }
     };
 
     let index = DataPackIndex::new(pack.clone());
@@ -358,6 +397,17 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
         append_python_runtime_bottlenecks(&mut result.summary, &frontend, &uops_for_round);
         result.cycles = build_cycles_json(&frontend, final_clock);
         result.instructions = build_instructions_json(&frontend);
+        if include_reports {
+            let last_relevant_round = uops_for_round.len().saturating_sub(2) as u32;
+            let trace =
+                crate::report::build_trace_report(&frontend, last_relevant_round, final_clock);
+            let graph = crate::report::build_graph_report(
+                &frontend,
+                &normalized_invocation.arch,
+                final_clock,
+            );
+            reports = Some(uica_model::ReportBundle { trace, graph });
+        }
     } else {
         result.cycles = Vec::new();
         result.instructions = build_instructions_json_from_decode(code);
@@ -379,7 +429,22 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
         "mode": result.summary.mode,
     });
 
-    result
+    Ok(EngineOutput { result, reports })
+}
+
+pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -> UicaResult {
+    engine_with_pack_internal(code, invocation, pack, false)
+        .map(|output| output.result)
+        .unwrap_or_else(|_| fallback_result(code, invocation))
+}
+
+pub fn engine_output_with_pack(
+    code: &[u8],
+    invocation: &Invocation,
+    pack: &DataPack,
+    include_reports: bool,
+) -> Result<EngineOutput, String> {
+    engine_with_pack_internal(code, invocation, pack, include_reports)
 }
 
 #[derive(Clone, Debug)]
@@ -2427,33 +2492,41 @@ fn last_retired_fused_for_round(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
     use tempfile::tempdir;
     use uica_data::{
         encode_uipack, DataPack, InstructionRecord, PerfRecord, DATAPACK_SCHEMA_VERSION,
     };
 
-    fn sample_pack() -> DataPack {
+    fn sample_pack(
+        arch: &str,
+        iform: &str,
+        string: &str,
+        uops: i32,
+        ports: &[(&str, i32)],
+    ) -> DataPack {
         DataPack {
             schema_version: DATAPACK_SCHEMA_VERSION.to_string(),
             all_ports: Default::default(),
             alu_ports: Default::default(),
             instructions: vec![InstructionRecord {
-                arch: "SKL".to_string(),
-                iform: "ADD_GPRv_GPRv".to_string(),
-                string: "ADD".to_string(),
+                arch: arch.to_string(),
+                iform: iform.to_string(),
+                string: string.to_string(),
                 all_ports: Default::default(),
                 alu_ports: Default::default(),
                 locked: false,
                 xml_attrs: Default::default(),
                 imm_zero: false,
                 perf: PerfRecord {
-                    uops: 1,
-                    retire_slots: 1,
-                    uops_mite: 1,
+                    uops,
+                    retire_slots: uops.max(1),
+                    uops_mite: uops.max(1),
                     uops_ms: 0,
                     tp: Some(1.0),
-                    ports: BTreeMap::from([("0".to_string(), 1)]),
+                    ports: ports
+                        .iter()
+                        .map(|(port, count)| ((*port).to_string(), *count))
+                        .collect(),
                     div_cycles: 0,
                     may_be_eliminated: false,
                     complex_decoder: false,
@@ -2471,6 +2544,37 @@ mod tests {
                 },
             }],
         }
+    }
+
+    fn test_pack_with_add_loop() -> uica_data::DataPack {
+        sample_pack("SKL", "ADD", "ADD", 1, &[("0", 1)])
+    }
+
+    #[test]
+    fn engine_output_can_include_report_bundle() {
+        let pack = test_pack_with_add_loop();
+        let output = super::engine_output_with_pack(
+            &[0x48, 0x01, 0xd8],
+            &Invocation {
+                arch: "SKL".to_string(),
+                min_cycles: 8,
+                min_iterations: 1,
+                ..Invocation::default()
+            },
+            &pack,
+            true,
+        )
+        .expect("engine output should run");
+
+        assert_eq!(output.result.invocation.arch, "SKL");
+        assert!(output.reports.is_some());
+        let reports = output.reports.unwrap();
+        assert!(!reports.trace.table_data.is_empty());
+        assert!(reports
+            .graph
+            .series
+            .iter()
+            .any(|series| series.name == "IQ"));
     }
 
     #[test]
@@ -2548,7 +2652,11 @@ mod tests {
     fn runtime_pack_source_ignores_legacy_instructions_json() {
         let temp = tempdir().unwrap();
         let legacy_path = temp.path().join("instructions.json");
-        std::fs::write(&legacy_path, encode_uipack(&sample_pack(), "SKL").unwrap()).unwrap();
+        std::fs::write(
+            &legacy_path,
+            encode_uipack(&test_pack_with_add_loop(), "SKL").unwrap(),
+        )
+        .unwrap();
 
         assert!(load_runtime_pack_source(temp.path(), "SKL").is_none());
     }

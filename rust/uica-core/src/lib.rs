@@ -2,6 +2,7 @@ pub mod analytical;
 pub mod engine;
 pub mod matcher;
 pub mod micro_arch;
+pub mod report;
 pub mod sim;
 pub mod x64;
 

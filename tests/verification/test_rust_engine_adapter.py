@@ -20,7 +20,7 @@ class TestRustEngineAdapter(unittest.TestCase):
                 "import os\n"
                 "import sys\n"
                 "args = sys.argv[1:]\n"
-                "out_json = args[args.index('-json') + 1]\n"
+                "out_json = args[args.index('--json') + 1]\n"
                 "with open(out_json, 'w') as f:\n"
                 "    json.dump({'argv': args, 'uica_commit': os.environ.get('UICA_COMMIT')}, f)\n"
             )
@@ -52,21 +52,21 @@ class TestRustEngineAdapter(unittest.TestCase):
             data["argv"],
             [
                 str(obj),
-                "-arch",
+                "--arch",
                 "SKL",
-                "-json",
+                "--json",
                 str(out_json),
-                "-TPonly",
-                "-alignmentOffset",
+                "--tp-only",
+                "--alignment-offset",
                 "4",
-                "-initPolicy",
+                "--init-policy",
                 "same",
-                "-minIterations",
+                "--min-iterations",
                 "20",
-                "-minCycles",
+                "--min-cycles",
                 "600",
-                "-noMicroFusion",
-                "-noMacroFusion",
-                "-simpleFrontEnd",
+                "--no-micro-fusion",
+                "--no-macro-fusion",
+                "--simple-front-end",
             ],
         )

@@ -1341,6 +1341,21 @@ fn emit_lam_uops(
     let mut input_operand_map: HashMap<String, String> = HashMap::new();
     let mut output_operand_map: HashMap<String, String> = HashMap::new();
     if let Some(record) = record {
+        let mut explicit_reg_operand_map: HashMap<String, String> = HashMap::new();
+        let mut explicit_reg_idx = 0usize;
+        for operand in &record.perf.operands {
+            if operand.r#type == "reg" && !operand.implicit {
+                if let Some(reg) = instr.explicit_reg_operands.get(explicit_reg_idx) {
+                    // Python parity: `instrD['regOperands']` is keyed by XML
+                    // operand names and preserves duplicate explicit operands
+                    // (e.g. KANDW K2,K1,K1 has separate REG1/REG2 roles).
+                    explicit_reg_operand_map
+                        .insert(operand.name.clone(), crate::x64::get_canonical_reg(reg));
+                }
+                explicit_reg_idx += 1;
+            }
+        }
+
         let mut read_reg_idx = 0usize;
         let mut write_reg_idx = 0usize;
         for operand in &record.perf.operands {
@@ -1354,7 +1369,17 @@ fn emit_lam_uops(
                     // Python parity: same predicate as `Instr.inputRegOperands`.
                     // Latency-start write operands map to their own decoded output
                     // (SETCC/MOVZX dest), not blindly to next input register.
-                    if operand.read {
+                    if let Some(reg) = explicit_reg_operand_map.get(&operand.name) {
+                        input_operand_map.insert(operand.name.clone(), reg.clone());
+                        if operand.read
+                            || (operand.write
+                                && decoded_reg_inputs
+                                    .get(read_reg_idx)
+                                    .is_some_and(|decoded| decoded == reg))
+                        {
+                            read_reg_idx += 1;
+                        }
+                    } else if operand.read {
                         if let Some(reg) = decoded_reg_inputs.get(read_reg_idx) {
                             input_operand_map.insert(operand.name.clone(), reg.clone());
                         }
@@ -1375,7 +1400,10 @@ fn emit_lam_uops(
                     }
                 }
                 if operand.write {
-                    if let Some(reg) = decoded_outputs.get(write_reg_idx) {
+                    if let Some(reg) = explicit_reg_operand_map
+                        .get(&operand.name)
+                        .or_else(|| decoded_outputs.get(write_reg_idx))
+                    {
                         output_operand_map.insert(operand.name.clone(), reg.clone());
                     }
                     write_reg_idx += 1;
@@ -1733,8 +1761,8 @@ mod tests {
     use super::{compute_uop_plans, compute_uop_plans_inner};
     use std::collections::BTreeMap;
     use uica_data::{
-        load_manifest_pack, DataPackIndex, InstructionRecord, LatencyRecord, OperandRecord,
-        PerfRecord, PerfVariantRecord,
+        load_manifest_pack, DataPack, DataPackIndex, InstructionRecord, LatencyRecord,
+        OperandRecord, PerfRecord, PerfVariantRecord,
     };
 
     fn operand(name: &str, kind: &str, read: bool, write: bool) -> OperandRecord {
@@ -1869,6 +1897,106 @@ mod tests {
 
         assert_eq!(plans.len(), 1);
         assert!(plans[0].ports.is_empty());
+    }
+
+    #[test]
+    fn explicit_duplicate_reg_operands_preserve_duplicate_input_roles() {
+        let record = InstructionRecord {
+            arch: "ICL".to_string(),
+            iform: "KANDW_MASKmskw_MASKmskw_MASKmskw_AVX512".to_string(),
+            string: "KANDW (K, K, K)".to_string(),
+            imm_zero: false,
+            perf: PerfRecord {
+                uops: 1,
+                retire_slots: 1,
+                uops_mite: 1,
+                uops_ms: 0,
+                tp: None,
+                ports: BTreeMap::from([("0".to_string(), 1)]),
+                div_cycles: 0,
+                may_be_eliminated: false,
+                complex_decoder: false,
+                n_available_simple_decoders: 0,
+                lcp_stall: false,
+                implicit_rsp_change: 0,
+                can_be_used_by_lsd: false,
+                cannot_be_in_dsb_due_to_jcc_erratum: false,
+                no_micro_fusion: false,
+                no_macro_fusion: false,
+                operands: vec![
+                    operand("REG0", "reg", false, true),
+                    operand("REG1", "reg", true, false),
+                    operand("REG2", "reg", true, false),
+                ],
+                latencies: vec![
+                    LatencyRecord {
+                        start_op: "REG1".to_string(),
+                        target_op: "REG0".to_string(),
+                        cycles: 1,
+                        cycles_addr: None,
+                        cycles_addr_index: None,
+                        cycles_mem: None,
+                        cycles_same_reg: None,
+                    },
+                    LatencyRecord {
+                        start_op: "REG2".to_string(),
+                        target_op: "REG0".to_string(),
+                        cycles: 1,
+                        cycles_addr: None,
+                        cycles_addr_index: None,
+                        cycles_mem: None,
+                        cycles_same_reg: None,
+                    },
+                ],
+                variants: Default::default(),
+            },
+        };
+        let pack = DataPack {
+            schema_version: uica_data::DATAPACK_SCHEMA_VERSION.to_string(),
+            instructions: vec![record],
+        };
+        let index = DataPackIndex::new(pack.clone());
+        let mut instr = super::super::types::InstrInstance::new(
+            0,
+            0,
+            0,
+            0,
+            4,
+            "kandw".to_string(),
+            "kandw k2, k1, k1".to_string(),
+        );
+        instr.iform_signature = "MASKmskw_MASKmskw_MASKmskw_AVX512".to_string();
+        instr.max_op_size_bytes = 8;
+        instr.input_regs = vec!["K1".to_string()];
+        instr.output_regs = vec!["K2".to_string()];
+        instr.explicit_reg_operands = vec!["K2".to_string(), "K1".to_string(), "K1".to_string()];
+        instr.uops_mite = 1;
+        instr.retire_slots = 1;
+
+        let mut storage = super::super::uop_storage::UopStorage::new();
+        let mut uop_idx = 0;
+        let mut fused_idx = 0;
+        let mut lam_idx = 0;
+        super::expand_instr_instance_to_lam_uops_with_storage(
+            &instr,
+            &mut uop_idx,
+            &mut fused_idx,
+            &mut lam_idx,
+            &mut storage,
+            "ICL",
+            &pack,
+            Some(&index),
+        )
+        .expect("expand should succeed");
+
+        let uop = storage.get_uop(0).expect("uop should exist");
+        assert_eq!(
+            uop.prop.input_operands,
+            vec![
+                super::super::types::OperandKey::Reg("K1".to_string()),
+                super::super::types::OperandKey::Reg("K1".to_string()),
+            ]
+        );
     }
 
     #[test]

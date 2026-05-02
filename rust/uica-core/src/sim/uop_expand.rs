@@ -167,40 +167,38 @@ pub struct UopPlan {
 }
 
 // ---------------------------------------------------------------------------
-// is_mnemonic_supported
+// is_instr_supported
 // ---------------------------------------------------------------------------
 
-/// True iff we can produce a non-empty plan for this instruction.
-pub fn is_mnemonic_supported(
-    mnemonic: &str,
-    is_macro_fused_next: bool,
-    is_macro_fused_prev: bool,
-    has_memory: bool,
+/// True iff we can produce a non-empty plan for this decoded instruction.
+pub fn is_instr_supported(
+    instr: &InstrInstance,
     arch_name: &str,
-    pack: &uica_data::DataPack,
+    index: &uica_data::DataPackIndex,
 ) -> bool {
-    if is_macro_fused_prev {
+    if instr.macro_fused_with_prev_instr {
         return true;
     }
-    let _ = (is_macro_fused_next, has_memory);
     // Zero-idiom mnemonics are always supported; they produce 0 real uops.
-    let m = mnemonic.to_ascii_lowercase();
-    if ["xor", "sub", "pxor", "vxorps", "vxorpd", "vpxor"].contains(&m.as_str()) {
+    let m = instr.mnemonic.to_ascii_lowercase();
+    if ["xor", "sub", "pxor", "vxorps", "vxorpd", "vpxor"].contains(&m.as_str())
+        && !instr.has_memory_read
+        && !instr.has_memory_write
+        && instr.input_regs.is_empty()
+    {
         return true;
     }
     use crate::matcher::{match_instruction_record, NormalizedInstr};
-    use uica_data::DataPackIndex;
-    let index = DataPackIndex::new(pack.clone());
     let norm = NormalizedInstr {
-        mnemonic: mnemonic.to_string(),
-        iform_signature: String::new(),
-        max_op_size_bytes: 0,
-        immediate: None,
-        uses_high8_reg: false,
-        explicit_reg_operands: Vec::new(),
-        agen: None,
+        mnemonic: instr.mnemonic.clone(),
+        iform_signature: instr.iform_signature.clone(),
+        max_op_size_bytes: instr.max_op_size_bytes,
+        immediate: instr.immediate,
+        uses_high8_reg: instr.uses_high8_reg,
+        explicit_reg_operands: instr.explicit_reg_operands.clone(),
+        agen: instr.agen.clone(),
     };
-    let candidates = index.candidates_for(&arch_name.to_ascii_uppercase(), mnemonic);
+    let candidates = index.candidates_for(&arch_name.to_ascii_uppercase(), &instr.mnemonic);
     match_instruction_record(&norm, candidates).is_some()
 }
 

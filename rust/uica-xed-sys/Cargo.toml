@@ -1,0 +1,8 @@
+[package]
+name = "uica-xed-sys"
+version = "0.1.0"
+edition = "2021"
+links = "xed"
+
+[build-dependencies]
+cc = "1"

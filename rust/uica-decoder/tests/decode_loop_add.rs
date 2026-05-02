@@ -26,3 +26,12 @@ fn decodes_extended_low8_register_names_like_xed() {
     assert_eq!(instructions[0].input_regs, vec!["R12B"]);
     assert_eq!(instructions[0].explicit_reg_operands, vec!["ECX", "R12B"]);
 }
+
+#[test]
+fn decoder_reexports_xed_lea_metadata() {
+    let bytes = [0x48_u8, 0x8d, 0x44, 0x8b, 0x10];
+    let instructions = decode_raw(&bytes).expect("decode should succeed");
+
+    assert_eq!(instructions[0].mnemonic, "lea");
+    assert_eq!(instructions[0].agen.as_deref(), Some("B_IS_D8"));
+}

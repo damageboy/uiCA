@@ -3,7 +3,7 @@ use uica_data::InstructionRecord;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct NormalizedInstr {
     pub mnemonic: String,
-    /// Operand-kind signature built from iced-x86 op kinds (e.g. `GPRv_GPRv`).
+    /// Operand-kind signature built from decoder/XED-derived operand kinds (e.g. `GPRv_GPRv`).
     /// Empty string when not known; matcher falls back to mnemonic-only.
     pub iform_signature: String,
     /// Maximum operand register size in bytes (e.g. 8=R64, 4=R32, 2=R16).
@@ -272,6 +272,34 @@ pub fn normalize_mnemonic(text: &str) -> String {
 }
 
 fn canonical_mnemonic_alias(mnemonic: &str) -> &str {
+    if mnemonic.starts_with("VCMP") {
+        if mnemonic.ends_with("PS") {
+            return "VCMPPS";
+        }
+        if mnemonic.ends_with("PD") {
+            return "VCMPPD";
+        }
+        if mnemonic.ends_with("SS") {
+            return "VCMPSS";
+        }
+        if mnemonic.ends_with("SD") {
+            return "VCMPSD";
+        }
+    }
+    if mnemonic.starts_with("CMP") {
+        if mnemonic.ends_with("PS") {
+            return "CMPPS";
+        }
+        if mnemonic.ends_with("PD") {
+            return "CMPPD";
+        }
+        if mnemonic.ends_with("SS") {
+            return "CMPSS";
+        }
+        if mnemonic.ends_with("SD") {
+            return "CMPSD";
+        }
+    }
     match mnemonic {
         "JE" => "JZ",
         "JNE" => "JNZ",

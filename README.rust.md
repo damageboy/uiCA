@@ -9,6 +9,8 @@ Rust workspace (`Cargo.toml`):
 - `rust/uica-model`
 - `rust/uica-data`
 - `rust/uica-data-gen`
+- `rust/uica-xed-sys`
+- `rust/uica-xed`
 - `rust/uica-decoder`
 - `rust/uica-core`
 - `rust/uica-cli`
@@ -22,8 +24,10 @@ instructions.xml
 
 input obj/raw
   -> uica-cli (Rust)
-      -> uica-decoder (decode/load)
-      -> uica-core::engine (currently stub)
+      -> uica-core::engine (partial analysis)
+          -> uica-decoder + XED (decode bytes)
+          -> uica-data (load UIPack data)
+          -> matcher + analytical/simulation summary paths
       -> uica-model::UicaResult (JSON)
 
 web hex input
@@ -39,6 +43,7 @@ web hex input
 - Rust toolchain (cargo)
 - For wasm build: `wasm-pack` + `wasm32-unknown-unknown` target
 - Python env for verification harness
+- Intel XED submodule initialized (`git submodule update --init`). Native Rust builds compile/link the repo-local XED library automatically through `uica-xed-sys` when needed.
 
 Install wasm target:
 
@@ -77,6 +82,8 @@ cargo test --workspace
 ```bash
 ./scripts/build-web.sh
 ```
+
+Wasm builds do not compile native XED. Analyzer decode returns an unsupported-decoder error until a wasm-compatible decoder exists.
 
 Outputs in `dist/`:
 
@@ -119,7 +126,7 @@ python3 verification/tools/verify.py \
   --dump-diff "$TMP_GOLDEN_DIR/quick.diff"
 ```
 
-Note: currently expected to fail parity until real engine logic lands.
+Note: currently expected to fail full parity until remaining engine behavior lands.
 
 ## 4) Crate responsibilities
 
@@ -156,17 +163,17 @@ Input decoding helpers:
 - `decode_raw(...)`
 - `DecodedInstruction`
 
-Uses `object` + `iced-x86`.
+Uses `object` for `.text` extraction and Intel XED via `uica-xed` / `uica-xed-sys` for x86-64 decoding.
 
 ### `uica-core`
 
-Core analysis building blocks (partial):
+Core analysis building blocks (partial/in progress):
 
 - `micro_arch` (HSW/SKL/ICL config subset)
 - `x64` register canonicalization
 - `matcher` (minimal instruction matching)
 - `analytical` (`compute_port_usage_limit`, `compute_issue_limit`)
-- `engine` (currently stub; returns valid envelope, not Python-equivalent simulation)
+- `engine` (decodes bytes, loads UIPack data, matches instruction records, and computes current analytical/simulation summary paths; full Python/cycle parity is not complete)
 
 ### `uica-cli`
 
@@ -185,21 +192,22 @@ Wasm API for static frontend:
 
 ## 5) Mapping: Python modules -> Rust crates
 
-| Python source | Rust target |
-|---|---|
-| `uiCA.py` (CLI entry + simulation) | `uica-cli` + `uica-core::engine` |
-| `facile.py` (analytical helpers) | `uica-core::analytical` (partial) |
-| `microArchConfigs.py` | `uica-core::micro_arch` (subset) |
-| `x64_lib.py` | `uica-core::x64` (partial) |
-| `convertXML.py` | `uica-data-gen` |
-| `instructions.py`/`instrData/*` runtime tables | `uica-data` datapack path |
-| Python JSON contract in `uiCA.py` | `uica-model` |
+| Python source                                  | Rust target                       |
+| ---------------------------------------------- | --------------------------------- |
+| `uiCA.py` (CLI entry + simulation)             | `uica-cli` + `uica-core::engine`  |
+| `facile.py` (analytical helpers)               | `uica-core::analytical` (partial) |
+| `microArchConfigs.py`                          | `uica-core::micro_arch` (subset)  |
+| `x64_lib.py`                                   | `uica-core::x64` (partial)        |
+| `convertXML.py`                                | `uica-data-gen`                   |
+| `instructions.py`/`instrData/*` runtime tables | `uica-data` datapack path         |
+| Python JSON contract in `uiCA.py`              | `uica-model`                      |
 
 ## 6) Current limitations
 
-- `uica-core::engine` is stub; full cycle/uop simulation parity not ported.
+- `uica-core::engine` is partial/in progress; full Python/cycle parity is not complete.
+- Wasm builds work, but analyzer decode returns an unsupported-decoder error until a wasm-compatible decoder exists.
 - Rust verify vs Python goldens currently mismatches broadly (expected at this stage).
-- `micro_arch`, matcher, analytical logic are partial slices, not full behavioral equivalence.
+- `micro_arch`, matcher, analytical logic, and simulation summary paths are partial slices, not full behavioral equivalence.
 
 ## 7) Development sequence (recommended)
 

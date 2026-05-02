@@ -60,6 +60,34 @@ pub(crate) fn normalize_mnemonic(text: &str) -> String {
 }
 
 fn canonical_mnemonic_alias(mnemonic: &str) -> &str {
+    if mnemonic.starts_with("VCMP") {
+        if mnemonic.ends_with("PS") {
+            return "VCMPPS";
+        }
+        if mnemonic.ends_with("PD") {
+            return "VCMPPD";
+        }
+        if mnemonic.ends_with("SS") {
+            return "VCMPSS";
+        }
+        if mnemonic.ends_with("SD") {
+            return "VCMPSD";
+        }
+    }
+    if mnemonic.starts_with("CMP") {
+        if mnemonic.ends_with("PS") {
+            return "CMPPS";
+        }
+        if mnemonic.ends_with("PD") {
+            return "CMPPD";
+        }
+        if mnemonic.ends_with("SS") {
+            return "CMPSS";
+        }
+        if mnemonic.ends_with("SD") {
+            return "CMPSD";
+        }
+    }
     match mnemonic {
         "JE" => "JZ",
         "JNE" => "JNZ",

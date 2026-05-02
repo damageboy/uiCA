@@ -1520,22 +1520,11 @@ fn run_simulation_for_cycles(
     // stream yet. Keeps engine.rs on the analytical summary path for those
     // cases without running a doomed simulation to the safety cap.
     // Build DataPackIndex once for all checks (not per-instruction).
-    let _check_index = uica_data::DataPackIndex::new(pack.clone());
+    let check_index = uica_data::DataPackIndex::new(pack.clone());
     for inst in &base_instances {
-        if inst.macro_fused_with_prev_instr {
-            continue;
-        }
-        let has_memory = inst.has_memory_read || inst.has_memory_write;
-        if !crate::sim::uop_expand::is_mnemonic_supported(
-            &inst.mnemonic,
-            inst.macro_fused_with_next_instr,
-            inst.macro_fused_with_prev_instr,
-            has_memory,
-            &invocation.arch,
-            pack,
-        ) {
+        if !crate::sim::uop_expand::is_instr_supported(inst, &invocation.arch, &check_index) {
             return Err(format!(
-                "unsupported mnemonic for simulator: {}",
+                "unsupported instruction for simulator: {}",
                 inst.mnemonic
             ));
         }

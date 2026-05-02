@@ -506,6 +506,33 @@ fn engine_trace_uses_manifest_uipack_from_env_path() {
 }
 
 #[test]
+fn event_trace_supports_vcmpeqps_with_decoded_operands() {
+    let _lock = env_lock().lock().unwrap();
+    let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../uica-data/generated/manifest.json");
+    let _env = EnvVarGuard::set("UICA_RUST_DATAPACK", &manifest_path);
+
+    // vcmpps ymm0, ymm1, ymm2, 0; vblendvps ymm3, ymm4, ymm5, ymm0; dec rcx; jnz -16
+    let result = uica_core::engine::engine(
+        &[
+            0xc5, 0xf4, 0xc2, 0xc2, 0x00, 0xc4, 0xe3, 0x5d, 0x4a, 0xdd, 0x00, 0x48, 0xff, 0xc9,
+            0x75, 0xf0,
+        ],
+        &Invocation {
+            arch: "HSW".to_string(),
+            min_cycles: 8,
+            min_iterations: 1,
+            ..Invocation::default()
+        },
+    );
+
+    assert!(
+        !result.cycles.is_empty(),
+        "decoded SIMD compare/blend loop should run simulator, not analytical fallback"
+    );
+}
+
+#[test]
 fn event_trace_emits_executed_events_for_zero_port_uops() {
     let _lock = env_lock().lock().unwrap();
     let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

@@ -345,7 +345,7 @@ fn parse_perf(
                 &["nAvailableSimpleDecoders", "n_available_simple_decoders"],
             )
         })
-        .unwrap_or(0),
+        .unwrap_or(4),
         lcp_stall: parse_bool_attr(instruction, &["lcpStall", "lcp_stall"]),
         implicit_rsp_change,
         can_be_used_by_lsd,
@@ -358,6 +358,7 @@ fn parse_perf(
         ),
         no_micro_fusion: parse_bool_attr(instruction, &["noMicroFusion", "no_micro_fusion"]),
         no_macro_fusion: parse_bool_attr(instruction, &["noMacroFusion", "no_macro_fusion"]),
+        macro_fusible_with: parse_macro_fusible_with(measurement),
         operands,
         latencies,
         variants,
@@ -450,6 +451,25 @@ enum FlagAccess {
     Any,
     Read,
     Write,
+}
+
+fn parse_macro_fusible_with(measurement: roxmltree::Node<'_, '_>) -> Vec<String> {
+    let mut values: Vec<String> = measurement
+        .attribute("macro_fusible")
+        .or_else(|| measurement.attribute("macroFusible"))
+        .map(|value| {
+            value
+                .split(';')
+                .filter_map(|item| {
+                    let item = item.trim();
+                    (!item.is_empty()).then(|| item.to_string())
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    values.sort();
+    values.dedup();
+    values
 }
 
 fn parse_flag_groups(node: roxmltree::Node<'_, '_>, access: FlagAccess) -> Vec<String> {

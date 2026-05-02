@@ -113,6 +113,7 @@ fn sample_pack() -> DataPack {
                     cannot_be_in_dsb_due_to_jcc_erratum: true,
                     no_micro_fusion: true,
                     no_macro_fusion: true,
+                    macro_fusible_with: vec!["JZ (Rel8)".to_string(), "JO (Rel8)".to_string()],
                     variants: Default::default(),
                 },
             },
@@ -140,6 +141,7 @@ fn sample_pack() -> DataPack {
                     cannot_be_in_dsb_due_to_jcc_erratum: false,
                     no_micro_fusion: false,
                     no_macro_fusion: false,
+                    macro_fusible_with: vec![],
                     variants: Default::default(),
                 },
             },
@@ -168,6 +170,10 @@ fn roundtrips_single_arch_uipack_and_keeps_index_compatibility() {
     );
     assert!(decoded.instructions[0].perf.no_micro_fusion);
     assert!(decoded.instructions[0].perf.no_macro_fusion);
+    assert_eq!(
+        decoded.instructions[0].perf.macro_fusible_with,
+        vec!["JZ (Rel8)".to_string(), "JO (Rel8)".to_string()]
+    );
     let agen = &decoded.instructions[0].perf.operands[2];
     assert!(agen.is_agen);
     assert_eq!(agen.mem_operand_role.as_deref(), Some("agen"));

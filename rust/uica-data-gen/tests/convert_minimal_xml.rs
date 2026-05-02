@@ -54,6 +54,10 @@ fn converts_minimal_xml_to_manifest_and_per_arch_uipacks() {
     );
     assert!(skl_pack.instructions[0].perf.no_micro_fusion);
     assert!(skl_pack.instructions[0].perf.no_macro_fusion);
+    assert_eq!(
+        skl_pack.instructions[0].perf.macro_fusible_with,
+        vec!["JO (Rel8)".to_string(), "JZ (Rel8)".to_string()]
+    );
     assert_eq!(skl_pack.instructions[0].perf.operands.len(), 4);
     assert_eq!(skl_pack.instructions[0].perf.operands[0].name, "REG0");
     assert_eq!(skl_pack.instructions[0].perf.operands[2].name, "MEM0");

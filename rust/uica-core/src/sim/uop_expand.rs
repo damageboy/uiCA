@@ -209,11 +209,9 @@ pub fn record_uops_mite(record: &uica_data::InstructionRecord) -> u32 {
 }
 
 pub(crate) fn perf_uops_mite(perf: &uica_data::PerfRecord) -> u32 {
-    // Python parity: `convertXML.py` clamps `uops_MITE` to at least 1 and
-    // `instructions.py` defaults missing `uopsMITE` to 1. Older UIPacks encode
-    // that missing/clamped value as 0; normalize at runtime without adding a
-    // JSON fallback or regenerating datapacks.
-    perf.uops_mite.max(1) as u32
+    // Python parity: data generation stores `uopsMITE` after applying
+    // convertXML/getInstructions defaulting. Runtime consumes the datapack fact.
+    perf.uops_mite.max(0) as u32
 }
 
 pub(crate) fn python_decoder_shape_from_record(
@@ -229,42 +227,10 @@ pub(crate) fn python_decoder_shape_from_record(
     let uops_ms = perf.uops_ms.max(0) as u32;
     let derived_complex = !perf.complex_decoder && (uops_ms > 0 || uops_mite + uops_ms > 1);
 
-    // Compatibility for UIPacks produced before data-gen preserved
-    // measurement-level `complex_decoder`/`available_simple_decoders`.
-    // Python marks CMOVcc as one-uop complex with `sDec = nDecoders - 1`.
-    let legacy_cmov_complex = !perf.complex_decoder
-        && perf.n_available_simple_decoders == 0
-        && record.iform.starts_with("CMOV");
-
-    let complex_decoder = perf.complex_decoder || derived_complex || legacy_cmov_complex;
-    let n_available_simple_decoders = if legacy_cmov_complex {
-        n_decoders.saturating_sub(1)
-    } else if legacy_adc_sbb_complex_with_two_simple_decoders(record, perf) {
-        2
-    } else if derived_complex && perf.n_available_simple_decoders == 0 {
-        n_decoders
-    } else {
-        perf.n_available_simple_decoders
-    };
+    let _ = (record, n_decoders);
+    let complex_decoder = perf.complex_decoder || derived_complex;
+    let n_available_simple_decoders = perf.n_available_simple_decoders;
     (complex_decoder, n_available_simple_decoders)
-}
-
-fn legacy_adc_sbb_complex_with_two_simple_decoders(
-    record: &uica_data::InstructionRecord,
-    perf: &uica_data::PerfRecord,
-) -> bool {
-    // Python parity/legacy-pack compatibility: HSW perfData for ADC/SBB
-    // two-uop flag arithmetic carries `complDec=1, sDec=2`. Older UIPacks
-    // dropped both fields, so recover this Python decoder-shape fact from the
-    // exact uops.info form instead of letting derived-complex default to all
-    // simple decoders.
-    !perf.complex_decoder
-        && perf.n_available_simple_decoders == 0
-        && perf_uops_mite(perf) == 2
-        && perf.uops_ms <= 0
-        && matches!(record.iform.split('_').next().unwrap_or(""), "ADC" | "SBB")
-        && ((perf.ports.get("0156") == Some(&1) && perf.ports.get("06") == Some(&1))
-            || (perf.ports.get("015") == Some(&1) && perf.ports.get("05") == Some(&1)))
 }
 
 pub(crate) fn perf_for_operands(
@@ -1890,7 +1856,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_adc_sbb_decoder_shape_recovers_python_sdec() {
+    fn decoder_shape_uses_datapack_complex_and_sdec() {
         let record = InstructionRecord {
             arch: "HSW".to_string(),
             iform: "SBB_GPRv_GPRv_19".to_string(),
@@ -1906,14 +1872,15 @@ mod tests {
                 variants: Default::default(),
                 div_cycles: 0,
                 may_be_eliminated: false,
-                complex_decoder: false,
-                n_available_simple_decoders: 0,
+                complex_decoder: true,
+                n_available_simple_decoders: 2,
                 lcp_stall: false,
                 implicit_rsp_change: 0,
                 can_be_used_by_lsd: false,
                 cannot_be_in_dsb_due_to_jcc_erratum: false,
                 no_micro_fusion: false,
                 no_macro_fusion: false,
+                macro_fusible_with: vec![],
                 operands: vec![],
                 latencies: vec![],
             },
@@ -1952,6 +1919,7 @@ mod tests {
                     cannot_be_in_dsb_due_to_jcc_erratum: false,
                     no_micro_fusion: false,
                     no_macro_fusion: false,
+                    macro_fusible_with: vec![],
                     operands: vec![],
                     latencies: vec![],
                 },
@@ -2062,6 +2030,7 @@ mod tests {
                 cannot_be_in_dsb_due_to_jcc_erratum: false,
                 no_micro_fusion: false,
                 no_macro_fusion: false,
+                macro_fusible_with: vec![],
                 operands: vec![
                     operand("REG0", "reg", true, true),
                     operand("REG1", "reg", true, false),
@@ -2120,6 +2089,7 @@ mod tests {
                 cannot_be_in_dsb_due_to_jcc_erratum: false,
                 no_micro_fusion: false,
                 no_macro_fusion: false,
+                macro_fusible_with: vec![],
                 operands: vec![
                     operand("REG0", "reg", false, true),
                     operand("REG1", "reg", true, false),
@@ -2192,6 +2162,7 @@ mod tests {
                 cannot_be_in_dsb_due_to_jcc_erratum: false,
                 no_micro_fusion: false,
                 no_macro_fusion: false,
+                macro_fusible_with: vec![],
                 operands: vec![
                     operand("REG0", "reg", false, true),
                     operand("REG1", "reg", true, false),
@@ -2319,6 +2290,7 @@ mod tests {
                 cannot_be_in_dsb_due_to_jcc_erratum: false,
                 no_micro_fusion: false,
                 no_macro_fusion: false,
+                macro_fusible_with: vec![],
                 operands: vec![
                     operand("REG0", "reg", true, true),
                     operand("REG1", "reg", true, false),

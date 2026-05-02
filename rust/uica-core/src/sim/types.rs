@@ -283,6 +283,7 @@ pub struct InstrInstance {
     pub macro_fused_with_prev_instr: bool,
     pub macro_fused_with_next_instr: bool,
     pub is_macro_fusible_with_next: bool,
+    pub macro_fusible_with: Vec<String>,
     pub is_last_decoded_instr: bool,
 
     // Uop counts
@@ -355,6 +356,7 @@ impl InstrInstance {
             macro_fused_with_prev_instr: false,
             macro_fused_with_next_instr: false,
             is_macro_fusible_with_next: false,
+            macro_fusible_with: Vec::new(),
             is_last_decoded_instr: false,
             uops_mite: 1, // default to 1 uop
             uops_ms: 0,
@@ -402,7 +404,12 @@ pub fn recompute_macro_fusion_and_is_last(instances: &mut [InstrInstance]) {
         if !branch.is_branch_instr || branch.no_macro_fusion || branch.address.is_multiple_of(64) {
             continue;
         }
-        if instances[i - 1].is_macro_fusible_with_next && !instances[i - 1].no_macro_fusion {
+        if !instances[i - 1].no_macro_fusion
+            && instances[i - 1]
+                .macro_fusible_with
+                .iter()
+                .any(|instr_str| instr_str == &branch.instr_str)
+        {
             instances[i].macro_fused_with_prev_instr = true;
             instances[i - 1].macro_fused_with_next_instr = true;
         }
@@ -492,10 +499,6 @@ pub fn build_instruction_instances(
         inst.is_load_serializing = is_load_serializing(&dec.mnemonic);
         inst.is_store_serializing = is_store_serializing(&dec.mnemonic);
 
-        // Detect macro-fusible instructions.
-        inst.is_macro_fusible_with_next =
-            is_macro_fusible(&dec.mnemonic, dec.has_memory_read || dec.has_memory_write);
-
         instances.push(inst);
         instance_idx += 1;
     }
@@ -534,17 +537,6 @@ fn is_conditional_branch(mnemonic: &str) -> bool {
     )
 }
 
-fn is_macro_fusible(mnemonic: &str, has_memory_operand: bool) -> bool {
-    // Python parity: `Instr.macroFusibleWith` is XML-form specific. Current
-    // UIPacks do not expose it, so mirror matched Python scalar forms: ADD is
-    // included, memory forms such as `CMP (M8, I8)` are not.
-    !has_memory_operand
-        && matches!(
-            mnemonic,
-            "add" | "dec" | "cmp" | "sub" | "test" | "inc" | "and"
-        )
-}
-
 fn is_serializing_instr(mnemonic: &str) -> bool {
     matches!(
         mnemonic,
@@ -576,7 +568,25 @@ fn is_store_serializing(mnemonic: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::build_instruction_instances;
+    use super::{build_instruction_instances, recompute_macro_fusion_and_is_last};
+
+    #[test]
+    fn macro_fusion_uses_uipack_branch_strings() {
+        let decoded = uica_decoder::decode_raw(&[0x48, 0x3b, 0x07, 0x70, 0x02]).unwrap();
+        let mut instances = build_instruction_instances(&decoded, 0);
+        instances[0].instr_str = "CMP (R64, M64)".to_string();
+        instances[0].macro_fusible_with = vec!["JZ (Rel8)".to_string()];
+        instances[0].is_macro_fusible_with_next = true;
+        instances[1].instr_str = "JO (Rel8)".to_string();
+        recompute_macro_fusion_and_is_last(&mut instances);
+        assert!(!instances[0].macro_fused_with_next_instr);
+        assert!(!instances[1].macro_fused_with_prev_instr);
+
+        instances[1].instr_str = "JZ (Rel8)".to_string();
+        recompute_macro_fusion_and_is_last(&mut instances);
+        assert!(instances[0].macro_fused_with_next_instr);
+        assert!(instances[1].macro_fused_with_prev_instr);
+    }
 
     #[test]
     fn lfence_is_serializing_like_python_getinstructions() {

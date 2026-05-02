@@ -80,8 +80,8 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
             can_be_used_by_lsd: true,
             no_macro_fusion: false,
             lcp_stall: decoded_instr.has_66_prefix && decoded_instr.immediate_width_bits == 16,
-            has_memory_operand: decoded_instr.has_memory_read || decoded_instr.has_memory_write,
             instr_str: String::new(),
+            macro_fusible_with: Vec::new(),
             input_mem_operands: decoded_instr
                 .mem_addrs
                 .iter()
@@ -197,6 +197,11 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
                     .iter()
                     .any(|reg| crate::x64::is_high8_reg(reg));
             fact.no_macro_fusion = perf.no_macro_fusion || result.invocation.no_macro_fusion;
+            fact.macro_fusible_with = if fact.no_macro_fusion {
+                Vec::new()
+            } else {
+                record.perf.macro_fusible_with.clone()
+            };
             fact.lcp_stall |= perf.lcp_stall;
             fact.may_be_eliminated =
                 crate::sim::uop_expand::python_may_be_eliminated_for_getinstructions(
@@ -369,8 +374,8 @@ struct LoopInstrFacts {
     can_be_used_by_lsd: bool,
     no_macro_fusion: bool,
     lcp_stall: bool,
-    has_memory_operand: bool,
     instr_str: String,
+    macro_fusible_with: Vec<String>,
     input_operands: Vec<String>,
     output_operands: Vec<String>,
     input_mem_operands: Vec<AnalyticalMemOperand>,
@@ -1197,10 +1202,7 @@ fn facts_to_analytical_instructions(facts: &[LoopInstrFacts]) -> Vec<AnalyticalI
                 size: fact.size,
                 macro_fused_with_prev: false,
                 macro_fused_with_next: false,
-                macro_fusible_with_next: is_macro_fusible_mnemonic(
-                    &mnemonic,
-                    fact.has_memory_operand,
-                ) && !fact.no_macro_fusion,
+                macro_fusible_with_next: !fact.macro_fusible_with.is_empty(),
                 is_branch: is_conditional_jump(&mnemonic),
                 complex_decoder: fact.complex_decoder,
                 n_available_simple_decoders: fact.n_available_simple_decoders,
@@ -1212,7 +1214,13 @@ fn facts_to_analytical_instructions(facts: &[LoopInstrFacts]) -> Vec<AnalyticalI
         .collect();
 
     for idx in 1..out.len() {
-        if out[idx].is_branch && !facts[idx].no_macro_fusion && out[idx - 1].macro_fusible_with_next
+        if out[idx].is_branch
+            && !facts[idx].no_macro_fusion
+            && !facts[idx - 1].no_macro_fusion
+            && facts[idx - 1]
+                .macro_fusible_with
+                .iter()
+                .any(|instr_str| instr_str == &facts[idx].instr_str)
         {
             out[idx].macro_fused_with_prev = true;
             out[idx - 1].macro_fused_with_next = true;
@@ -1220,17 +1228,6 @@ fn facts_to_analytical_instructions(facts: &[LoopInstrFacts]) -> Vec<AnalyticalI
     }
 
     out
-}
-
-fn is_macro_fusible_mnemonic(mnemonic: &str, has_memory_operand: bool) -> bool {
-    // Python parity: `Instr.macroFusibleWith` is XML-form specific. Current
-    // UIPacks do not expose it, so mirror matched Python scalar forms: ADD is
-    // included, memory forms such as `CMP (M8, I8)` are not.
-    !has_memory_operand
-        && matches!(
-            mnemonic,
-            "add" | "dec" | "cmp" | "sub" | "test" | "inc" | "and"
-        )
 }
 
 fn issue_retire_slots(facts: &[LoopInstrFacts], instrs: &[AnalyticalInstruction]) -> i32 {
@@ -2276,6 +2273,7 @@ mod tests {
                     cannot_be_in_dsb_due_to_jcc_erratum: false,
                     no_micro_fusion: false,
                     no_macro_fusion: false,
+                    macro_fusible_with: vec![],
                     operands: vec![],
                     latencies: vec![],
                     variants: Default::default(),

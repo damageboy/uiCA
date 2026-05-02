@@ -420,6 +420,7 @@ fn record_with_immzero(iform: &str, string: &str, imm_zero: bool) -> Instruction
             operands: vec![],
             latencies: vec![],
             variants: Default::default(),
+            macro_fusible_with: vec![],
         },
     }
 }

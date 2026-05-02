@@ -152,6 +152,9 @@ pub struct PerfRecord {
     pub no_micro_fusion: bool,
     #[serde(default)]
     pub no_macro_fusion: bool,
+    /// Python `Instr.macroFusibleWith`: branch instruction strings accepted for macro-fusion.
+    #[serde(default)]
+    pub macro_fusible_with: Vec<String>,
     /// Operand descriptors (in XML operand-index order).
     #[serde(default)]
     pub operands: Vec<OperandRecord>,

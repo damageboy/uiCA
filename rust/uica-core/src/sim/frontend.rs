@@ -72,6 +72,8 @@ fn populate_instr_instance_metadata(
         instr_i.retire_slots = perf.retire_slots.max(1) as u32;
         instr_i.instr_tp = perf.tp.map(|tp| tp.ceil().max(0.0) as u32);
         instr_i.instr_str = record.string.clone();
+        instr_i.macro_fusible_with = record.perf.macro_fusible_with.clone();
+        instr_i.is_macro_fusible_with_next = !instr_i.macro_fusible_with.is_empty();
         if instr_i.implicit_rsp_change == 0 {
             instr_i.implicit_rsp_change = record.perf.implicit_rsp_change;
         }
@@ -105,6 +107,10 @@ fn populate_instr_instance_metadata(
             record.perf.cannot_be_in_dsb_due_to_jcc_erratum;
         instr_i.no_micro_fusion = perf.no_micro_fusion || no_micro_fusion;
         instr_i.no_macro_fusion = perf.no_macro_fusion || no_macro_fusion;
+        if instr_i.no_macro_fusion {
+            instr_i.macro_fusible_with.clear();
+            instr_i.is_macro_fusible_with_next = false;
+        }
         if no_micro_fusion {
             instr_i.retire_slots = (perf.uops.max(0) as u32)
                 .max(instr_i.uops_mite + instr_i.uops_ms)

@@ -35,6 +35,7 @@ fn sample_pack(arch: &str) -> DataPack {
                 cannot_be_in_dsb_due_to_jcc_erratum: false,
                 no_micro_fusion: false,
                 no_macro_fusion: false,
+                macro_fusible_with: vec![],
                 variants: Default::default(),
             },
         }],

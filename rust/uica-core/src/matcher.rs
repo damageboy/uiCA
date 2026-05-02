@@ -193,25 +193,16 @@ fn best_record_match<'a>(
     };
 
     if let Some(imm) = immediate {
-        let has_immzero_metadata = sized.iter().any(|c| c.imm_zero);
-        let is_zero_record = |record: &InstructionRecord| {
-            record.imm_zero
-                || (!has_immzero_metadata && legacy_zero_immediate_string(&record.string))
-        };
         if imm == 0 {
-            if let Some(hit) = sized.iter().find(|c| is_zero_record(c)) {
+            if let Some(hit) = sized.iter().find(|c| c.imm_zero) {
                 return Some(*hit);
             }
-        } else if let Some(hit) = sized.iter().find(|c| !is_zero_record(c)) {
+        } else if let Some(hit) = sized.iter().find(|c| !c.imm_zero) {
             return Some(*hit);
         }
     }
 
     sized.into_iter().next()
-}
-
-fn legacy_zero_immediate_string(string: &str) -> bool {
-    string.contains(", 0)") || string.contains("(0)") || string.contains("(0,")
 }
 
 fn prefer_explicit_mask_form<'a>(

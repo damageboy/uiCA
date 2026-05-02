@@ -37,6 +37,7 @@ fn computes_summary_from_decoded_records() {
                 cannot_be_in_dsb_due_to_jcc_erratum: false,
                 no_micro_fusion: false,
                 no_macro_fusion: false,
+                macro_fusible_with: vec![],
                 variants: Default::default(),
             },
         }],
@@ -95,6 +96,7 @@ fn quick_add_loop_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -122,6 +124,7 @@ fn quick_add_loop_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -149,6 +152,7 @@ fn quick_add_loop_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
             ],
@@ -336,6 +340,7 @@ fn quick_dec_jcc_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -363,6 +368,7 @@ fn quick_dec_jcc_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
             ],
@@ -465,6 +471,7 @@ fn mem_address_latency_feeds_dependency_limit_like_python() {
                     cannot_be_in_dsb_due_to_jcc_erratum: false,
                     no_micro_fusion: false,
                     no_macro_fusion: false,
+                    macro_fusible_with: vec![],
                     variants: Default::default(),
                 },
             },
@@ -544,6 +551,7 @@ fn mem_address_latency_feeds_dependency_limit_like_python() {
                     cannot_be_in_dsb_due_to_jcc_erratum: false,
                     no_micro_fusion: false,
                     no_macro_fusion: false,
+                    macro_fusible_with: vec![],
                     variants: Default::default(),
                 },
             },
@@ -594,6 +602,7 @@ fn mem_address_latency_feeds_dependency_limit_like_python() {
                     cannot_be_in_dsb_due_to_jcc_erratum: false,
                     no_micro_fusion: false,
                     no_macro_fusion: false,
+                    macro_fusible_with: vec![],
                     variants: Default::default(),
                 },
             },
@@ -621,6 +630,7 @@ fn mem_address_latency_feeds_dependency_limit_like_python() {
                     cannot_be_in_dsb_due_to_jcc_erratum: false,
                     no_micro_fusion: false,
                     no_macro_fusion: false,
+                    macro_fusible_with: vec![],
                     variants: Default::default(),
                 },
             },
@@ -708,6 +718,7 @@ fn quick_model_falls_back_safely_when_pack_is_incomplete() {
                 cannot_be_in_dsb_due_to_jcc_erratum: false,
                 no_micro_fusion: false,
                 no_macro_fusion: false,
+                macro_fusible_with: vec![],
                 variants: Default::default(),
             },
         }],
@@ -744,14 +755,14 @@ fn empty_pack_uses_python_unknown_instr_defaults() {
     let result = uica_core::engine::engine_with_pack(&code, &invocation, &pack);
     assert_eq!(result.summary.mode, "loop");
     assert_eq!(result.summary.throughput_cycles_per_iteration, Some(1.0));
-    assert_eq!(result.summary.iterations_simulated, 494);
+    assert_eq!(result.summary.iterations_simulated, 500);
     assert_eq!(result.summary.limits.get("dsb"), Some(&Some(1.0)));
-    assert_eq!(result.summary.limits.get("issue"), Some(&Some(0.5)));
+    assert_eq!(result.summary.limits.get("issue"), Some(&Some(0.75)));
     assert_eq!(result.summary.limits.get("dependencies"), Some(&Some(0.0)));
     assert_eq!(result.summary.limits.get("ports"), Some(&Some(0.0)));
     assert_eq!(
         result.summary.bottlenecks_predicted,
-        vec!["DSB".to_string(), "Scheduling".to_string()]
+        vec!["DSB".to_string()]
     );
 }
 
@@ -829,6 +840,7 @@ fn curated12_cmov_setcc_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -860,6 +872,7 @@ fn curated12_cmov_setcc_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -887,6 +900,7 @@ fn curated12_cmov_setcc_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -914,6 +928,7 @@ fn curated12_cmov_setcc_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -941,6 +956,7 @@ fn curated12_cmov_setcc_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -968,6 +984,7 @@ fn curated12_cmov_setcc_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
             ],
@@ -1047,6 +1064,7 @@ fn curated12_alu_dep_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -1074,6 +1092,7 @@ fn curated12_alu_dep_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -1101,6 +1120,7 @@ fn curated12_alu_dep_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -1128,6 +1148,7 @@ fn curated12_alu_dep_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -1155,6 +1176,7 @@ fn curated12_alu_dep_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
             ],
@@ -1273,6 +1295,7 @@ fn curated12_flag_chain_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -1304,6 +1327,7 @@ fn curated12_flag_chain_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -1335,6 +1359,7 @@ fn curated12_flag_chain_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -1362,6 +1387,7 @@ fn curated12_flag_chain_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -1389,6 +1415,7 @@ fn curated12_flag_chain_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
             ],
@@ -1496,6 +1523,7 @@ fn curated12_load_store_mix_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -1523,6 +1551,7 @@ fn curated12_load_store_mix_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -1550,6 +1579,7 @@ fn curated12_load_store_mix_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -1577,6 +1607,7 @@ fn curated12_load_store_mix_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
             ],
@@ -1674,6 +1705,7 @@ fn curated12_store_stream_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -1701,6 +1733,7 @@ fn curated12_store_stream_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -1728,6 +1761,7 @@ fn curated12_store_stream_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -1755,6 +1789,7 @@ fn curated12_store_stream_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
             ],
@@ -1854,6 +1889,7 @@ fn curated12_div_mul_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -1881,6 +1917,7 @@ fn curated12_div_mul_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -1908,6 +1945,7 @@ fn curated12_div_mul_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -1935,6 +1973,7 @@ fn curated12_div_mul_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -1962,6 +2001,7 @@ fn curated12_div_mul_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -1989,6 +2029,7 @@ fn curated12_div_mul_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
             ],
@@ -2056,6 +2097,7 @@ fn curated12_shift_rotate_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -2083,6 +2125,7 @@ fn curated12_shift_rotate_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -2110,6 +2153,7 @@ fn curated12_shift_rotate_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -2137,6 +2181,7 @@ fn curated12_shift_rotate_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -2164,6 +2209,7 @@ fn curated12_shift_rotate_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
             ],
@@ -2272,6 +2318,7 @@ fn curated12_vector128_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -2299,6 +2346,7 @@ fn curated12_vector128_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -2326,6 +2374,7 @@ fn curated12_vector128_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -2353,6 +2402,7 @@ fn curated12_vector128_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -2380,6 +2430,7 @@ fn curated12_vector128_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
             ],
@@ -2447,6 +2498,7 @@ fn curated12_vector256_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -2474,6 +2526,7 @@ fn curated12_vector256_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -2501,6 +2554,7 @@ fn curated12_vector256_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -2528,6 +2582,7 @@ fn curated12_vector256_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -2555,6 +2610,7 @@ fn curated12_vector256_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
             ],
@@ -2626,6 +2682,7 @@ fn curated12_fence_mix_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -2653,6 +2710,7 @@ fn curated12_fence_mix_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -2680,6 +2738,7 @@ fn curated12_fence_mix_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -2707,6 +2766,7 @@ fn curated12_fence_mix_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
                 InstructionRecord {
@@ -2734,6 +2794,7 @@ fn curated12_fence_mix_model_matches_expected_outputs() {
                         no_micro_fusion: false,
                         no_macro_fusion: false,
                         variants: Default::default(),
+                        macro_fusible_with: vec![],
                     },
                 },
             ],
@@ -2798,6 +2859,7 @@ fn emits_cycle_skeleton_with_expected_length_and_cycle_indices() {
                 cannot_be_in_dsb_due_to_jcc_erratum: false,
                 no_micro_fusion: false,
                 no_macro_fusion: false,
+                macro_fusible_with: vec![],
                 variants: Default::default(),
             },
         }],

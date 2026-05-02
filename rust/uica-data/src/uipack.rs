@@ -16,11 +16,10 @@ use crate::{
 };
 
 pub const UIPACK_MAGIC: [u8; 8] = *b"UIPACK\0\0";
-pub const UIPACK_VERSION: u16 = 4;
+pub const UIPACK_VERSION: u16 = 5;
 pub const UIPACK_CHECKSUM_FNV1A64: u16 = 1;
 
 const UIPACK_HEADER_SIZE: usize = 64;
-const UIPACK_RECORD_SIZE_V3: usize = 80;
 const UIPACK_RECORD_SIZE: usize = 88;
 const UIPACK_PORT_ENTRY_SIZE: usize = 8;
 const UIPACK_ALIGNMENT: usize = 8;
@@ -291,6 +290,7 @@ impl<'a> UiPackView<'a> {
                         .cannot_be_in_dsb_due_to_jcc_erratum(),
                     no_micro_fusion: record.perf().no_micro_fusion(),
                     no_macro_fusion: record.perf().no_macro_fusion(),
+                    macro_fusible_with: record.macro_fusible_with()?,
                     operands: record.operands()?,
                     latencies: record.latencies()?,
                     variants: record.variants()?,
@@ -390,6 +390,17 @@ impl<'a> UiPackRecordView<'a> {
             self.entry.variants_offset,
             self.entry.variants_size,
             "variants",
+        )?)?)
+    }
+
+    pub fn macro_fusible_with(&self) -> Result<Vec<String>, UiPackError> {
+        if self.entry.macro_fusible_size == 0 {
+            return Ok(Vec::new());
+        }
+        Ok(serde_json::from_slice(self.blob(
+            self.entry.macro_fusible_offset,
+            self.entry.macro_fusible_size,
+            "macro_fusible_with",
         )?)?)
     }
 
@@ -558,6 +569,7 @@ pub fn encode_uipack(pack: &DataPack, arch: &str) -> Result<Vec<u8>, UiPackError
         let operands = serde_json::to_vec(&record.perf.operands)?;
         let latencies = serde_json::to_vec(&record.perf.latencies)?;
         let variants = serde_json::to_vec(&record.perf.variants)?;
+        let macro_fusible_with = serde_json::to_vec(&record.perf.macro_fusible_with)?;
 
         raw_records.push(RawRecordEntry {
             iform_offset,
@@ -584,6 +596,7 @@ pub fn encode_uipack(pack: &DataPack, arch: &str) -> Result<Vec<u8>, UiPackError
             operands,
             latencies,
             variants,
+            macro_fusible_with,
         });
     }
 
@@ -625,6 +638,13 @@ pub fn encode_uipack(pack: &DataPack, arch: &str) -> Result<Vec<u8>, UiPackError
             .map_err(|_| UiPackError::InvalidFormat("uipack variants too large".to_string()))?;
         blobs.extend_from_slice(&raw.variants);
 
+        let macro_fusible_offset = u32::try_from(blobs_offset + blobs.len())
+            .map_err(|_| UiPackError::InvalidFormat("uipack too large".to_string()))?;
+        let macro_fusible_size = u32::try_from(raw.macro_fusible_with.len()).map_err(|_| {
+            UiPackError::InvalidFormat("uipack macro_fusible_with too large".to_string())
+        })?;
+        blobs.extend_from_slice(&raw.macro_fusible_with);
+
         record_entries.push(RecordEntry {
             iform_offset: raw.iform_offset,
             string_offset: raw.string_offset,
@@ -645,6 +665,8 @@ pub fn encode_uipack(pack: &DataPack, arch: &str) -> Result<Vec<u8>, UiPackError
             implicit_rsp_change: raw.implicit_rsp_change,
             variants_offset,
             variants_size,
+            macro_fusible_offset,
+            macro_fusible_size,
         });
     }
     let file_len = u64::try_from(blobs_offset + blobs.len())
@@ -725,10 +747,10 @@ pub fn read_uipack_header(bytes: &[u8]) -> Result<UiPackHeader, UiPackError> {
         schema_offset: read_u32(bytes, 60),
     };
 
-    if !matches!(header.version, 3 | UIPACK_VERSION) {
+    if header.version != UIPACK_VERSION {
         return Err(UiPackError::InvalidFormat(format!(
-            "unsupported uipack version {}",
-            header.version
+            "unsupported uipack version {} (expected {})",
+            header.version, UIPACK_VERSION
         )));
     }
     if header.header_size as usize != UIPACK_HEADER_SIZE {
@@ -835,6 +857,7 @@ struct RawRecordEntry {
     operands: Vec<u8>,
     latencies: Vec<u8>,
     variants: Vec<u8>,
+    macro_fusible_with: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -858,6 +881,8 @@ struct RecordEntry {
     implicit_rsp_change: i32,
     variants_offset: u32,
     variants_size: u32,
+    macro_fusible_offset: u32,
+    macro_fusible_size: u32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -993,12 +1018,12 @@ fn write_header(dst: &mut [u8], header: &UiPackHeader) {
 }
 
 fn record_size_for_version(version: u16) -> Result<usize, UiPackError> {
-    match version {
-        3 => Ok(UIPACK_RECORD_SIZE_V3),
-        UIPACK_VERSION => Ok(UIPACK_RECORD_SIZE),
-        _ => Err(UiPackError::InvalidFormat(format!(
-            "unsupported uipack version {version}"
-        ))),
+    if version == UIPACK_VERSION {
+        Ok(UIPACK_RECORD_SIZE)
+    } else {
+        Err(UiPackError::InvalidFormat(format!(
+            "unsupported uipack version {version} (expected {UIPACK_VERSION})"
+        )))
     }
 }
 
@@ -1022,7 +1047,8 @@ fn write_record_entry(dst: &mut [u8], record: &RecordEntry) {
     dst[68..72].copy_from_slice(&record.implicit_rsp_change.to_le_bytes());
     dst[72..76].copy_from_slice(&record.variants_offset.to_le_bytes());
     dst[76..80].copy_from_slice(&record.variants_size.to_le_bytes());
-    dst[80..88].fill(0);
+    dst[80..84].copy_from_slice(&record.macro_fusible_offset.to_le_bytes());
+    dst[84..88].copy_from_slice(&record.macro_fusible_size.to_le_bytes());
 }
 
 fn write_port_entry(dst: &mut [u8], port: &PortEntry) {
@@ -1051,6 +1077,8 @@ fn read_record_entry(src: &[u8], version: u16) -> RecordEntry {
         implicit_rsp_change: read_i32(src, 68),
         variants_offset: if version >= 4 { read_u32(src, 72) } else { 0 },
         variants_size: if version >= 4 { read_u32(src, 76) } else { 0 },
+        macro_fusible_offset: if version >= 5 { read_u32(src, 80) } else { 0 },
+        macro_fusible_size: if version >= 5 { read_u32(src, 84) } else { 0 },
     }
 }
 

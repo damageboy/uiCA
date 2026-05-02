@@ -190,7 +190,7 @@ impl Scheduler {
             } else if all_ports(&self.arch.name).len() == 8 {
                 self.select_port_hsw_style(clock, issue_slot, &possible_ports)
             } else {
-                self.select_port_legacy_style(clock, issue_slot, &possible_ports)
+                self.select_port_python_style(clock, issue_slot, &possible_ports)
             };
 
             // Now update the uop (mutable borrow)
@@ -411,7 +411,7 @@ impl Scheduler {
             .is_some_and(|uop| uop.prop.is_load_uop && uop.prop.instr_str.contains("M256"))
     }
 
-    fn select_port_legacy_style(
+    fn select_port_python_style(
         &mut self,
         clock: u32,
         issue_slot: usize,

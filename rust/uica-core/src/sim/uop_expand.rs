@@ -764,14 +764,11 @@ fn compute_uop_plans_inner(
                 if let Some(sr) = lr.cycles_same_reg {
                     if use_move_elim_fallback || uses_same_reg {
                         // Python parity: `instructions.py` replaces `latData`
-                        // with `lat_SR` for same-register forms, eliminated MOV
-                        // fallback uops, and `movzxSpecialCase`.
+                        // with `lat_SR` only for same-register forms, eliminated
+                        // MOV fallback uops, and `movzxSpecialCase`. Non-SR
+                        // instructions keep base latency even when XML also
+                        // carries a `cycles_same_reg` shortcut.
                         lat_dict.insert((start_op.clone(), target_op.clone()), sr);
-                    } else {
-                        let cur = lat_dict
-                            .entry((start_op.clone(), target_op.clone()))
-                            .or_insert(cycles);
-                        *cur = (*cur).min(sr);
                     }
                 }
             }
@@ -1824,6 +1821,64 @@ mod tests {
         let plans = compute_uop_plans(record, "HSW");
 
         assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].latencies.get("REG0"), Some(&1));
+    }
+
+    #[test]
+    fn non_same_reg_form_ignores_cycles_same_reg_latency() {
+        let record = InstructionRecord {
+            arch: "HSW".to_string(),
+            iform: "SUB_GPRv_GPRv_29".to_string(),
+            string: "SUB_29 (R64, R64)".to_string(),
+            imm_zero: false,
+            perf: PerfRecord {
+                uops: 1,
+                retire_slots: 1,
+                uops_mite: 1,
+                uops_ms: 0,
+                tp: None,
+                ports: BTreeMap::from([("0156".to_string(), 1)]),
+                div_cycles: 0,
+                may_be_eliminated: false,
+                complex_decoder: false,
+                n_available_simple_decoders: 0,
+                lcp_stall: false,
+                implicit_rsp_change: 0,
+                can_be_used_by_lsd: false,
+                cannot_be_in_dsb_due_to_jcc_erratum: false,
+                no_micro_fusion: false,
+                no_macro_fusion: false,
+                operands: vec![
+                    operand("REG0", "reg", true, true),
+                    operand("REG1", "reg", true, false),
+                ],
+                latencies: vec![LatencyRecord {
+                    start_op: "REG0".to_string(),
+                    target_op: "REG0".to_string(),
+                    cycles: 1,
+                    cycles_addr: None,
+                    cycles_addr_index: None,
+                    cycles_mem: None,
+                    cycles_same_reg: Some(0),
+                }],
+                variants: Default::default(),
+            },
+        };
+        let mut instr = super::super::types::InstrInstance::new(
+            0,
+            0,
+            0,
+            0,
+            3,
+            "sub".to_string(),
+            "sub rcx, rdx".to_string(),
+        );
+        instr.input_regs = vec!["RCX".to_string(), "RDX".to_string()];
+        instr.output_regs = vec!["RCX".to_string()];
+        instr.explicit_reg_operands = vec!["RCX".to_string(), "RDX".to_string()];
+
+        let plans = compute_uop_plans_inner(&record, "HSW", Some(&instr));
+
         assert_eq!(plans[0].latencies.get("REG0"), Some(&1));
     }
 

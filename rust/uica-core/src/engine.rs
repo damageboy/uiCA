@@ -78,11 +78,16 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
             n_available_simple_decoders: arch.n_decoders.saturating_sub(1),
             can_be_used_by_lsd: true,
             no_macro_fusion: false,
-            input_operands: decoded_latency_inputs(decoded_instr),
-            output_operands: decoded_latency_outputs(decoded_instr),
+            // Python parity: absent `archData.instrData[iform]` becomes
+            // UnknownInstr with empty input/output operand lists. Matched
+            // instructions fill these from record/XED operands below.
+            input_operands: Vec::new(),
+            output_operands: Vec::new(),
             latencies: BTreeMap::new(),
             may_be_eliminated: false,
-            matched: false,
+            // UnknownInstr still participates in frontend/issue loop modeling
+            // with default uopsMITE=1 and retireSlots=1.
+            matched: true,
         };
 
         let candidates = index.candidates_for(&result.invocation.arch, &decoded_instr.mnemonic);
@@ -168,10 +173,10 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
                 arch.name,
                 uses_sr_fallback_for_analytics || uses_same_reg,
             );
-            total_retire_slots += fact.retire_slots;
             fact.matched = true;
         }
 
+        total_retire_slots += fact.retire_slots;
         loop_facts.push(fact);
     }
 
@@ -451,48 +456,6 @@ fn mem_key(decoded: &uica_decoder::DecodedInstruction) -> String {
     } else {
         "MEM".to_string()
     }
-}
-
-fn decoded_latency_inputs(decoded: &uica_decoder::DecodedInstruction) -> Vec<String> {
-    let mut inputs: Vec<String> = decoded
-        .input_regs
-        .iter()
-        .map(|reg| crate::x64::get_canonical_reg(reg))
-        .collect();
-    if decoded.reads_flags {
-        inputs.extend(["C".to_string(), "SPAZO".to_string()]);
-    }
-    if decoded.has_memory_read {
-        inputs.push(mem_key(decoded));
-    }
-    for mem in &decoded.mem_addrs {
-        if let Some(base) = &mem.base {
-            inputs.push(crate::x64::get_canonical_reg(base));
-        }
-        if let Some(index) = &mem.index {
-            inputs.push(crate::x64::get_canonical_reg(index));
-        }
-    }
-    inputs.sort();
-    inputs.dedup();
-    inputs
-}
-
-fn decoded_latency_outputs(decoded: &uica_decoder::DecodedInstruction) -> Vec<String> {
-    let mut outputs: Vec<String> = decoded
-        .output_regs
-        .iter()
-        .map(|reg| crate::x64::get_canonical_reg(reg))
-        .collect();
-    if decoded.writes_flags {
-        outputs.extend(["C".to_string(), "SPAZO".to_string()]);
-    }
-    if decoded.has_memory_write {
-        outputs.push(mem_key(decoded));
-    }
-    outputs.sort();
-    outputs.dedup();
-    outputs
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]

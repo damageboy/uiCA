@@ -207,6 +207,22 @@ fn matches_cmov_and_setcc_aliases_to_candidates() {
 }
 
 #[test]
+fn does_not_fallback_to_mnemonic_when_decoded_iform_signature_misses() {
+    let instr = NormalizedInstr {
+        max_op_size_bytes: 8,
+        immediate: None,
+        iform_signature: "VGPR64q_VGPR64q_VGPR64q".to_string(),
+        mnemonic: "mulx".to_string(),
+        uses_high8_reg: false,
+        explicit_reg_operands: vec!["RAX".to_string(), "RBX".to_string(), "RCX".to_string()],
+        agen: None,
+    };
+    let candidates = vec![record("MULX_GPR64q_GPR64q_GPR64q", "MULX (R64, R64, R64)")];
+
+    assert!(match_instruction_record(&instr, &candidates).is_none());
+}
+
+#[test]
 fn matches_nonzero_immediate_to_general_immediate_record() {
     let instr = NormalizedInstr {
         max_op_size_bytes: 8,

@@ -49,6 +49,7 @@ pub fn match_instruction_record<'a>(
     candidates: &'a [InstructionRecord],
 ) -> Option<&'a InstructionRecord> {
     let normalized_mnemonic = normalize_mnemonic(&instruction.mnemonic);
+    let raw_mnemonic = raw_mnemonic(&instruction.mnemonic);
     let sig = instruction.iform_signature.trim();
 
     // Prefer candidates whose iform carries the same operand-kind signature,
@@ -59,6 +60,8 @@ pub fn match_instruction_record<'a>(
             .iter()
             .filter(|candidate| {
                 iform_matches_signature(&candidate.iform, &normalized_mnemonic, sig)
+                    || (raw_mnemonic != normalized_mnemonic
+                        && iform_matches_signature(&candidate.iform, &raw_mnemonic, sig))
             })
             .collect();
         if !sig_matches.is_empty() {
@@ -71,9 +74,15 @@ pub fn match_instruction_record<'a>(
                 instruction.agen.as_deref(),
             );
         }
+        // Python parity: `getInstructions()` indexes uops.info data by exact
+        // XED iform first (`archData.instrData.get(instrD['iform'], [])`). If
+        // the decoded iform signature has no matching record (e.g. XED `VGPR`
+        // vs datapack `GPR` MULX), Python creates `UnknownInstr` instead of
+        // falling back to a mnemonic-only record.
+        return None;
     }
 
-    // Fallback: string mnemonic match, prefer by operand size if known.
+    // Fallback: string mnemonic match when no iform signature is available.
     let string_matches: Vec<&InstructionRecord> = candidates
         .iter()
         .filter(|c| normalize_mnemonic(&c.string) == normalized_mnemonic)
@@ -295,14 +304,15 @@ fn iform_matches_signature(iform: &str, mnemonic: &str, signature: &str) -> bool
 }
 
 pub fn normalize_mnemonic(text: &str) -> String {
-    let upper = text
-        .trim()
+    canonical_mnemonic_alias(raw_mnemonic(text).as_str()).to_string()
+}
+
+fn raw_mnemonic(text: &str) -> String {
+    text.trim()
         .split(|ch: char| ch.is_whitespace() || ch == '(')
         .find(|part| !part.is_empty())
         .unwrap_or("")
-        .to_ascii_uppercase();
-
-    canonical_mnemonic_alias(upper.as_str()).to_string()
+        .to_ascii_uppercase()
 }
 
 fn canonical_mnemonic_alias(mnemonic: &str) -> &str {

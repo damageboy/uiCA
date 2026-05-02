@@ -170,36 +170,16 @@ pub struct UopPlan {
 // is_instr_supported
 // ---------------------------------------------------------------------------
 
-/// True iff we can produce a non-empty plan for this decoded instruction.
+/// True iff we can produce a plan for this decoded instruction.
 pub fn is_instr_supported(
     instr: &InstrInstance,
     arch_name: &str,
     index: &uica_data::DataPackIndex,
 ) -> bool {
-    if instr.macro_fused_with_prev_instr {
-        return true;
-    }
-    // Zero-idiom mnemonics are always supported; they produce 0 real uops.
-    let m = instr.mnemonic.to_ascii_lowercase();
-    if ["xor", "sub", "pxor", "vxorps", "vxorpd", "vpxor"].contains(&m.as_str())
-        && !instr.has_memory_read
-        && !instr.has_memory_write
-        && instr.input_regs.is_empty()
-    {
-        return true;
-    }
-    use crate::matcher::{match_instruction_record, NormalizedInstr};
-    let norm = NormalizedInstr {
-        mnemonic: instr.mnemonic.clone(),
-        iform_signature: instr.iform_signature.clone(),
-        max_op_size_bytes: instr.max_op_size_bytes,
-        immediate: instr.immediate,
-        uses_high8_reg: instr.uses_high8_reg,
-        explicit_reg_operands: instr.explicit_reg_operands.clone(),
-        agen: instr.agen.clone(),
-    };
-    let candidates = index.candidates_for(&arch_name.to_ascii_uppercase(), &instr.mnemonic);
-    match_instruction_record(&norm, candidates).is_some()
+    let _ = (instr, arch_name, index);
+    // Python parity: missing `archData.instrData[iform]` becomes UnknownInstr,
+    // which still enters the simulator as a single zero-port retire-slot uop.
+    true
 }
 
 /// Look up (uops_mite, uops_ms) from the DataPack.
@@ -448,9 +428,31 @@ pub fn expand_instr_instance_to_lam_uops_with_storage(
     let record = match match_instruction_record(&norm, candidates) {
         Some(rec) => rec,
         None => {
-            return Err(format!(
-                "no DataPack record for {}: {}",
-                arch_name, instr.mnemonic
+            // Python parity: `getInstructions()` creates `UnknownInstr` for
+            // decoded iforms absent from `archData.instrData`; later
+            // `computeUopProperties()` pads its single retire slot with one
+            // zero-port uop.
+            return Ok(emit_lam_uops(
+                &[UopPlan {
+                    ports: vec![],
+                    inputs: vec![],
+                    outputs: vec![],
+                    latencies: BTreeMap::new(),
+                    is_load: false,
+                    is_store_address: false,
+                    is_store_data: false,
+                    is_first: true,
+                    is_last: true,
+                    mem_addr: None,
+                    mem_addr_index: None,
+                }],
+                instr,
+                uop_idx_counter,
+                fused_idx_counter,
+                lam_idx_counter,
+                storage,
+                arch_name,
+                None,
             ));
         }
     };
@@ -1779,6 +1781,76 @@ mod tests {
             is_agen: false,
             mem_operand_role: None,
         }
+    }
+
+    #[test]
+    fn unmatched_iform_emits_unknown_instr_zero_port_uop() {
+        let pack = DataPack {
+            schema_version: uica_data::DATAPACK_SCHEMA_VERSION.to_string(),
+            instructions: vec![InstructionRecord {
+                arch: "HSW".to_string(),
+                iform: "MULX_GPR64q_GPR64q_GPR64q".to_string(),
+                string: "MULX (R64, R64, R64)".to_string(),
+                imm_zero: false,
+                perf: PerfRecord {
+                    uops: 2,
+                    retire_slots: 2,
+                    uops_mite: 2,
+                    uops_ms: 0,
+                    tp: None,
+                    ports: BTreeMap::from([("06".to_string(), 1), ("1".to_string(), 1)]),
+                    variants: Default::default(),
+                    div_cycles: 0,
+                    may_be_eliminated: false,
+                    complex_decoder: false,
+                    n_available_simple_decoders: 0,
+                    lcp_stall: false,
+                    implicit_rsp_change: 0,
+                    can_be_used_by_lsd: false,
+                    cannot_be_in_dsb_due_to_jcc_erratum: false,
+                    no_micro_fusion: false,
+                    no_macro_fusion: false,
+                    operands: vec![],
+                    latencies: vec![],
+                },
+            }],
+        };
+        let index = DataPackIndex::new(pack.clone());
+        let mut instr = super::super::types::InstrInstance::new(
+            0,
+            0,
+            0,
+            0,
+            5,
+            "mulx".to_string(),
+            "mulx rax, rbx, rcx".to_string(),
+        );
+        instr.iform_signature = "VGPR64q_VGPR64q_VGPR64q".to_string();
+        instr.max_op_size_bytes = 8;
+        instr.uops_mite = 1;
+        instr.retire_slots = 1;
+
+        let mut storage = super::super::uop_storage::UopStorage::new();
+        let mut uop_idx = 0;
+        let mut fused_idx = 0;
+        let mut lam_idx = 0;
+        let lam_idxs = super::expand_instr_instance_to_lam_uops_with_storage(
+            &instr,
+            &mut uop_idx,
+            &mut fused_idx,
+            &mut lam_idx,
+            &mut storage,
+            "HSW",
+            &pack,
+            Some(&index),
+        )
+        .expect("unknown instruction expansion should succeed");
+
+        assert_eq!(lam_idxs.len(), 1);
+        let uop = storage.get_uop(0).expect("zero-port uop");
+        assert!(uop.prop.possible_ports.is_empty());
+        assert!(uop.prop.input_operands.is_empty());
+        assert!(uop.prop.output_operands.is_empty());
     }
 
     #[test]

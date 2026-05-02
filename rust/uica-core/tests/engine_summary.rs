@@ -731,7 +731,7 @@ fn quick_model_falls_back_safely_when_pack_is_incomplete() {
 }
 
 #[test]
-fn quick_model_skips_partial_data_for_non_preferred_signatures() {
+fn empty_pack_uses_python_unknown_instr_defaults() {
     let code = hex::decode("4801d84829d875f8").unwrap(); // add; sub; jnz
     let invocation = Invocation {
         arch: "SKL".to_string(),
@@ -747,10 +747,15 @@ fn quick_model_skips_partial_data_for_non_preferred_signatures() {
     let result = uica_core::engine::engine_with_pack(&code, &invocation, &pack);
     assert_eq!(result.summary.mode, "loop");
     assert_eq!(result.summary.throughput_cycles_per_iteration, Some(1.0));
-    assert_eq!(result.summary.iterations_simulated, 493);
-    assert_eq!(result.summary.limits.get("issue"), Some(&Some(0.0)));
+    assert_eq!(result.summary.iterations_simulated, 494);
+    assert_eq!(result.summary.limits.get("dsb"), Some(&Some(1.0)));
+    assert_eq!(result.summary.limits.get("issue"), Some(&Some(0.5)));
     assert_eq!(result.summary.limits.get("dependencies"), Some(&None));
-    assert!(result.summary.bottlenecks_predicted.is_empty());
+    assert_eq!(result.summary.limits.get("ports"), Some(&Some(0.0)));
+    assert_eq!(
+        result.summary.bottlenecks_predicted,
+        vec!["DSB".to_string(), "Scheduling".to_string()]
+    );
 }
 
 #[test]

@@ -26,8 +26,9 @@ use super::types::{
 };
 use super::uop_expand::{
     expand_instr_instance_to_lam_uops_with_storage, instr_uses_indexed_addr, instr_uses_same_reg,
-    perf_for_operands, perf_may_be_eliminated_with_input_regs, perf_uops_mite,
-    python_decoder_shape_from_record, record_may_be_eliminated,
+    perf_for_operands, perf_for_python_getinstructions, perf_uops_mite,
+    python_decoder_shape_from_record, python_may_be_eliminated_for_getinstructions,
+    record_may_be_eliminated,
 };
 use super::uop_storage::UopStorage;
 
@@ -49,13 +50,22 @@ fn populate_instr_instance_metadata(
     };
     let candidates = pack_index.candidates_for(&arch_name.to_ascii_uppercase(), &instr_i.mnemonic);
     if let Some(record) = crate::matcher::match_instruction_record(&norm, candidates) {
-        // Python parity: `getInstructions()` overlays `_SR` fields for
-        // same-register forms, then `_I` fields for indexed memory forms.
-        let perf = perf_for_operands(
-            record,
-            instr_uses_same_reg(instr_i),
-            instr_uses_indexed_addr(instr_i),
-        );
+        let arch = crate::micro_arch::get_micro_arch(arch_name);
+        let perf = if let Some(arch) = arch.as_ref() {
+            perf_for_python_getinstructions(
+                record,
+                instr_uses_same_reg(instr_i),
+                instr_uses_indexed_addr(instr_i),
+                &instr_i.input_regs,
+                arch,
+            )
+        } else {
+            perf_for_operands(
+                record,
+                instr_uses_same_reg(instr_i),
+                instr_uses_indexed_addr(instr_i),
+            )
+        };
         instr_i.uops_mite = perf_uops_mite(&perf);
         instr_i.uops_ms = perf.uops_ms.max(0) as u32;
         instr_i.div_cycles = perf.div_cycles;
@@ -65,9 +75,16 @@ fn populate_instr_instance_metadata(
         if instr_i.implicit_rsp_change == 0 {
             instr_i.implicit_rsp_change = record.perf.implicit_rsp_change;
         }
-        instr_i.may_be_eliminated = crate::micro_arch::get_micro_arch(arch_name)
+        instr_i.may_be_eliminated = arch
+            .as_ref()
             .map(|arch| {
-                perf_may_be_eliminated_with_input_regs(record, &perf, &instr_i.input_regs, &arch)
+                python_may_be_eliminated_for_getinstructions(
+                    record,
+                    instr_uses_same_reg(instr_i),
+                    instr_uses_indexed_addr(instr_i),
+                    &instr_i.input_regs,
+                    arch,
+                )
             })
             .unwrap_or_else(|| record_may_be_eliminated(record));
         let (complex_decoder, n_available_simple_decoders) = python_decoder_shape_from_record(

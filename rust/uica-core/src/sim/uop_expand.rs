@@ -273,20 +273,62 @@ pub(crate) fn perf_for_operands(
     uses_indexed_addr: bool,
 ) -> uica_data::PerfRecord {
     let mut perf = record.perf.clone();
+    apply_python_operand_variants(record, &mut perf, uses_same_reg, uses_indexed_addr);
+    perf
+}
+
+pub(crate) fn perf_for_python_getinstructions(
+    record: &uica_data::InstructionRecord,
+    uses_same_reg: bool,
+    uses_indexed_addr: bool,
+    input_regs: &[String],
+    arch: &crate::micro_arch::MicroArchConfig,
+) -> uica_data::PerfRecord {
+    let mut perf = record.perf.clone();
     // Python parity: `instructions.py getInstructions()` overlays `_SR`
-    // fields before `_I` fields when both same-register and indexed-address
-    // predicates apply.
-    if uses_same_reg {
+    // fields for explicit same-register forms, then `_I` fields for indexed
+    // addressing. It then detects move elimination from that selected base
+    // form and overlays `_SR` again for any mayBeEliminated MOV (or MOVZX
+    // special-case), even when source/destination registers differ. The
+    // `mayBeEliminated` boolean itself remains the value computed before this
+    // second `_SR` overlay.
+    apply_python_operand_variants(record, &mut perf, uses_same_reg, uses_indexed_addr);
+    if perf_uses_move_elim_fallback_with_input_regs(record, &perf, input_regs, arch) {
         if let Some(same_reg) = record.perf.variants.get("same_reg") {
             apply_perf_variant(&mut perf, same_reg);
         }
     }
-    if uses_indexed_addr {
-        if let Some(indexed) = record.perf.variants.get("indexed") {
-            apply_perf_variant(&mut perf, indexed);
+    perf
+}
+
+pub(crate) fn python_may_be_eliminated_for_getinstructions(
+    record: &uica_data::InstructionRecord,
+    uses_same_reg: bool,
+    uses_indexed_addr: bool,
+    input_regs: &[String],
+    arch: &crate::micro_arch::MicroArchConfig,
+) -> bool {
+    let mut perf = record.perf.clone();
+    apply_python_operand_variants(record, &mut perf, uses_same_reg, uses_indexed_addr);
+    perf_may_be_eliminated_with_input_regs(record, &perf, input_regs, arch)
+}
+
+fn apply_python_operand_variants(
+    record: &uica_data::InstructionRecord,
+    perf: &mut uica_data::PerfRecord,
+    uses_same_reg: bool,
+    uses_indexed_addr: bool,
+) {
+    if uses_same_reg {
+        if let Some(same_reg) = record.perf.variants.get("same_reg") {
+            apply_perf_variant(perf, same_reg);
         }
     }
-    perf
+    if uses_indexed_addr {
+        if let Some(indexed) = record.perf.variants.get("indexed") {
+            apply_perf_variant(perf, indexed);
+        }
+    }
 }
 
 fn apply_perf_variant(perf: &mut uica_data::PerfRecord, variant: &uica_data::PerfVariantRecord) {
@@ -614,26 +656,39 @@ fn compute_uop_plans_inner(
     instr: Option<&InstrInstance>,
 ) -> Vec<UopPlan> {
     let uses_same_reg = instr.is_some_and(instr_uses_same_reg);
+    let arch = crate::micro_arch::get_micro_arch(arch_name);
     let selected_perf;
-    let perf = if let Some(instr) = instr {
+    let perf = if let (Some(instr), Some(arch)) = (instr, arch.as_ref()) {
+        selected_perf = perf_for_python_getinstructions(
+            record,
+            uses_same_reg,
+            instr_uses_indexed_addr(instr),
+            &instr.input_regs,
+            arch,
+        );
+        &selected_perf
+    } else if let Some(instr) = instr {
         selected_perf = perf_for_operands(record, uses_same_reg, instr_uses_indexed_addr(instr));
         &selected_perf
     } else {
         &record.perf
     };
-    let arch = crate::micro_arch::get_micro_arch(arch_name);
     let may_be_eliminated = instr
         .zip(arch.as_ref())
         .map(|(instr, arch)| {
-            perf_may_be_eliminated_with_input_regs(record, perf, &instr.input_regs, arch)
+            python_may_be_eliminated_for_getinstructions(
+                record,
+                uses_same_reg,
+                instr_uses_indexed_addr(instr),
+                &instr.input_regs,
+                arch,
+            )
         })
         .unwrap_or_else(|| record_may_be_eliminated(record));
-    let use_move_elim_fallback = instr
-        .zip(arch.as_ref())
-        .map(|(instr, arch)| {
-            perf_uses_move_elim_fallback_with_input_regs(record, perf, &instr.input_regs, arch)
-        })
-        .unwrap_or(may_be_eliminated);
+    let use_move_elim_fallback = may_be_eliminated
+        || instr.zip(arch.as_ref()).is_some_and(|(instr, arch)| {
+            record_movzx_special_case_with_input_regs(record, &instr.input_regs, arch)
+        });
 
     // --- Port classification (mirrors Python's portData loop) ---
     // ports string "06" → [0,6]; "23" → [2,3]; "78" → [7,8]; "49" → [4,9]

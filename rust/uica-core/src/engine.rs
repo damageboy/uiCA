@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::path::{Path, PathBuf};
 
@@ -109,8 +109,13 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
                 .mem_addrs
                 .iter()
                 .any(|addr| addr.index.is_some());
-            let perf =
-                crate::sim::uop_expand::perf_for_operands(record, uses_same_reg, uses_indexed_addr);
+            let perf = crate::sim::uop_expand::perf_for_python_getinstructions(
+                record,
+                uses_same_reg,
+                uses_indexed_addr,
+                &decoded_instr.input_regs,
+                &arch,
+            );
             let uops = if uses_sr_fallback_for_analytics && perf.uops == 0 {
                 1
             } else {
@@ -167,12 +172,14 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
                     .any(|reg| crate::x64::is_high8_reg(reg));
             fact.no_macro_fusion = perf.no_macro_fusion || result.invocation.no_macro_fusion;
             fact.lcp_stall = perf.lcp_stall;
-            fact.may_be_eliminated = crate::sim::uop_expand::perf_may_be_eliminated_with_input_regs(
-                record,
-                &perf,
-                &decoded_instr.input_regs,
-                &arch,
-            );
+            fact.may_be_eliminated =
+                crate::sim::uop_expand::python_may_be_eliminated_for_getinstructions(
+                    record,
+                    uses_same_reg,
+                    uses_indexed_addr,
+                    &decoded_instr.input_regs,
+                    &arch,
+                );
             let (input_map, output_map) = mapped_record_operands(record, decoded_instr);
             fact.input_operands = flatten_input_operand_map(&input_map);
             fact.output_operands = flatten_operand_map(&output_map);
@@ -276,9 +283,8 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
             &decoded,
             &loop_facts,
             &arch,
-            mode == "loop",
-            normalized_invocation.alignment_offset,
             &frontend,
+            &uops_for_round,
         );
         align_frontend_limits_with_simulated_sources(&mut result.summary, &frontend);
         if let Some(throughput) = result.summary.throughput_cycles_per_iteration {
@@ -396,9 +402,8 @@ fn refresh_summary_limits_from_python_bottlenecks(
     decoded: &[uica_decoder::DecodedInstruction],
     facts: &[LoopInstrFacts],
     arch: &MicroArchConfig,
-    loop_mode: bool,
-    alignment_offset: u32,
     frontend: &crate::sim::FrontEnd,
+    uops_for_round: &[UopsForRound],
 ) {
     // Python parity: `getBottlenecks` recomputes frontend/issue/port limits
     // from simulated instruction sources for both loop and unroll mode.
@@ -416,13 +421,14 @@ fn refresh_summary_limits_from_python_bottlenecks(
         .any(|instr| instr.source == Some(crate::sim::UopSource::Lsd));
 
     let frontend_instrs = facts_to_analytical_instructions(facts);
-    let frontend_limits = compute_frontend_limits(&frontend_instrs, arch, alignment_offset);
+    let frontend_limits =
+        compute_frontend_limits(&frontend_instrs, arch, frontend.alignment_offset);
     let mut limits = empty_limits();
 
     if has_mite {
         if !has_dsb && !has_lsd {
             if let Some(predecoder) =
-                compute_predecode_limit(decoded, facts, loop_mode, alignment_offset)
+                compute_predecode_limit(decoded, facts, !frontend.unroll, frontend.alignment_offset)
             {
                 limits.insert("predecoder".to_string(), Some(round2(predecoder)));
             }
@@ -451,8 +457,12 @@ fn refresh_summary_limits_from_python_bottlenecks(
     );
     limits.insert(
         "ports".to_string(),
-        Some(round2(compute_port_usage_limit(
-            &facts_to_port_usage_inputs(facts, &frontend_instrs, arch.name),
+        Some(round2(compute_python_runtime_port_usage_limit(
+            facts,
+            &frontend_instrs,
+            arch.name,
+            frontend,
+            uops_for_round,
         ))),
     );
 
@@ -466,6 +476,106 @@ fn refresh_summary_limits_from_python_bottlenecks(
     );
 
     summary.limits = limits;
+}
+
+fn compute_python_runtime_port_usage_limit(
+    facts: &[LoopInstrFacts],
+    frontend_instrs: &[AnalyticalInstruction],
+    arch_name: &str,
+    frontend: &crate::sim::FrontEnd,
+    uops_for_round: &[UopsForRound],
+) -> f64 {
+    // Python parity: `facile.computePortUsageLimit()` replaces every
+    // mayBeEliminated instruction's static port-data uop count with average
+    // non-eliminated unfused uops over relevant-round simulated
+    // `InstrInstance.uops`.
+    let mut port_usage: Vec<(BTreeSet<char>, f64)> = Vec::new();
+    let relevant_window = python_relevant_round_window(frontend, uops_for_round);
+
+    for (instr_id, (fact, frontend_instr)) in facts.iter().zip(frontend_instrs).enumerate() {
+        if frontend_instr.macro_fused_with_prev {
+            continue;
+        }
+
+        let mut port_data = fact.port_data.clone();
+        if frontend_instr.macro_fused_with_next {
+            let fused_ports = if arch_name == "ICL" { "06" } else { "6" };
+            if let Some((old_ports, uops)) = port_data
+                .iter()
+                .find(|(ports, _)| fused_ports.chars().all(|p| ports.contains(p)))
+                .map(|(ports, uops)| (ports.clone(), *uops))
+            {
+                port_data.remove(&old_ports);
+                port_data.insert(fused_ports.to_string(), uops);
+            }
+        }
+
+        let eliminated_avg = if fact.may_be_eliminated {
+            let instr_instances: Vec<_> = frontend
+                .all_generated_instr_instances
+                .iter()
+                .filter(|instr_i| {
+                    instr_i.instr_id as usize == instr_id
+                        && relevant_window.is_none_or(|(first_round, last_round)| {
+                            instr_i.rnd >= first_round && instr_i.rnd <= last_round
+                        })
+                })
+                .collect();
+            if instr_instances.is_empty() {
+                continue;
+            }
+            Some(
+                instr_instances
+                    .iter()
+                    .map(|instr_i| {
+                        instr_i
+                            .laminated_uops
+                            .iter()
+                            .filter_map(|lam_idx| frontend.uop_storage.get_laminated_uop(*lam_idx))
+                            .flat_map(|lam| lam.fused_uop_idxs.iter())
+                            .filter_map(|fused_idx| frontend.uop_storage.get_fused_uop(*fused_idx))
+                            .flat_map(|fused| fused.unfused_uop_idxs.iter())
+                            .filter_map(|uop_idx| frontend.uop_storage.get_uop(*uop_idx))
+                            .filter(|uop| !uop.eliminated)
+                            .count() as f64
+                    })
+                    .sum::<f64>()
+                    / instr_instances.len() as f64,
+            )
+        } else {
+            None
+        };
+
+        for (ports, static_uops) in port_data {
+            let port_set: BTreeSet<char> = ports.chars().filter(|ch| !ch.is_whitespace()).collect();
+            if port_set.is_empty() {
+                continue;
+            }
+            let n_uops = eliminated_avg.unwrap_or(static_uops as f64);
+            if let Some((_, total)) = port_usage.iter_mut().find(|(set, _)| *set == port_set) {
+                *total += n_uops;
+            } else {
+                port_usage.push((port_set, n_uops));
+            }
+        }
+    }
+
+    let mut limit: f64 = 0.0;
+    for (left_set, _) in &port_usage {
+        for (right_set, _) in &port_usage {
+            let candidate: BTreeSet<char> = left_set.union(right_set).copied().collect();
+            if candidate.is_empty() {
+                continue;
+            }
+            let total_uops: f64 = port_usage
+                .iter()
+                .filter(|(set, _)| set.is_subset(&candidate))
+                .map(|(_, n_uops)| *n_uops)
+                .sum();
+            limit = limit.max(total_uops / candidate.len() as f64);
+        }
+    }
+    limit
 }
 
 fn compute_predecode_limit(

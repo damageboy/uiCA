@@ -94,7 +94,7 @@ fn populate_instr_instance_metadata(
         );
         instr_i.complex_decoder = complex_decoder;
         instr_i.n_available_simple_decoders = n_available_simple_decoders;
-        instr_i.lcp_stall = perf.lcp_stall;
+        instr_i.lcp_stall |= perf.lcp_stall;
         instr_i.can_be_used_by_lsd = perf.uops_ms <= 0
             && instr_i.implicit_rsp_change == 0
             && !instr_i

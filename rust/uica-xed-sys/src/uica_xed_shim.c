@@ -231,10 +231,12 @@ static void uica_xed_copy_flags(const xed_decoded_inst_t* xedd, uica_xed_inst_t*
 }
 
 static void uica_xed_copy_immediate(const xed_decoded_inst_t* xedd, uica_xed_inst_t* out) {
-   if (xed_decoded_inst_get_immediate_width(xedd) == 0) {
+   unsigned int width = xed_decoded_inst_get_immediate_width_bits(xedd);
+   if (width == 0) {
       return;
    }
    out->has_immediate = 1;
+   out->immediate_width_bits = width;
    out->immediate = xed_decoded_inst_get_signed_immediate(xedd);
 }
 

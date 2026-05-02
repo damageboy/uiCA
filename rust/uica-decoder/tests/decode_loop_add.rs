@@ -35,3 +35,13 @@ fn decoder_reexports_xed_lea_metadata() {
     assert_eq!(instructions[0].mnemonic, "lea");
     assert_eq!(instructions[0].agen.as_deref(), Some("B_IS_D8"));
 }
+
+#[test]
+fn decoder_exposes_lcp_inputs_for_prefix66_imm16() {
+    let bytes = [0x66_u8, 0x81, 0x7e, 0x08, 0xf8, 0x00]; // cmp word ptr [rsi+8], 0xf8
+    let instructions = decode_raw(&bytes).expect("decode should succeed");
+
+    assert_eq!(instructions[0].mnemonic, "cmp");
+    assert!(instructions[0].has_66_prefix);
+    assert_eq!(instructions[0].immediate_width_bits, 16);
+}

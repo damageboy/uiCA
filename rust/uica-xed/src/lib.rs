@@ -39,6 +39,8 @@ pub struct DecodedInstruction {
     pub mem_addrs: Vec<DecodedMemAddr>,
     pub implicit_rsp_change: i32,
     pub immediate: Option<i64>,
+    pub immediate_width_bits: u32,
+    pub has_66_prefix: bool,
     pub iform_signature: String,
     pub max_op_size_bytes: u8,
     pub uses_high8_reg: bool,
@@ -87,6 +89,10 @@ pub fn decode_raw(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
         }
 
         let instr_bytes = remaining[..len].to_vec();
+        let has_66_prefix = instr_bytes
+            .iter()
+            .take(nominal_opcode_offset(&instr_bytes) as usize)
+            .any(|byte| *byte == 0x66);
         let mnemonic = normalize_mnemonic(&raw_mnemonic);
         let disasm = normalize_disasm(&cbuf_to_string(&raw.disasm));
         let iform = cbuf_to_string(&raw.iform);
@@ -116,6 +122,8 @@ pub fn decode_raw(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
             } else {
                 None
             },
+            immediate_width_bits: raw.immediate_width_bits,
+            has_66_prefix,
             iform_signature: iform_to_signature(&iform),
             max_op_size_bytes: raw.max_op_size_bytes,
             uses_high8_reg: raw.uses_high8_reg != 0,

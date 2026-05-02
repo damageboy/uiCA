@@ -78,7 +78,7 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
             n_available_simple_decoders: arch.n_decoders.saturating_sub(1),
             can_be_used_by_lsd: true,
             no_macro_fusion: false,
-            lcp_stall: false,
+            lcp_stall: decoded_instr.has_66_prefix && decoded_instr.immediate_width_bits == 16,
             has_memory_operand: decoded_instr.has_memory_read || decoded_instr.has_memory_write,
             // Python parity: absent `archData.instrData[iform]` becomes
             // UnknownInstr with empty input/output operand lists. Matched
@@ -171,7 +171,7 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
                     .iter()
                     .any(|reg| crate::x64::is_high8_reg(reg));
             fact.no_macro_fusion = perf.no_macro_fusion || result.invocation.no_macro_fusion;
-            fact.lcp_stall = perf.lcp_stall;
+            fact.lcp_stall |= perf.lcp_stall;
             fact.may_be_eliminated =
                 crate::sim::uop_expand::python_may_be_eliminated_for_getinstructions(
                     record,

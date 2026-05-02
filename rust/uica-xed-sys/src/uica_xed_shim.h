@@ -51,6 +51,7 @@ typedef struct uica_xed_inst_s {
     uint8_t writes_flags;
     int32_t implicit_rsp_change;
     uint8_t has_immediate;
+    uint32_t immediate_width_bits;
     int64_t immediate;
     uint8_t mem_count;
     uica_xed_mem_t mems[UICA_XED_MAX_MEMS];

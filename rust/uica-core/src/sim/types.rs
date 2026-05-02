@@ -455,6 +455,7 @@ pub fn build_instruction_instances(
             .map(|b| format!("{b:02X}"))
             .collect::<String>();
         inst.pos_nominal_opcode = dec.pos_nominal_opcode;
+        inst.lcp_stall = dec.has_66_prefix && dec.immediate_width_bits == 16;
 
         // Copy decoder-derived operand info
         inst.input_regs = dec.input_regs.clone();

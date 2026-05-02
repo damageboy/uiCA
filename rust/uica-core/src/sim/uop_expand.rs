@@ -239,12 +239,32 @@ pub(crate) fn python_decoder_shape_from_record(
     let complex_decoder = perf.complex_decoder || derived_complex || legacy_cmov_complex;
     let n_available_simple_decoders = if legacy_cmov_complex {
         n_decoders.saturating_sub(1)
+    } else if legacy_adc_sbb_complex_with_two_simple_decoders(record, perf) {
+        2
     } else if derived_complex && perf.n_available_simple_decoders == 0 {
         n_decoders
     } else {
         perf.n_available_simple_decoders
     };
     (complex_decoder, n_available_simple_decoders)
+}
+
+fn legacy_adc_sbb_complex_with_two_simple_decoders(
+    record: &uica_data::InstructionRecord,
+    perf: &uica_data::PerfRecord,
+) -> bool {
+    // Python parity/legacy-pack compatibility: HSW perfData for ADC/SBB
+    // two-uop flag arithmetic carries `complDec=1, sDec=2`. Older UIPacks
+    // dropped both fields, so recover this Python decoder-shape fact from the
+    // exact uops.info form instead of letting derived-complex default to all
+    // simple decoders.
+    !perf.complex_decoder
+        && perf.n_available_simple_decoders == 0
+        && perf_uops_mite(perf) == 2
+        && perf.uops_ms <= 0
+        && matches!(record.iform.split('_').next().unwrap_or(""), "ADC" | "SBB")
+        && perf.ports.get("0156") == Some(&1)
+        && perf.ports.get("06") == Some(&1)
 }
 
 pub(crate) fn perf_for_operands(
@@ -1788,7 +1808,7 @@ fn emit_lam_uops(
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_uop_plans, compute_uop_plans_inner};
+    use super::{compute_uop_plans, compute_uop_plans_inner, python_decoder_shape_from_record};
     use std::collections::BTreeMap;
     use uica_data::{
         load_manifest_pack, DataPack, DataPackIndex, InstructionRecord, LatencyRecord,
@@ -1812,6 +1832,42 @@ mod tests {
             is_agen: false,
             mem_operand_role: None,
         }
+    }
+
+    #[test]
+    fn legacy_adc_sbb_decoder_shape_recovers_python_sdec() {
+        let record = InstructionRecord {
+            arch: "HSW".to_string(),
+            iform: "SBB_GPRv_GPRv_19".to_string(),
+            string: "SBB_19 (R32, R32)".to_string(),
+            imm_zero: false,
+            perf: PerfRecord {
+                uops: 2,
+                retire_slots: 2,
+                uops_mite: 2,
+                uops_ms: 0,
+                tp: None,
+                ports: BTreeMap::from([("0156".to_string(), 1), ("06".to_string(), 1)]),
+                variants: Default::default(),
+                div_cycles: 0,
+                may_be_eliminated: false,
+                complex_decoder: false,
+                n_available_simple_decoders: 0,
+                lcp_stall: false,
+                implicit_rsp_change: 0,
+                can_be_used_by_lsd: false,
+                cannot_be_in_dsb_due_to_jcc_erratum: false,
+                no_micro_fusion: false,
+                no_macro_fusion: false,
+                operands: vec![],
+                latencies: vec![],
+            },
+        };
+
+        assert_eq!(
+            python_decoder_shape_from_record(&record, &record.perf, 4),
+            (true, 2)
+        );
     }
 
     #[test]

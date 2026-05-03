@@ -179,7 +179,7 @@ def _append_rust_run_config_flags(cmd: list[str], run_config: dict[str, Any]) ->
         cmd.append("--simple-front-end")
 
 
-def run_python_uica(
+def build_python_uica_command(
     obj_path: Path,
     out_json: Path,
     arch: str,
@@ -187,7 +187,7 @@ def run_python_uica(
     *,
     uica_commit: str,
     raw: bool = False,
-) -> None:
+) -> tuple[list[str], dict[str, str]]:
     cmd = [
         sys.executable,
         str(repo_root() / "uiCA.py"),
@@ -206,10 +206,10 @@ def run_python_uica(
 
     env = os.environ.copy()
     env["UICA_COMMIT"] = uica_commit
-    _run_command(cmd, "uiCA python engine run", env=env)
+    return cmd, env
 
 
-def run_rust_uica(
+def build_rust_uica_command(
     rust_bin: str | Path,
     obj_path: Path,
     out_json: Path,
@@ -218,7 +218,7 @@ def run_rust_uica(
     *,
     uica_commit: str,
     raw: bool = False,
-) -> None:
+) -> tuple[list[str], dict[str, str]]:
     cmd = [
         str(rust_bin),
         str(obj_path),
@@ -236,6 +236,48 @@ def run_rust_uica(
 
     env = os.environ.copy()
     env["UICA_COMMIT"] = uica_commit
+    return cmd, env
+
+
+def run_python_uica(
+    obj_path: Path,
+    out_json: Path,
+    arch: str,
+    run_config: dict[str, Any],
+    *,
+    uica_commit: str,
+    raw: bool = False,
+) -> None:
+    cmd, env = build_python_uica_command(
+        obj_path,
+        out_json,
+        arch,
+        run_config,
+        uica_commit=uica_commit,
+        raw=raw,
+    )
+    _run_command(cmd, "uiCA python engine run", env=env)
+
+
+def run_rust_uica(
+    rust_bin: str | Path,
+    obj_path: Path,
+    out_json: Path,
+    arch: str,
+    run_config: dict[str, Any],
+    *,
+    uica_commit: str,
+    raw: bool = False,
+) -> None:
+    cmd, env = build_rust_uica_command(
+        rust_bin,
+        obj_path,
+        out_json,
+        arch,
+        run_config,
+        uica_commit=uica_commit,
+        raw=raw,
+    )
     _run_command(cmd, "uiCA rust engine run", env=env)
 
 

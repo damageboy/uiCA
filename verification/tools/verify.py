@@ -1,5 +1,6 @@
 import argparse
 import os
+import shlex
 import sys
 import tempfile
 from concurrent.futures import ProcessPoolExecutor
@@ -11,6 +12,8 @@ if __package__ in (None, ""):
 
 from verification.tools.canonicalize import canonicalize_result
 from verification.tools.common import (
+    build_python_uica_command,
+    build_rust_uica_command,
     case_manifest_path,
     get_git_commit_short,
     load_case_manifest,
@@ -19,6 +22,7 @@ from verification.tools.common import (
     prepare_case_input,
     run_python_uica,
     run_rust_uica,
+    verification_root,
 )
 
 
@@ -108,6 +112,16 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=(os.cpu_count() or 1),
         help="number of worker processes for execute mode",
+    )
+    parser.add_argument(
+        "--emit-command-script",
+        metavar="PATH",
+        help="write runnable engine commands to PATH; prepare persistent fixtures and skip execution/comparison",
+    )
+    parser.add_argument(
+        "--fixture-root",
+        metavar="DIR",
+        help="directory for persistent input fixtures and candidate JSON outputs when emitting commands",
     )
     return parser
 
@@ -346,6 +360,78 @@ def build_verify_tasks(
     return tasks
 
 
+def _safe_name(value: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "-" for ch in value)
+
+
+def default_fixture_root(*, target: str, engine: str, golden_tag: str) -> Path:
+    name = _safe_name(f"{target}-{engine}-{golden_tag}")
+    return verification_root() / ".generated-fixtures" / name
+
+
+def emit_command_script(
+    *,
+    tasks: list[dict[str, Any]],
+    engine: str,
+    rust_bin: str | None,
+    fixture_root: Path,
+    script_path: Path,
+    golden_tag: str,
+) -> int:
+    fixture_root.mkdir(parents=True, exist_ok=True)
+    prepared_inputs: dict[str, tuple[Path, bool]] = {}
+    lines = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        f"export UICA_COMMIT={shlex.quote(golden_tag)}",
+        "",
+    ]
+
+    for task in tasks:
+        case_id = task["case_id"]
+        if case_id not in prepared_inputs:
+            input_dir = fixture_root / "inputs" / case_id
+            input_dir.mkdir(parents=True, exist_ok=True)
+            prepared_inputs[case_id] = prepare_case_input(
+                case_id,
+                task["case_manifest"],
+                input_dir,
+            )
+
+        obj, is_raw = prepared_inputs[case_id]
+        arch = task["arch"]
+        out_json = fixture_root / "candidates" / engine / case_id / f"{arch}.json"
+        out_json.parent.mkdir(parents=True, exist_ok=True)
+
+        if engine == "rust":
+            if rust_bin is None:
+                raise ValueError("pass --rust-bin when --engine rust")
+            cmd, _env = build_rust_uica_command(
+                rust_bin,
+                obj,
+                out_json,
+                arch,
+                task["case_manifest"].get("run", {}),
+                uica_commit=golden_tag,
+                raw=is_raw,
+            )
+        else:
+            cmd, _env = build_python_uica_command(
+                obj,
+                out_json,
+                arch,
+                task["case_manifest"].get("run", {}),
+                uica_commit=golden_tag,
+                raw=is_raw,
+            )
+        lines.append(shlex.join(cmd))
+
+    script_path.parent.mkdir(parents=True, exist_ok=True)
+    script_path.write_text("\n".join(lines) + "\n")
+    script_path.chmod(0o755)
+    return len(tasks)
+
+
 def write_diff_report(path: Path, lines: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n")
@@ -381,7 +467,10 @@ def main(argv=None) -> int:
             raise ValueError("--jobs must be >= 1")
 
         golden_root = Path(args.golden_root)
-        golden_tag = resolve_golden_tag(golden_root, args.engine, args.golden_tag)
+        if args.emit_command_script:
+            golden_tag = args.golden_tag or get_git_commit_short()
+        else:
+            golden_tag = resolve_golden_tag(golden_root, args.engine, args.golden_tag)
 
         tasks = build_verify_tasks(
             case_ids=case_ids,
@@ -393,6 +482,30 @@ def main(argv=None) -> int:
             golden_root=golden_root,
             golden_tag=golden_tag,
         )
+
+        if args.emit_command_script:
+            fixture_root = (
+                Path(args.fixture_root)
+                if args.fixture_root
+                else default_fixture_root(
+                    target=target,
+                    engine=args.engine,
+                    golden_tag=golden_tag,
+                )
+            )
+            count = emit_command_script(
+                tasks=tasks,
+                engine=args.engine,
+                rust_bin=args.rust_bin,
+                fixture_root=fixture_root,
+                script_path=Path(args.emit_command_script),
+                golden_tag=golden_tag,
+            )
+            print(
+                f"Wrote {count} command(s) for {mode} {target} to {args.emit_command_script}"
+            )
+            print(f"Fixtures under {fixture_root.as_posix()}")
+            return 0
 
         results: list[dict[str, Any]] = []
         if args.jobs == 1 or len(tasks) <= 1:

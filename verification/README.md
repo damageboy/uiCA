@@ -128,6 +128,25 @@ Fast sanity check (manifests only, no engine execution):
 python3 verification/tools/verify.py --profile quick --engine python --resolve-only
 ```
 
+Emit serial command script without running verification. This prepares persistent input fixtures first, then writes one engine command per case/arch:
+
+```bash
+python3 verification/tools/verify.py \
+  --profile bhive_1k \
+  --engine python \
+  --golden-tag timing-tag \
+  --emit-command-script /tmp/python-bhive-1k.sh \
+  --fixture-root /tmp/uica-bhive-python-fixtures
+
+python3 verification/tools/verify.py \
+  --profile bhive_1k \
+  --engine rust \
+  --rust-bin "$PWD/target/release/uica-cli" \
+  --golden-tag timing-tag \
+  --emit-command-script /tmp/rust-bhive-1k.sh \
+  --fixture-root /tmp/uica-bhive-rust-fixtures
+```
+
 Focused compare for one case and one arch:
 
 ```bash

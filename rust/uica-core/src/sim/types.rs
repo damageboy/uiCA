@@ -113,6 +113,9 @@ pub struct UopProperties {
     pub may_be_eliminated: bool,
     pub latencies: BTreeMap<String, u32>,
     pub input_operands: Vec<OperandKey>,
+    /// Python parity: `Instr.inputRegOperands`, excluding memory address
+    /// operands. Used for AbstractValueGenerator, not rename dependencies.
+    pub instr_input_operands: Vec<OperandKey>,
     pub output_operands: Vec<OperandKey>,
     pub latencies_by_operand: BTreeMap<OperandKey, u32>,
     // Instruction reference for trace/model output.

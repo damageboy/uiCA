@@ -445,6 +445,7 @@ impl Renamer {
             for &uop_idx in &all_uop_idxs {
                 let (
                     input_ops,
+                    instr_input_ops,
                     output_ops,
                     eliminated,
                     inst_idx,
@@ -463,6 +464,7 @@ impl Renamer {
                     };
                     (
                         uop.prop.input_operands.clone(),
+                        uop.prop.instr_input_operands.clone(),
                         uop.prop.output_operands.clone(),
                         uop.eliminated,
                         uop.instr_instance_idx,
@@ -570,7 +572,10 @@ impl Renamer {
                             .or_default()
                             .insert(key.clone(), eliminated);
                         self.abs_val_gen.set_abstract_value_for_cur_instr(
-                            key, &instr_str, &input_ops, immediate,
+                            key,
+                            &instr_str,
+                            &instr_input_ops,
+                            immediate,
                         );
                     }
                     renamed_outputs.push(renamed);

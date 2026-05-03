@@ -1678,6 +1678,10 @@ fn emit_lam_uops(
             .iter()
             .map(|name| OperandKey::from_resolved_name(name))
             .collect();
+        let instr_input_operands: Vec<OperandKey> = decoded_reg_inputs
+            .iter()
+            .map(|name| OperandKey::from_resolved_name(name))
+            .collect();
         let output_operands: Vec<OperandKey> = outputs
             .iter()
             .map(|name| OperandKey::from_resolved_name(name))
@@ -1702,6 +1706,7 @@ fn emit_lam_uops(
             may_be_eliminated: instr.may_be_eliminated,
             latencies,
             input_operands,
+            instr_input_operands,
             output_operands,
             latencies_by_operand,
             instr_tp: instr.instr_tp,
@@ -2273,6 +2278,67 @@ mod tests {
                 super::super::types::OperandKey::Reg("RDX".to_string()),
                 super::super::types::OperandKey::Reg("RDX".to_string()),
             ]
+        );
+    }
+
+    #[test]
+    fn load_mem_addr_inputs_do_not_feed_python_abstract_value() {
+        let mut instr = super::super::types::InstrInstance::new(
+            0,
+            0,
+            0,
+            0,
+            4,
+            "mov".to_string(),
+            "mov rcx, [rbx+8]".to_string(),
+        );
+        instr.input_regs = vec!["RBX".to_string()];
+        instr.output_regs = vec!["RCX".to_string()];
+        instr.mem_addrs.push(super::super::types::MemAddr {
+            base: Some("RBX".to_string()),
+            index: None,
+            scale: 1,
+            disp: 8,
+            is_implicit_stack_operand: false,
+        });
+
+        let plans = vec![super::UopPlan {
+            ports: vec!["2".to_string(), "3".to_string()],
+            inputs: vec!["__M_0".to_string()],
+            outputs: vec!["REG0".to_string()],
+            latencies: BTreeMap::from([("REG0".to_string(), 5)]),
+            is_load: true,
+            is_store_address: false,
+            is_store_data: false,
+            is_first: true,
+            is_last: true,
+            mem_addr: None,
+            mem_addr_index: Some(0),
+        }];
+        let mut storage = super::super::uop_storage::UopStorage::new();
+        let mut uop_idx = 0;
+        let mut fused_idx = 0;
+        let mut lam_idx = 0;
+
+        super::emit_lam_uops(
+            &plans,
+            &instr,
+            &mut uop_idx,
+            &mut fused_idx,
+            &mut lam_idx,
+            &mut storage,
+            "SKL",
+            None,
+        );
+
+        let uop = storage.get_uop(0).expect("MOV load uop");
+        assert_eq!(
+            uop.prop.input_operands,
+            vec![super::super::types::OperandKey::Reg("RBX".to_string())]
+        );
+        assert!(
+            uop.prop.instr_input_operands.is_empty(),
+            "Python Instr.inputRegOperands excludes memory address operands for loads"
         );
     }
 

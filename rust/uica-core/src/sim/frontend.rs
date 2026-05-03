@@ -1072,6 +1072,30 @@ impl FrontEnd {
         regs_to_merge.sort();
         regs_to_merge.dedup();
 
+        // Python parity: reg-merge UopProperties keep `instr` pointing at the
+        // original instruction. AbstractValueGenerator therefore observes
+        // original `Instr.inputRegOperands`, not merge-uop RSP/RAX operands.
+        let mut instr_input_regs: Vec<String> = instr
+            .input_regs
+            .iter()
+            .map(|reg| crate::x64::get_canonical_reg(reg))
+            .collect();
+        for mem_addr in &instr.mem_addrs {
+            if mem_addr.is_implicit_stack_operand {
+                continue;
+            }
+            for addr_reg in [&mem_addr.base, &mem_addr.index].into_iter().flatten() {
+                let canonical = crate::x64::get_canonical_reg(addr_reg);
+                if let Some(pos) = instr_input_regs.iter().position(|reg| reg == &canonical) {
+                    instr_input_regs.remove(pos);
+                }
+            }
+        }
+        let instr_input_operands: Vec<OperandKey> = instr_input_regs
+            .iter()
+            .map(|reg| OperandKey::Reg(reg.clone()))
+            .collect();
+
         for canonical in regs_to_merge {
             let sync_lam_idx = self.create_single_uop_lam(
                 clock,
@@ -1091,13 +1115,14 @@ impl FrontEnd {
                     may_be_eliminated: false,
                     latencies: [(canonical.clone(), 1)].into_iter().collect(),
                     input_operands: vec![OperandKey::Reg(canonical.clone())],
+                    instr_input_operands: instr_input_operands.clone(),
                     output_operands: vec![OperandKey::Reg(canonical.clone())],
                     latencies_by_operand: [(OperandKey::Reg(canonical.clone()), 1)]
                         .into_iter()
                         .collect(),
                     instr_tp: None,
-                    instr_str: String::new(),
-                    immediate: None,
+                    instr_str: instr.instr_str.clone(),
+                    immediate: instr.immediate,
                     is_load_serializing: false,
                     is_store_serializing: false,
                     mem_addr: None,
@@ -1211,6 +1236,7 @@ impl FrontEnd {
         latencies.insert("RSP".to_string(), 1);
         let mut latencies_by_operand = std::collections::BTreeMap::new();
         latencies_by_operand.insert(OperandKey::Reg("RSP".to_string()), 1);
+        let instr_input_operands = first_uop.prop.instr_input_operands.clone();
         let prop = UopProperties {
             possible_ports: self.pack.alu_ports.clone(),
             div_cycles: 0,
@@ -1226,6 +1252,7 @@ impl FrontEnd {
             may_be_eliminated: false,
             latencies,
             input_operands: vec![OperandKey::Reg("RSP".to_string())],
+            instr_input_operands,
             output_operands: vec![OperandKey::Reg("RSP".to_string())],
             latencies_by_operand,
             instr_tp: None,

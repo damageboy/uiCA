@@ -233,6 +233,26 @@ pub(crate) fn python_decoder_shape_from_record(
     (complex_decoder, n_available_simple_decoders)
 }
 
+pub(crate) fn apply_python_pop5c_decoder_shape(
+    record: &uica_data::InstructionRecord,
+    opcode_hex: &str,
+    arch: &crate::micro_arch::MicroArchConfig,
+    complex_decoder: &mut bool,
+    n_available_simple_decoders: &mut u32,
+) {
+    // Python parity: `instructions.py getInstructions()` marks POP RSP/R12
+    // (`opcode.endswith('5C')`) complex according to MicroArchConfig
+    // `pop5CRequiresComplexDecoder`, after generic complex-decoder derivation.
+    if matches!(record.string.as_str(), "POP (R16)" | "POP (R64)")
+        && opcode_hex.to_ascii_uppercase().ends_with("5C")
+    {
+        *complex_decoder |= arch.pop5c_requires_complex_decoder;
+        if arch.pop5c_ends_decode_group {
+            *n_available_simple_decoders = 0;
+        }
+    }
+}
+
 pub(crate) fn perf_for_operands(
     record: &uica_data::InstructionRecord,
     uses_same_reg: bool,

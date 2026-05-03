@@ -164,12 +164,24 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
                 // simulator still emits zero-port bookkeeping uops.
                 fact.port_data.clear();
             }
-            let (complex_decoder, n_available_simple_decoders) =
+            let (mut complex_decoder, mut n_available_simple_decoders) =
                 crate::sim::uop_expand::python_decoder_shape_from_record(
                     record,
                     &perf,
                     arch.n_decoders,
                 );
+            let opcode_hex = decoded_instr
+                .bytes
+                .iter()
+                .map(|b| format!("{b:02X}"))
+                .collect::<String>();
+            crate::sim::uop_expand::apply_python_pop5c_decoder_shape(
+                record,
+                &opcode_hex,
+                &arch,
+                &mut complex_decoder,
+                &mut n_available_simple_decoders,
+            );
             fact.complex_decoder = complex_decoder;
             fact.n_available_simple_decoders = n_available_simple_decoders;
             if result.invocation.no_micro_fusion {

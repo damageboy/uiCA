@@ -25,10 +25,10 @@ use super::types::{
     UopProperties, UopSource,
 };
 use super::uop_expand::{
-    expand_instr_instance_to_lam_uops_with_storage, instr_uses_indexed_addr, instr_uses_same_reg,
-    perf_for_operands, perf_for_python_getinstructions, perf_uops_mite,
-    python_decoder_shape_from_record, python_may_be_eliminated_for_getinstructions,
-    record_may_be_eliminated,
+    apply_python_pop5c_decoder_shape, expand_instr_instance_to_lam_uops_with_storage,
+    instr_uses_indexed_addr, instr_uses_same_reg, perf_for_operands,
+    perf_for_python_getinstructions, perf_uops_mite, python_decoder_shape_from_record,
+    python_may_be_eliminated_for_getinstructions, record_may_be_eliminated,
 };
 use super::uop_storage::UopStorage;
 
@@ -91,11 +91,21 @@ fn populate_instr_instance_metadata(
                 )
             })
             .unwrap_or_else(|| record_may_be_eliminated(record));
-        let (complex_decoder, n_available_simple_decoders) = python_decoder_shape_from_record(
-            record,
-            &perf,
-            crate::micro_arch::get_micro_arch(arch_name).map_or(4, |arch| arch.n_decoders),
-        );
+        let (mut complex_decoder, mut n_available_simple_decoders) =
+            python_decoder_shape_from_record(
+                record,
+                &perf,
+                crate::micro_arch::get_micro_arch(arch_name).map_or(4, |arch| arch.n_decoders),
+            );
+        if let Some(arch) = arch.as_ref() {
+            apply_python_pop5c_decoder_shape(
+                record,
+                &instr_i.opcode_hex,
+                arch,
+                &mut complex_decoder,
+                &mut n_available_simple_decoders,
+            );
+        }
         instr_i.complex_decoder = complex_decoder;
         instr_i.n_available_simple_decoders = n_available_simple_decoders;
         instr_i.lcp_stall |= perf.lcp_stall;
@@ -1269,5 +1279,27 @@ impl FrontEnd {
             stored.stack_sync_uops.push(sync_lam_idx);
         }
         self.idq.push_back(sync_lam_idx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pop_r12_mirrors_python_pop5c_complex_decoder() {
+        let decoded = uica_decoder::decode_raw(&[0x41, 0x5c]).unwrap();
+        let mut instances = super::super::types::build_instruction_instances(&decoded, 0);
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../uica-data/generated/manifest.json");
+        let pack = uica_data::load_manifest_pack(manifest, "SKL").unwrap();
+        let index = uica_data::DataPackIndex::new(pack);
+
+        populate_instr_instance_metadata(&mut instances[0], "SKL", &index, false, false);
+
+        assert_eq!(instances[0].instr_str, "POP (R64)");
+        assert!(instances[0].opcode_hex.ends_with("5C"));
+        assert!(instances[0].complex_decoder);
+        assert_eq!(instances[0].n_available_simple_decoders, 4);
     }
 }

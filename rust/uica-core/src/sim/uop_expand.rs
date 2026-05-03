@@ -372,6 +372,8 @@ pub fn record_latency_cycles_for_start(
     let field_cycles = match start_op {
         "__AGEN_ADDR" => latency.cycles_addr,
         "__AGEN_ADDRI" => latency.cycles_addr_index,
+        name if name.starts_with("__M_ADDRI_") => latency.cycles_addr_index,
+        name if name.starts_with("__M_ADDR_") => latency.cycles_addr,
         name if name.starts_with("__M_") => latency.cycles_mem,
         _ => None,
     };
@@ -701,19 +703,38 @@ fn compute_uop_plans_inner(
     let mut mem_addr_ops: Vec<String> = Vec::new();
     let mut agen_ops: Vec<String> = Vec::new();
     let mut concrete_operand_names: HashMap<String, Vec<String>> = HashMap::new();
+    let mut latency_start_operand_names: HashMap<String, Vec<String>> = HashMap::new();
     let mut next_mem_id = 0u32;
 
     for op in &perf.operands {
+        let mem_idx = next_mem_id;
         let concrete_names = if op.r#type == "flags" && !op.flags.is_empty() {
             op.flags.clone()
         } else if op.r#type == "mem" {
-            let name = format!("__M_{}", next_mem_id);
+            let name = format!("__M_{}", mem_idx);
             next_mem_id += 1;
             vec![name]
         } else if op.r#type == "agen" {
             lea_agen_concrete_names(record)
         } else {
             vec![op.name.clone()]
+        };
+        let mem_addr_names = if op.r#type == "mem" {
+            let mut names = Vec::new();
+            let mem_addr = instr.and_then(|instr| instr.mem_addrs.get(mem_idx as usize));
+            let include_base =
+                instr.is_none() || mem_addr.and_then(|addr| addr.base.as_ref()).is_some();
+            let include_index =
+                instr.is_none() || mem_addr.and_then(|addr| addr.index.as_ref()).is_some();
+            if include_base {
+                names.push(format!("__M_ADDR_{}", mem_idx));
+            }
+            if include_index {
+                names.push(format!("__M_ADDRI_{}", mem_idx));
+            }
+            names
+        } else {
+            Vec::new()
         };
         let read_names = if op.r#type == "flags" && !op.flags_read.is_empty() {
             op.flags_read.clone()
@@ -725,7 +746,17 @@ fn compute_uop_plans_inner(
         } else {
             concrete_names.clone()
         };
+        let latency_start_names = if mem_addr_names.is_empty() {
+            concrete_names.clone()
+        } else {
+            concrete_names
+                .iter()
+                .chain(mem_addr_names.iter())
+                .cloned()
+                .collect()
+        };
         concrete_operand_names.insert(op.name.clone(), concrete_names.clone());
+        latency_start_operand_names.insert(op.name.clone(), latency_start_names);
 
         match op.r#type.as_str() {
             "reg" => {
@@ -784,8 +815,15 @@ fn compute_uop_plans_inner(
                     || op.is_agen
                     || role == Some("agen")
                     || role == Some("address")
-                    || has_addr_metadata
                 {
+                    mem_addr_ops.extend(concrete_names.iter().cloned());
+                } else if op.r#type == "mem" {
+                    // Python parity: `instructions.py` adds concrete base/index
+                    // RegOperands from every decoded memory operand to
+                    // `Instr.memAddrOperands`; latency rows then use
+                    // `cycles_addr` / `cycles_addr_index` for those operands.
+                    mem_addr_ops.extend(mem_addr_names.iter().cloned());
+                } else if has_addr_metadata {
                     mem_addr_ops.extend(concrete_names.iter().cloned());
                 }
                 if op.r#type == "mem"
@@ -807,7 +845,7 @@ fn compute_uop_plans_inner(
     let mut lat_dict: HashMap<(String, String), i32> = HashMap::new();
     let mut lat_dict_no_sr: HashMap<(String, String), i32> = HashMap::new();
     for lr in &perf.latencies {
-        let start_ops = concrete_operand_names
+        let start_ops = latency_start_operand_names
             .get(&lr.start_op)
             .cloned()
             .unwrap_or_else(|| vec![lr.start_op.clone()]);
@@ -1978,6 +2016,26 @@ mod tests {
         assert!(plans[0].outputs.iter().all(|op| op.starts_with("__P_")));
         assert_eq!(plans[1].ports, vec!["0", "1", "5", "6"]);
         assert!(plans[1].inputs.iter().any(|op| op.starts_with("__P_")));
+    }
+
+    #[test]
+    fn vex_scalar_load_op_keeps_python_reg_latency_class() {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../uica-data/generated/manifest.json");
+        let pack = load_manifest_pack(manifest, "SKL").unwrap();
+        let index = DataPackIndex::new(pack);
+        let record = index
+            .candidates_for("SKL", "VMULSD")
+            .iter()
+            .find(|record| record.iform == "VMULSD_XMMdq_XMMdq_MEMq")
+            .expect("VMULSD_XMMdq_XMMdq_MEMq record");
+
+        let plans = compute_uop_plans(record, "SKL");
+
+        assert_eq!(plans.len(), 2);
+        assert!(plans[0].is_load);
+        assert_eq!(plans[1].inputs, vec!["REG1", plans[0].outputs[0].as_str()]);
+        assert_eq!(plans[1].latencies.get("REG0"), Some(&4));
     }
 
     #[test]

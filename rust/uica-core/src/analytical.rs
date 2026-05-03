@@ -60,6 +60,8 @@ pub struct AnalyticalLatencyInstruction {
     pub mem_addr_operands: Vec<String>,
     pub mem_addr_latency_pairs: BTreeSet<(String, String)>,
     pub latencies: BTreeMap<(String, String), i32>,
+    pub implicit_rsp_change: i32,
+    pub non_implicit_input_operands: BTreeSet<String>,
     pub may_be_eliminated: bool,
     pub eliminated_move_input: Option<String>,
     pub eliminated_move_output_is_32_bit: bool,
@@ -289,27 +291,40 @@ pub fn generate_latency_graph(
     let prev_write_for_move = python_prev_write_for_move(instructions);
     let mut prev_write: BTreeMap<String, (usize, String, bool)> = BTreeMap::new();
 
-    let process_outputs =
-        |idx: usize,
-         instr: &AnalyticalLatencyInstruction,
-         prev_write: &mut BTreeMap<String, (usize, String, bool)>| {
-            let fast_ptr_chasing = analytical_fast_ptr_chasing(
-                instructions,
-                &prev_write_for_move,
-                &*prev_write,
-                instr,
-                fast_pointer_chasing,
-            );
-            for output in &instr.output_operands {
-                prev_write.insert(output.clone(), (idx, output.clone(), fast_ptr_chasing));
-            }
-        };
+    let process_outputs = |idx: usize,
+                           instr: &AnalyticalLatencyInstruction,
+                           prev_write: &mut BTreeMap<String, (usize, String, bool)>,
+                           rsp_implicitly_changed: &mut bool| {
+        let fast_ptr_chasing = analytical_fast_ptr_chasing(
+            instructions,
+            &prev_write_for_move,
+            &*prev_write,
+            instr,
+            fast_pointer_chasing,
+        );
+        // Python parity: `facile.generateLatencyGraph()` keeps
+        // `RSPImplicitlyChanged` while processing outputs. Implicit stack
+        // changes (PUSH/POP/CALL/RET) make the next explicit RSP self-edge
+        // one cycle longer; any explicit RSP input/output clears it.
+        if instr.implicit_rsp_change != 0 {
+            *rsp_implicitly_changed = true;
+        } else if instr.non_implicit_input_operands.contains("RSP")
+            || instr.output_operands.iter().any(|output| output == "RSP")
+        {
+            *rsp_implicitly_changed = false;
+        }
+        for output in &instr.output_operands {
+            prev_write.insert(output.clone(), (idx, output.clone(), fast_ptr_chasing));
+        }
+    };
+
+    let mut rsp_implicitly_changed = false;
 
     // Python parity: `facile.generateLatencyGraph()` primes `prevWriteToKey`
     // by processing `instructions * 2` before adding graph edges.
     for _ in 0..2 {
         for (idx, instr) in instructions.iter().enumerate() {
-            process_outputs(idx, instr, &mut prev_write);
+            process_outputs(idx, instr, &mut prev_write, &mut rsp_implicitly_changed);
         }
     }
 
@@ -354,6 +369,15 @@ pub fn generate_latency_graph(
                                 && !prev_instr.input_mem_operands.is_empty()
                             {
                                 lat - 1
+                            } else if rsp_implicitly_changed
+                                && prev_idx == idx
+                                && instr.non_implicit_input_operands.contains(prev_input)
+                                && prev_input == "RSP"
+                            {
+                                // Python parity: when `RSPImplicitlyChanged`
+                                // is set, an explicit non-stack RSP input on
+                                // the same instruction gets one extra cycle.
+                                lat + 1
                             } else {
                                 lat
                             }
@@ -377,7 +401,7 @@ pub fn generate_latency_graph(
             }
         }
 
-        process_outputs(idx, instr, &mut prev_write);
+        process_outputs(idx, instr, &mut prev_write, &mut rsp_implicitly_changed);
     }
 
     LatencyGraph {
@@ -670,6 +694,39 @@ mod tests {
         assert!(mem_edges
             .iter()
             .any(|edge| { edge.target == "i1:MEM:RSP::0:0" && edge.cost == 0 && edge.time == 0 }));
+        assert_eq!(
+            compute_maximum_latency_for_graph(&graph).max_cycle_ratio,
+            2.0
+        );
+    }
+
+    #[test]
+    fn latency_graph_mirrors_python_rsp_implicitly_changed_extra_self_edge() {
+        let add_rsp = AnalyticalLatencyInstruction {
+            instr_str: "ADD (R64, I32)".to_string(),
+            input_operands: vec!["RSP".to_string()],
+            output_operands: vec!["RSP".to_string()],
+            non_implicit_input_operands: BTreeSet::from(["RSP".to_string()]),
+            latencies: BTreeMap::from([(("RSP".to_string(), "RSP".to_string()), 1)]),
+            ..Default::default()
+        };
+        let pop = AnalyticalLatencyInstruction {
+            instr_str: "POP (R64)".to_string(),
+            implicit_rsp_change: 8,
+            input_operands: vec!["RSP".to_string(), "MEM:RSP::1:0".to_string()],
+            output_operands: vec!["RBX".to_string()],
+            latencies: BTreeMap::from([
+                (("RSP".to_string(), "RBX".to_string()), 5),
+                (("MEM:RSP::1:0".to_string(), "RBX".to_string()), 2),
+            ]),
+            ..Default::default()
+        };
+
+        let graph = generate_latency_graph(&[add_rsp, pop], false);
+        let rsp_edges = graph.edges_for_node.get("i0:RSP").unwrap();
+        assert!(rsp_edges
+            .iter()
+            .any(|edge| edge.target == "i0:RSP" && edge.cost == 2 && edge.time == 1));
         assert_eq!(
             compute_maximum_latency_for_graph(&graph).max_cycle_ratio,
             2.0

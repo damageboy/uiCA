@@ -108,6 +108,8 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
             output_operands: Vec::new(),
             latencies: BTreeMap::new(),
             mem_addr_latency_pairs: std::collections::BTreeSet::new(),
+            implicit_rsp_change: decoded_instr.implicit_rsp_change,
+            non_implicit_input_operands: std::collections::BTreeSet::new(),
             may_be_eliminated: false,
             eliminated_move_input: None,
             eliminated_move_output_is_32_bit: decoded_instr
@@ -231,6 +233,7 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
                 .next()
                 .map(|operand| operand.value.clone());
             fact.input_operands = flatten_input_operand_map(&input_map);
+            fact.non_implicit_input_operands = non_implicit_input_operands(&input_map);
             fact.output_operands = flatten_operand_map(&output_map);
             fact.latencies = map_record_latencies_to_decoded(
                 record,
@@ -395,6 +398,8 @@ struct LoopInstrFacts {
     mem_addr_operands: Vec<String>,
     mem_addr_latency_pairs: std::collections::BTreeSet<(String, String)>,
     latencies: BTreeMap<(String, String), i32>,
+    implicit_rsp_change: i32,
+    non_implicit_input_operands: std::collections::BTreeSet<String>,
     may_be_eliminated: bool,
     eliminated_move_input: Option<String>,
     eliminated_move_output_is_32_bit: bool,
@@ -816,6 +821,7 @@ enum LatencyInputKind {
 struct MappedInputOperand {
     value: String,
     kind: LatencyInputKind,
+    is_implicit_stack_operand: bool,
 }
 
 fn mapped_mem_key(mem_addr: &uica_decoder::DecodedMemAddr) -> String {
@@ -841,11 +847,16 @@ fn push_input(
     name: &str,
     value: String,
     kind: LatencyInputKind,
+    is_implicit_stack_operand: bool,
 ) {
     input_map
         .entry(name.to_string())
         .or_default()
-        .push(MappedInputOperand { value, kind });
+        .push(MappedInputOperand {
+            value,
+            kind,
+            is_implicit_stack_operand,
+        });
 }
 
 fn mapped_record_operands(
@@ -891,6 +902,7 @@ fn mapped_record_operands(
                                 &operand.name,
                                 reg.clone(),
                                 LatencyInputKind::Normal,
+                                false,
                             );
                         }
                         read_reg_idx += 1;
@@ -901,6 +913,7 @@ fn mapped_record_operands(
                                 &operand.name,
                                 reg.clone(),
                                 LatencyInputKind::Normal,
+                                false,
                             );
                         }
                         if input_regs
@@ -915,6 +928,7 @@ fn mapped_record_operands(
                             &operand.name,
                             reg.clone(),
                             LatencyInputKind::Normal,
+                            false,
                         );
                         read_reg_idx += 1;
                     }
@@ -942,6 +956,7 @@ fn mapped_record_operands(
                             &operand.name,
                             flag,
                             LatencyInputKind::Normal,
+                            false,
                         );
                     }
                 }
@@ -966,6 +981,7 @@ fn mapped_record_operands(
                         &operand.name,
                         mem,
                         LatencyInputKind::MemData,
+                        false,
                     );
                 }
                 if operand.r#type == "mem"
@@ -1005,6 +1021,7 @@ fn mapped_record_operands(
                                 &operand.name,
                                 crate::x64::get_canonical_reg(base),
                                 base_kind,
+                                mem_addr.is_implicit_stack_operand,
                             );
                         }
                         if let Some(index) = &mem_addr.index {
@@ -1013,6 +1030,7 @@ fn mapped_record_operands(
                                 &operand.name,
                                 crate::x64::get_canonical_reg(index),
                                 index_kind,
+                                mem_addr.is_implicit_stack_operand,
                             );
                         }
                     }
@@ -1043,6 +1061,18 @@ fn flatten_input_operand_map(map: &BTreeMap<String, Vec<MappedInputOperand>>) ->
     values.sort();
     values.dedup();
     values
+}
+
+fn non_implicit_input_operands(
+    map: &BTreeMap<String, Vec<MappedInputOperand>>,
+) -> std::collections::BTreeSet<String> {
+    map.values()
+        .flatten()
+        .filter(|operand| {
+            !operand.is_implicit_stack_operand && operand.kind != LatencyInputKind::MemData
+        })
+        .map(|operand| operand.value.clone())
+        .collect()
 }
 
 fn flatten_operand_map(map: &BTreeMap<String, Vec<String>>) -> Vec<String> {
@@ -1199,6 +1229,8 @@ fn facts_to_latency_instructions(facts: &[LoopInstrFacts]) -> Vec<AnalyticalLate
             mem_addr_operands: fact.mem_addr_operands.clone(),
             mem_addr_latency_pairs: fact.mem_addr_latency_pairs.clone(),
             latencies: fact.latencies.clone(),
+            implicit_rsp_change: fact.implicit_rsp_change,
+            non_implicit_input_operands: fact.non_implicit_input_operands.clone(),
             may_be_eliminated: fact.may_be_eliminated,
             eliminated_move_input: fact.eliminated_move_input.clone(),
             eliminated_move_output_is_32_bit: fact.eliminated_move_output_is_32_bit,

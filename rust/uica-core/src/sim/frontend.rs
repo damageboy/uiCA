@@ -41,6 +41,7 @@ fn populate_instr_instance_metadata(
 ) {
     let norm = crate::matcher::NormalizedInstr {
         mnemonic: instr_i.mnemonic.clone(),
+        decoded_iform: instr_i.decoded_iform.clone(),
         iform_signature: instr_i.iform_signature.clone(),
         max_op_size_bytes: instr_i.max_op_size_bytes,
         immediate: instr_i.immediate,

@@ -16,7 +16,7 @@ use crate::{
 };
 
 pub const UIPACK_MAGIC: [u8; 8] = *b"UIPACK\0\0";
-pub const UIPACK_VERSION: u16 = 6;
+pub const UIPACK_VERSION: u16 = 7;
 pub const UIPACK_CHECKSUM_FNV1A64: u16 = 1;
 
 const UIPACK_HEADER_SIZE: usize = 64;
@@ -270,6 +270,7 @@ impl<'a> UiPackView<'a> {
                 arch: self.arch().to_string(),
                 iform: record.iform().to_string(),
                 string: record.string().to_string(),
+                locked: record.locked(),
                 xml_attrs: record.xml_attrs()?,
                 imm_zero: record.imm_zero(),
                 perf: PerfRecord {
@@ -345,6 +346,10 @@ impl<'a> UiPackRecordView<'a> {
 
     pub fn imm_zero(&self) -> bool {
         self.entry.flags & (1 << 8) != 0
+    }
+
+    pub fn locked(&self) -> bool {
+        self.entry.flags & (1 << 9) != 0
     }
 
     pub fn ports(&self) -> Result<Vec<UiPackPortView<'a>>, UiPackError> {
@@ -602,7 +607,8 @@ pub fn encode_uipack(pack: &DataPack, arch: &str) -> Result<Vec<u8>, UiPackError
                 | (u32::from(record.perf.cannot_be_in_dsb_due_to_jcc_erratum) << 5)
                 | (u32::from(record.perf.no_micro_fusion) << 6)
                 | (u32::from(record.perf.no_macro_fusion) << 7)
-                | (u32::from(record.imm_zero) << 8),
+                | (u32::from(record.imm_zero) << 8)
+                | (u32::from(record.locked) << 9),
             div_cycles: record.perf.div_cycles,
             n_available_simple_decoders: record.perf.n_available_simple_decoders,
             implicit_rsp_change: record.perf.implicit_rsp_change,

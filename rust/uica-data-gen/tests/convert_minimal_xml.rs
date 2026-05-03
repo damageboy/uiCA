@@ -134,6 +134,69 @@ fn preserves_indexed_measurement_variant_for_python_uses_indexed_addr() {
 }
 
 #[test]
+fn mirrors_python_cond_branch_port_rewrite() {
+    let temp = tempdir().unwrap();
+    let xml = temp.path().join("instructions.xml");
+    let out_dir = temp.path().join("generated");
+    std::fs::write(
+        &xml,
+        r#"<root>
+  <instruction iform="JZ_RELBRb" string="JZ (Rel8)" category="COND_BR">
+    <architecture name="SKL">
+      <measurement uops="1" ports="1*p06" />
+    </architecture>
+    <architecture name="ICL">
+      <measurement uops="1" ports="1*p06" />
+    </architecture>
+  </instruction>
+</root>
+"#,
+    )
+    .unwrap();
+
+    let manifest = convert_xml_to_pack_dir(&xml, &out_dir).unwrap();
+    let skl_pack =
+        uica_data::load_uipack(out_dir.join(&manifest.architectures["SKL"].path)).unwrap();
+    let icl_pack =
+        uica_data::load_uipack(out_dir.join(&manifest.architectures["ICL"].path)).unwrap();
+
+    assert_eq!(skl_pack.instructions[0].perf.ports.get("0156"), Some(&1));
+    assert_eq!(icl_pack.instructions[0].perf.ports.get("06"), Some(&1));
+}
+
+#[test]
+fn mirrors_python_variant_uops_mite_default_and_locked_row_metadata() {
+    let temp = tempdir().unwrap();
+    let xml = temp.path().join("instructions.xml");
+    let out_dir = temp.path().join("generated");
+    std::fs::write(
+        &xml,
+        r#"<root>
+  <instruction iform="XCHG_GPRv_GPRv" string="XCHG" category="BINARY" locked="1">
+    <architecture name="SKL">
+      <measurement uops="2" uops_same_reg="0" ports_same_reg="" />
+    </architecture>
+  </instruction>
+</root>
+"#,
+    )
+    .unwrap();
+
+    let manifest = convert_xml_to_pack_dir(&xml, &out_dir).unwrap();
+    let pack = uica_data::load_uipack(out_dir.join(&manifest.architectures["SKL"].path)).unwrap();
+    let record = &pack.instructions[0];
+    let same_reg = record
+        .perf
+        .variants
+        .get("same_reg")
+        .expect("same-reg variant");
+
+    assert!(record.locked);
+    assert_eq!(same_reg.uops, Some(0));
+    assert_eq!(same_reg.uops_mite, Some(1));
+}
+
+#[test]
 fn returns_error_for_malformed_xml() {
     let temp = tempdir().unwrap();
     let xml = temp.path().join("broken.xml");

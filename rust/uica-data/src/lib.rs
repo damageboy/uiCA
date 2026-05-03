@@ -32,6 +32,9 @@ pub struct InstructionRecord {
     pub arch: String,
     pub iform: String,
     pub string: String,
+    /// XML `locked` row metadata; Python stores this on instrData.
+    #[serde(default)]
+    pub locked: bool,
     /// XML `allXmlAttributes` row attributes used by Python `xed.matchXMLAttributes()`.
     #[serde(default)]
     pub xml_attrs: BTreeMap<String, String>,

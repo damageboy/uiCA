@@ -5,6 +5,8 @@ use uica_data::InstructionRecord;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct NormalizedInstr {
     pub mnemonic: String,
+    /// Exact XED iform decoded for this instruction. Python indexes rows by this key first.
+    pub decoded_iform: String,
     /// Operand-kind signature built from decoder/XED-derived operand kinds (e.g. `GPRv_GPRv`).
     /// Empty string when not known; matcher falls back to mnemonic-only.
     pub iform_signature: String,
@@ -56,9 +58,29 @@ pub fn match_instruction_record<'a>(
     let raw_mnemonic = raw_mnemonic(&instruction.mnemonic);
     let sig = instruction.iform_signature.trim();
 
+    let max_size = instruction.max_op_size_bytes;
+    let decoded_iform = instruction.decoded_iform.trim();
+    if !decoded_iform.is_empty() {
+        let exact_matches: Vec<&InstructionRecord> = candidates
+            .iter()
+            .filter(|candidate| candidate.iform == decoded_iform)
+            .collect();
+        let exact_matches = filter_xml_attr_matches(exact_matches, &instruction.xml_attrs);
+        if exact_matches.is_empty() {
+            return None;
+        }
+        return best_record_match(
+            exact_matches,
+            max_size,
+            instruction.immediate,
+            instruction.uses_high8_reg,
+            &instruction.explicit_reg_operands,
+            instruction.agen.as_deref(),
+        );
+    }
+
     // Prefer candidates whose iform carries the same operand-kind signature,
     // e.g. ADC_GPRv_GPRv_11 for a register/register ADC.
-    let max_size = instruction.max_op_size_bytes;
     if !sig.is_empty() {
         let sig_matches: Vec<&InstructionRecord> = candidates
             .iter()

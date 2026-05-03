@@ -262,6 +262,8 @@ pub struct InstrInstance {
     pub has_memory_write: bool,
     pub mem_addrs: Vec<MemAddr>,
     pub immediate: Option<i64>,
+    /// Exact XED iform decoded for this instruction.
+    pub decoded_iform: String,
     /// Iform-style operand signature for DataPack disambiguation.
     pub iform_signature: String,
     /// Max operand register size bytes (0=unknown); used for record disambiguation.
@@ -346,6 +348,7 @@ impl InstrInstance {
             has_memory_write: false,
             mem_addrs: Vec::new(),
             immediate: None,
+            decoded_iform: String::new(),
             iform_signature: String::new(),
             max_op_size_bytes: 0,
             uses_high8_reg: false,
@@ -490,6 +493,7 @@ pub fn build_instruction_instances(
         // performance rows. Preserve decoded stack-pointer effects here.
         inst.implicit_rsp_change = dec.implicit_rsp_change;
         inst.immediate = dec.immediate;
+        inst.decoded_iform = dec.iform.clone();
         inst.iform_signature = dec.iform_signature.clone();
         inst.max_op_size_bytes = dec.max_op_size_bytes;
         inst.uses_high8_reg = dec.uses_high8_reg;

@@ -410,6 +410,7 @@ pub fn lookup_uops_mite_ms_indexed(
     use crate::matcher::{match_instruction_record, NormalizedInstr};
     let norm = NormalizedInstr {
         mnemonic: mnemonic.to_string(),
+        decoded_iform: String::new(),
         iform_signature: iform_signature.to_string(),
         max_op_size_bytes,
         immediate: None,
@@ -457,6 +458,7 @@ pub fn expand_instr_instance_to_lam_uops_with_storage(
     };
     let norm = NormalizedInstr {
         mnemonic: instr.mnemonic.clone(),
+        decoded_iform: instr.decoded_iform.clone(),
         iform_signature: instr.iform_signature.clone(),
         max_op_size_bytes: instr.max_op_size_bytes,
         immediate: instr.immediate,
@@ -1843,6 +1845,7 @@ mod tests {
             arch: "HSW".to_string(),
             iform: "SBB_GPRv_GPRv_19".to_string(),
             string: "SBB_19 (R32, R32)".to_string(),
+            locked: false,
             xml_attrs: Default::default(),
             imm_zero: false,
             perf: PerfRecord {
@@ -1883,6 +1886,7 @@ mod tests {
                 arch: "HSW".to_string(),
                 iform: "MULX_GPR64q_GPR64q_GPR64q".to_string(),
                 string: "MULX (R64, R64, R64)".to_string(),
+                locked: false,
                 xml_attrs: Default::default(),
                 imm_zero: false,
                 perf: PerfRecord {
@@ -1996,6 +2000,7 @@ mod tests {
             arch: "HSW".to_string(),
             iform: "SUB_GPRv_GPRv_29".to_string(),
             string: "SUB_29 (R64, R64)".to_string(),
+            locked: false,
             xml_attrs: Default::default(),
             imm_zero: false,
             perf: PerfRecord {
@@ -2056,6 +2061,7 @@ mod tests {
             arch: "HSW".to_string(),
             iform: "PCMPGTB_XMMdq_XMMdq".to_string(),
             string: "PCMPGTB (XMM, XMM)".to_string(),
+            locked: false,
             xml_attrs: Default::default(),
             imm_zero: false,
             perf: PerfRecord {
@@ -2130,6 +2136,7 @@ mod tests {
             arch: "ICL".to_string(),
             iform: "KANDW_MASKmskw_MASKmskw_MASKmskw_AVX512".to_string(),
             string: "KANDW (K, K, K)".to_string(),
+            locked: false,
             xml_attrs: Default::default(),
             imm_zero: false,
             perf: PerfRecord {
@@ -2259,6 +2266,7 @@ mod tests {
             arch: "HSW".to_string(),
             iform: "SHL_GPRv_CL_D3r4".to_string(),
             string: "SHL (R64, CL)".to_string(),
+            locked: false,
             xml_attrs: Default::default(),
             imm_zero: false,
             perf: PerfRecord {

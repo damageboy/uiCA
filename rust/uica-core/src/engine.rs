@@ -61,6 +61,7 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
             max_op_size_bytes: decoded_instr.max_op_size_bytes,
             immediate: decoded_instr.immediate,
             mnemonic: decoded_instr.mnemonic.clone(),
+            decoded_iform: decoded_instr.iform.clone(),
             iform_signature: decoded_instr.iform_signature.clone(),
             uses_high8_reg: decoded_instr.uses_high8_reg,
             explicit_reg_operands: decoded_instr.explicit_reg_operands.clone(),
@@ -2256,6 +2257,7 @@ mod tests {
                 arch: "SKL".to_string(),
                 iform: "ADD_GPRv_GPRv".to_string(),
                 string: "ADD".to_string(),
+                locked: false,
                 xml_attrs: Default::default(),
                 imm_zero: false,
                 perf: PerfRecord {

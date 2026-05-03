@@ -59,6 +59,7 @@ fn matches_instruction_by_string_case_insensitively() {
         immediate: None,
         iform_signature: String::new(),
         mnemonic: "add".to_string(),
+        decoded_iform: String::new(),
         uses_high8_reg: false,
         explicit_reg_operands: Vec::new(),
         xml_attrs: Default::default(),
@@ -81,6 +82,7 @@ fn matches_instruction_by_iform_prefix_when_string_differs() {
         immediate: None,
         iform_signature: String::new(),
         mnemonic: "mov".to_string(),
+        decoded_iform: String::new(),
         uses_high8_reg: false,
         explicit_reg_operands: Vec::new(),
         xml_attrs: Default::default(),
@@ -103,6 +105,7 @@ fn returns_none_when_no_candidate_matches() {
         immediate: None,
         iform_signature: String::new(),
         mnemonic: "sub".to_string(),
+        decoded_iform: String::new(),
         uses_high8_reg: false,
         explicit_reg_operands: Vec::new(),
         xml_attrs: Default::default(),
@@ -123,6 +126,7 @@ fn matches_jcc_aliases_to_xed_candidate_names() {
         immediate: None,
         iform_signature: String::new(),
         mnemonic: "je rel8".to_string(),
+        decoded_iform: String::new(),
         uses_high8_reg: false,
         explicit_reg_operands: Vec::new(),
         xml_attrs: Default::default(),
@@ -133,6 +137,7 @@ fn matches_jcc_aliases_to_xed_candidate_names() {
         immediate: None,
         iform_signature: String::new(),
         mnemonic: "jne rel8".to_string(),
+        decoded_iform: String::new(),
         uses_high8_reg: false,
         explicit_reg_operands: Vec::new(),
         xml_attrs: Default::default(),
@@ -179,6 +184,7 @@ fn matches_cmov_and_setcc_aliases_to_candidates() {
         immediate: None,
         iform_signature: String::new(),
         mnemonic: "cmovnle".to_string(),
+        decoded_iform: String::new(),
         uses_high8_reg: false,
         explicit_reg_operands: Vec::new(),
         xml_attrs: Default::default(),
@@ -189,6 +195,7 @@ fn matches_cmov_and_setcc_aliases_to_candidates() {
         immediate: None,
         iform_signature: String::new(),
         mnemonic: "setz".to_string(),
+        decoded_iform: String::new(),
         uses_high8_reg: false,
         explicit_reg_operands: Vec::new(),
         xml_attrs: Default::default(),
@@ -220,6 +227,7 @@ fn does_not_fallback_to_mnemonic_when_decoded_iform_signature_misses() {
         immediate: None,
         iform_signature: "VGPR64q_VGPR64q_VGPR64q".to_string(),
         mnemonic: "mulx".to_string(),
+        decoded_iform: String::new(),
         uses_high8_reg: false,
         explicit_reg_operands: vec!["RAX".to_string(), "RBX".to_string(), "RCX".to_string()],
         xml_attrs: Default::default(),
@@ -237,6 +245,7 @@ fn matches_nonzero_immediate_to_general_immediate_record() {
         immediate: Some(3),
         iform_signature: "GPRv_IMMb".to_string(),
         mnemonic: "sar".to_string(),
+        decoded_iform: String::new(),
         uses_high8_reg: false,
         explicit_reg_operands: Vec::new(),
         xml_attrs: Default::default(),
@@ -253,12 +262,54 @@ fn matches_nonzero_immediate_to_general_immediate_record() {
 }
 
 #[test]
+fn exact_decoded_iform_restricts_candidate_rows_like_python() {
+    let instr = NormalizedInstr {
+        decoded_iform: "ADD_GPRv_GPRv_01".to_string(),
+        max_op_size_bytes: 8,
+        immediate: None,
+        iform_signature: "GPRv_GPRv".to_string(),
+        mnemonic: "add".to_string(),
+        uses_high8_reg: false,
+        explicit_reg_operands: Vec::new(),
+        xml_attrs: Default::default(),
+        agen: None,
+    };
+    let candidates = vec![
+        record("ADD_GPRv_GPRv_03", "ADD wrong iform"),
+        record("ADD_GPRv_GPRv_01", "ADD right iform"),
+    ];
+
+    let matched = match_instruction_record(&instr, &candidates).expect("exact iform candidate");
+
+    assert_eq!(matched.iform, "ADD_GPRv_GPRv_01");
+}
+
+#[test]
+fn returns_none_when_decoded_iform_has_no_python_row() {
+    let instr = NormalizedInstr {
+        decoded_iform: "ADD_GPRv_GPRv_01".to_string(),
+        max_op_size_bytes: 8,
+        immediate: None,
+        iform_signature: "GPRv_GPRv".to_string(),
+        mnemonic: "add".to_string(),
+        uses_high8_reg: false,
+        explicit_reg_operands: Vec::new(),
+        xml_attrs: Default::default(),
+        agen: None,
+    };
+    let candidates = vec![record("ADD_GPRv_GPRv_03", "ADD wrong iform")];
+
+    assert!(match_instruction_record(&instr, &candidates).is_none());
+}
+
+#[test]
 fn matches_zero_immediate_metadata_independent_of_display_position() {
     let zero = NormalizedInstr {
         max_op_size_bytes: 0,
         immediate: Some(0),
         iform_signature: "IMMb".to_string(),
         mnemonic: "push".to_string(),
+        decoded_iform: String::new(),
         uses_high8_reg: false,
         explicit_reg_operands: Vec::new(),
         xml_attrs: Default::default(),
@@ -288,6 +339,7 @@ fn matches_python_xml_attributes_before_string_fallbacks() {
         immediate: None,
         iform_signature: "GPRv_MEMv".to_string(),
         mnemonic: "cmp".to_string(),
+        decoded_iform: String::new(),
         uses_high8_reg: false,
         explicit_reg_operands: Vec::new(),
         xml_attrs: [("rm".to_string(), "7".to_string())].into_iter().collect(),
@@ -311,6 +363,7 @@ fn matches_lea_agen_form_before_size_fallback() {
         immediate: None,
         iform_signature: "GPRv_MEM".to_string(),
         mnemonic: "lea".to_string(),
+        decoded_iform: String::new(),
         uses_high8_reg: false,
         explicit_reg_operands: Vec::new(),
         xml_attrs: Default::default(),
@@ -334,6 +387,7 @@ fn matches_high8_record_even_when_larger_dest_sets_max_size() {
         immediate: None,
         iform_signature: "GPRv_GPR8".to_string(),
         mnemonic: "movzx".to_string(),
+        decoded_iform: String::new(),
         uses_high8_reg: true,
         explicit_reg_operands: vec!["ECX".to_string(), "AH".to_string()],
         xml_attrs: Default::default(),
@@ -356,6 +410,7 @@ fn prefers_unmasked_evex_record_when_k0_is_implicit() {
         immediate: None,
         iform_signature: "ZMMu64_MASKmskw_MEMu64_AVX512".to_string(),
         mnemonic: "vmovdqu64".to_string(),
+        decoded_iform: String::new(),
         uses_high8_reg: false,
         explicit_reg_operands: vec!["ZMM0".to_string()],
         xml_attrs: Default::default(),
@@ -384,6 +439,7 @@ fn prefers_masked_evex_record_when_mask_is_explicit() {
         immediate: None,
         iform_signature: "ZMMu64_MASKmskw_MEMu64_AVX512".to_string(),
         mnemonic: "vmovdqu64".to_string(),
+        decoded_iform: String::new(),
         uses_high8_reg: false,
         explicit_reg_operands: vec!["ZMM0".to_string(), "K1".to_string()],
         xml_attrs: Default::default(),
@@ -412,6 +468,7 @@ fn matches_low8_record_without_high8_substring() {
         immediate: None,
         iform_signature: "GPR8_GPR8".to_string(),
         mnemonic: "mov".to_string(),
+        decoded_iform: String::new(),
         uses_high8_reg: false,
         explicit_reg_operands: vec!["AL".to_string(), "BL".to_string()],
         xml_attrs: Default::default(),
@@ -437,6 +494,7 @@ fn record_with_immzero(iform: &str, string: &str, imm_zero: bool) -> Instruction
         arch: "HSW".to_string(),
         iform: iform.to_string(),
         string: string.to_string(),
+        locked: false,
         xml_attrs: Default::default(),
         imm_zero,
         perf: PerfRecord {

@@ -117,12 +117,13 @@ fn parse_xml_to_packs(xml_path: &Path) -> Result<BTreeMap<String, DataPack>> {
                 arch: arch_name.to_string(),
                 iform: iform.to_string(),
                 string: string.to_string(),
+                locked: parse_bool_attr(instruction, &["locked"]),
                 imm_zero: xml_attrs
                     .get("immzero")
                     .map(|value| matches!(value.as_str(), "1" | "true" | "True"))
                     .unwrap_or(false),
                 xml_attrs,
-                perf: parse_perf(instruction, measurement)?,
+                perf: parse_perf(instruction, measurement, arch_name)?,
             };
             dedup.insert(
                 (
@@ -175,6 +176,7 @@ fn parse_xml_match_attrs(instruction: roxmltree::Node<'_, '_>) -> BTreeMap<Strin
 fn parse_perf(
     instruction: roxmltree::Node<'_, '_>,
     measurement: roxmltree::Node<'_, '_>,
+    arch_name: &str,
 ) -> Result<PerfRecord> {
     use uica_data::{LatencyRecord, OperandRecord};
 
@@ -326,10 +328,10 @@ fn parse_perf(
 
     let ports = measurement
         .attribute("ports")
-        .map(parse_ports)
+        .map(|ports| parse_python_ports(ports, instruction, arch_name))
         .transpose()?
         .unwrap_or_default();
-    let variants = parse_perf_variants(measurement, instruction)?;
+    let variants = parse_perf_variants(measurement, instruction, arch_name)?;
 
     let implicit_rsp_change =
         parse_i32_attr(instruction, &["implicitRSPChange", "implicit_rsp_change"]).unwrap_or(0);
@@ -386,6 +388,7 @@ fn parse_perf(
 fn parse_perf_variants(
     measurement: roxmltree::Node<'_, '_>,
     instruction: roxmltree::Node<'_, '_>,
+    arch_name: &str,
 ) -> Result<BTreeMap<String, PerfVariantRecord>> {
     let mut variants = BTreeMap::new();
     for (xml_suffix, variant_name) in [("_indexed", "indexed"), ("_same_reg", "same_reg")] {
@@ -398,15 +401,20 @@ fn parse_perf_variants(
         let uops = parse_i32_attr(measurement, &[&format!("uops{xml_suffix}")]);
         let ports = measurement
             .attribute(format!("ports{xml_suffix}").as_str())
-            .map(parse_ports)
+            .map(|ports| parse_python_ports(ports, instruction, arch_name))
             .transpose()?
             .or_else(|| (uops == Some(0)).then(BTreeMap::new));
         let variant = PerfVariantRecord {
             uops,
             retire_slots: parse_i32_attr(measurement, &[&format!("uops_retire_slots{xml_suffix}")])
                 .map(|slots| slots.max(1)),
-            uops_mite: parse_i32_attr(measurement, &[&format!("uops_MITE{xml_suffix}")])
-                .map(|uops| uops.max(1)),
+            // Python convertXML.py writes uopsMITE_SR/uopsMITE_I = 1 even
+            // when the corresponding XML attribute is absent.
+            uops_mite: Some(
+                parse_i32_attr(measurement, &[&format!("uops_MITE{xml_suffix}")])
+                    .unwrap_or(1)
+                    .max(1),
+            ),
             uops_ms: parse_i32_attr(measurement, &[&format!("uops_MS{xml_suffix}")]),
             tp,
             ports,
@@ -542,6 +550,22 @@ fn parse_bool_opt_attr(node: roxmltree::Node<'_, '_>, names: &[&str]) -> Option<
         .iter()
         .find_map(|name| node.attribute(*name))
         .map(|value| matches!(value, "1" | "true" | "True" | "yes" | "Y"))
+}
+
+fn parse_python_ports(
+    value: &str,
+    instruction: roxmltree::Node<'_, '_>,
+    arch_name: &str,
+) -> Result<BTreeMap<String, i32>> {
+    let ports = if instruction.attribute("category") == Some("COND_BR")
+        && value == "1*p06"
+        && !matches!(arch_name, "ICL" | "TGL" | "RKL" | "ADL-P")
+    {
+        "1*p0156"
+    } else {
+        value
+    };
+    parse_ports(ports)
 }
 
 fn parse_ports(value: &str) -> Result<BTreeMap<String, i32>> {

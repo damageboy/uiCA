@@ -36,6 +36,7 @@ fn sample_pack() -> DataPack {
                 arch: "SKL".to_string(),
                 iform: "ADD_GPRv_GPRv".to_string(),
                 string: "ADD".to_string(),
+                locked: false,
                 xml_attrs: BTreeMap::from([
                     ("eosz".to_string(), "3".to_string()),
                     ("rm".to_string(), "3".to_string()),
@@ -125,6 +126,7 @@ fn sample_pack() -> DataPack {
                 arch: "SKL".to_string(),
                 iform: "IMUL_GPRv_GPRv".to_string(),
                 string: "IMUL".to_string(),
+                locked: true,
                 xml_attrs: Default::default(),
                 imm_zero: false,
                 perf: PerfRecord {
@@ -200,6 +202,7 @@ fn roundtrips_single_arch_uipack_and_keeps_index_compatibility() {
     assert_eq!(add_candidates.len(), 1);
     assert_eq!(add_candidates[0].iform, "ADD_GPRv_GPRv");
     assert_eq!(mul_candidates.len(), 1);
+    assert!(decoded.instructions[1].locked);
     assert_eq!(mul_candidates[0].perf.tp, None);
 }
 

@@ -91,12 +91,18 @@ fn sample_pack(
     uops: i32,
     ports: &[(&str, i32)],
 ) -> DataPack {
+    let iform = match mnemonic {
+        "ADD" => "ADD_GPRv_GPRv_01".to_string(),
+        _ => format!("{mnemonic}_GPRv_GPRv"),
+    };
+
     DataPack {
         schema_version: DATAPACK_SCHEMA_VERSION.to_string(),
         instructions: vec![InstructionRecord {
             arch: arch.to_string(),
-            iform: format!("{mnemonic}_GPRv_GPRv"),
+            iform,
             string: string.to_string(),
+            locked: false,
             xml_attrs: Default::default(),
             imm_zero: false,
             perf: PerfRecord {
@@ -398,6 +404,7 @@ fn binary_manifest_pack_supports_index_matcher_and_perf_lookup() {
             immediate: None,
             iform_signature: String::new(),
             mnemonic: "mov".to_string(),
+            decoded_iform: String::new(),
             uses_high8_reg: false,
             explicit_reg_operands: Vec::new(),
             xml_attrs: Default::default(),

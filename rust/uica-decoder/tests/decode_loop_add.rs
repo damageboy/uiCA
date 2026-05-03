@@ -45,3 +45,12 @@ fn decoder_exposes_lcp_inputs_for_prefix66_imm16() {
     assert!(instructions[0].has_66_prefix);
     assert_eq!(instructions[0].immediate_width_bits, 16);
 }
+
+#[test]
+fn decoder_exposes_xed_nominal_opcode_after_escape_bytes() {
+    let bytes = [0x48_u8, 0x0f, 0xaf, 0xf8]; // imul rdi, rax
+    let instructions = decode_raw(&bytes).expect("decode should succeed");
+
+    assert_eq!(instructions[0].mnemonic, "imul");
+    assert_eq!(instructions[0].pos_nominal_opcode, 2);
+}

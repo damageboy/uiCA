@@ -45,6 +45,7 @@ typedef struct uica_xed_reg_s {
 typedef struct uica_xed_inst_s {
     uint8_t status;
     uint32_t len;
+    uint32_t pos_nominal_opcode;
     char mnemonic[UICA_XED_TEXT_CAP];
     char disasm[UICA_XED_TEXT_CAP];
     char iform[UICA_XED_IFORM_CAP];

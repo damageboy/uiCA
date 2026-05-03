@@ -429,6 +429,7 @@ int uica_xed_decode_one(const uint8_t* bytes, uint32_t len, uint64_t ip, uica_xe
 
    out->status = UICA_XED_STATUS_OK;
    out->len = xed_decoded_inst_get_length(&xedd);
+   out->pos_nominal_opcode = xed3_operand_get_pos_nominal_opcode(&xedd);
    out->implicit_rsp_change = uica_xed_implicit_rsp_change(&xedd);
 
    mnemonic = xed_iclass_enum_t2str(xed_decoded_inst_get_iclass(&xedd));

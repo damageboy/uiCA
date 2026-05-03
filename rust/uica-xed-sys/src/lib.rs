@@ -70,6 +70,7 @@ impl Default for uica_xed_reg_t {
 pub struct uica_xed_inst_t {
     pub status: u8,
     pub len: u32,
+    pub pos_nominal_opcode: u32,
     pub mnemonic: [c_char; UICA_XED_TEXT_CAP],
     pub disasm: [c_char; UICA_XED_TEXT_CAP],
     pub iform: [c_char; UICA_XED_IFORM_CAP],
@@ -104,6 +105,7 @@ impl Default for uica_xed_inst_t {
         Self {
             status: 0,
             len: 0,
+            pos_nominal_opcode: 0,
             mnemonic: [0; UICA_XED_TEXT_CAP],
             disasm: [0; UICA_XED_TEXT_CAP],
             iform: [0; UICA_XED_IFORM_CAP],

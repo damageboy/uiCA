@@ -95,7 +95,7 @@ pub fn decode_raw(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
         let instr_bytes = remaining[..len].to_vec();
         let has_66_prefix = instr_bytes
             .iter()
-            .take(nominal_opcode_offset(&instr_bytes) as usize)
+            .take(raw.pos_nominal_opcode as usize)
             .any(|byte| *byte == 0x66);
         let mnemonic = normalize_mnemonic(&raw_mnemonic);
         let disasm = normalize_disasm(&cbuf_to_string(&raw.disasm));
@@ -113,7 +113,7 @@ pub fn decode_raw(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
             mnemonic,
             disasm,
             bytes: instr_bytes.clone(),
-            pos_nominal_opcode: nominal_opcode_offset(&instr_bytes),
+            pos_nominal_opcode: raw.pos_nominal_opcode,
             input_regs,
             output_regs,
             reads_flags: raw.reads_flags != 0,
@@ -367,22 +367,4 @@ fn iform_to_signature(iform: &str) -> String {
         .map(|part| if part == "AGEN" { "MEM" } else { part })
         .collect::<Vec<_>>()
         .join("_")
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn nominal_opcode_offset(bytes: &[u8]) -> u32 {
-    let mut idx = 0usize;
-    while idx < bytes.len() {
-        match bytes[idx] {
-            0xF0 | 0xF2 | 0xF3 | 0x2E | 0x36 | 0x3E | 0x26 | 0x64 | 0x65 | 0x66 | 0x67 => {
-                idx += 1;
-            }
-            0x40..=0x4F => idx += 1,
-            0xC5 => return (idx + 2).min(bytes.len().saturating_sub(1)) as u32,
-            0xC4 => return (idx + 3).min(bytes.len().saturating_sub(1)) as u32,
-            0x62 => return (idx + 4).min(bytes.len().saturating_sub(1)) as u32,
-            _ => return idx as u32,
-        }
-    }
-    0
 }

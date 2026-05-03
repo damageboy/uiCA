@@ -1618,18 +1618,17 @@ fn emit_lam_uops(
             if let Some(mem_addr) = selected_mem_addr.as_ref() {
                 if reads_base_address {
                     if let Some(base) = &mem_addr.base {
-                        let base = crate::x64::get_canonical_reg(base);
-                        if !inputs.contains(&base) {
-                            inputs.push(base);
-                        }
+                        // Python parity: `instructions.py` appends one
+                        // RegOperand for the base and one for the index. If
+                        // both are the same architectural register (e.g.
+                        // LEA [rdx+rdx]), `Renamer` records two input
+                        // operands and JSON `dependsOn` contains two entries.
+                        inputs.push(crate::x64::get_canonical_reg(base));
                     }
                 }
                 if reads_index_address {
                     if let Some(index) = &mem_addr.index {
-                        let index = crate::x64::get_canonical_reg(index);
-                        if !inputs.contains(&index) {
-                            inputs.push(index);
-                        }
+                        inputs.push(crate::x64::get_canonical_reg(index));
                     }
                 }
             }
@@ -2197,6 +2196,64 @@ mod tests {
 
         assert_eq!(plans.len(), 1);
         assert!(plans[0].ports.is_empty());
+    }
+
+    #[test]
+    fn agen_same_base_index_preserves_python_duplicate_address_inputs() {
+        let mut instr = super::super::types::InstrInstance::new(
+            0,
+            0,
+            0,
+            0,
+            3,
+            "lea".to_string(),
+            "lea ecx, [rdx+rdx]".to_string(),
+        );
+        instr.mem_addrs.push(super::super::types::MemAddr {
+            base: Some("RDX".to_string()),
+            index: Some("RDX".to_string()),
+            scale: 1,
+            disp: 0,
+            is_implicit_stack_operand: false,
+        });
+
+        let plans = vec![super::UopPlan {
+            ports: vec!["1".to_string()],
+            inputs: vec!["__AGEN_ADDR".to_string(), "__AGEN_ADDRI".to_string()],
+            outputs: vec!["REG0".to_string()],
+            latencies: BTreeMap::from([("REG0".to_string(), 1)]),
+            is_load: false,
+            is_store_address: false,
+            is_store_data: false,
+            is_first: true,
+            is_last: true,
+            mem_addr: None,
+            mem_addr_index: None,
+        }];
+        let mut storage = super::super::uop_storage::UopStorage::new();
+        let mut uop_idx = 0;
+        let mut fused_idx = 0;
+        let mut lam_idx = 0;
+
+        super::emit_lam_uops(
+            &plans,
+            &instr,
+            &mut uop_idx,
+            &mut fused_idx,
+            &mut lam_idx,
+            &mut storage,
+            "SKL",
+            None,
+        );
+
+        let uop = storage.get_uop(0).expect("LEA uop");
+        assert_eq!(
+            uop.prop.input_operands,
+            vec![
+                super::super::types::OperandKey::Reg("RDX".to_string()),
+                super::super::types::OperandKey::Reg("RDX".to_string()),
+            ]
+        );
     }
 
     #[test]

@@ -45,7 +45,7 @@ Do not use for:
 ### 1. Capture fresh Python oracle
 
 ```bash
-cargo build -q -p uica-cli
+cargo build -q -r -p uica-cli
 TMP=$(mktemp -d)
 TAG=py-debug-$(date +%Y%m%d-%H%M%S)
 python3 verification/tools/capture.py \
@@ -64,7 +64,7 @@ cp -R "$TMP/python/$TAG" "$TMP/rust/$TAG"
 python3 verification/tools/verify.py \
   --profile curated12 \
   --engine rust \
-  --rust-bin target/debug/uica-cli \
+  --rust-bin target/release/uica-cli \
   --golden-root "$TMP" \
   --golden-tag "$TAG" \
   --jobs 4 \
@@ -107,7 +107,7 @@ python3 uiCA.py /tmp/uica-debug-case/case.o \
   -eventTrace /tmp/uica-debug-case/python.trace \
   -TPonly
 
-target/debug/uica-cli /tmp/uica-debug-case/case.o \
+target/release/uica-cli /tmp/uica-debug-case/case.o \
   --arch HSW \
   --json /tmp/uica-debug-case/rust.json \
   --event-trace /tmp/uica-debug-case/rust.trace \
@@ -362,7 +362,7 @@ Do not:
 
 ## Regression Checklist
 
-Always run, in this order:
+Always run, in this order, it is important, to speed up the rust execution by running release build to generate the initial output and trace json where needed:
 
 ```bash
 cargo fmt --all
@@ -377,7 +377,7 @@ python3 verification/tools/verify.py \
   --case curated/CASE \
   --arch ARCH \
   --engine rust \
-  --rust-bin target/debug/uica-cli \
+  --rust-bin target/release/uica-cli \
   --golden-root "$TMP" \
   --golden-tag "$TAG" \
   --dump-diff /tmp/uica-focus.diff
@@ -387,27 +387,27 @@ Then known previous failures from this campaign:
 
 ```bash
 python3 verification/tools/verify.py --case curated/add_loop_001 --arch HSW \
-  --engine rust --rust-bin target/debug/uica-cli \
+  --engine rust --rust-bin target/release/uica-cli \
   --golden-root "$TMP" --golden-tag "$TAG"
 
 python3 verification/tools/verify.py --case curated/alu_dep_001 --arch HSW \
-  --engine rust --rust-bin target/debug/uica-cli \
+  --engine rust --rust-bin target/release/uica-cli \
   --golden-root "$TMP" --golden-tag "$TAG"
 
 python3 verification/tools/verify.py --case curated/cmov_setcc_001 --arch HSW \
-  --engine rust --rust-bin target/debug/uica-cli \
+  --engine rust --rust-bin target/release/uica-cli \
   --golden-root "$TMP" --golden-tag "$TAG"
 
 python3 verification/tools/verify.py --case curated/cmov_setcc_001 --arch SKL \
-  --engine rust --rust-bin target/debug/uica-cli \
+  --engine rust --rust-bin target/release/uica-cli \
   --golden-root "$TMP" --golden-tag "$TAG"
 
 python3 verification/tools/verify.py --case curated/cmov_setcc_001 --arch ICL \
-  --engine rust --rust-bin target/debug/uica-cli \
+  --engine rust --rust-bin target/release/uica-cli \
   --golden-root "$TMP" --golden-tag "$TAG"
 
 python3 verification/tools/verify.py --case curated/shift_rotate_001 --arch HSW \
-  --engine rust --rust-bin target/debug/uica-cli \
+  --engine rust --rust-bin target/release/uica-cli \
   --golden-root "$TMP" --golden-tag "$TAG"
 ```
 
@@ -417,7 +417,7 @@ Then quick profile:
 python3 verification/tools/verify.py \
   --profile quick \
   --engine rust \
-  --rust-bin target/debug/uica-cli \
+  --rust-bin target/release/uica-cli \
   --golden-root "$TMP" \
   --golden-tag "$TAG" \
   --jobs 4 \
@@ -430,7 +430,7 @@ Optional wider check:
 python3 verification/tools/verify.py \
   --profile curated12 \
   --engine rust \
-  --rust-bin target/debug/uica-cli \
+  --rust-bin target/release/uica-cli \
   --golden-root "$TMP" \
   --golden-tag "$TAG" \
   --jobs 4 \

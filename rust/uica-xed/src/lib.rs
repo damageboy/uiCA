@@ -205,10 +205,21 @@ fn decoded_mem_addrs(raw: &uica_xed_inst_t) -> (bool, bool, Vec<DecodedMemAddr>)
             has_memory_write = true;
         }
         let is_implicit_stack_operand = mem.is_implicit_stack_operand != 0;
+        let base = empty_to_none(cbuf_to_string(&mem.base));
+        let index = empty_to_none(cbuf_to_string(&mem.index));
+        // Python parity: uiCA's XED wrapper exposes base-only memory operands
+        // with scale=1. XED's raw scale operand can be 0 when no index is
+        // present; normalizing here keeps store-buffer keys identical to
+        // Python Renamer.getStoreBufferKey().
+        let scale = if index.is_none() && mem.scale == 0 {
+            1
+        } else {
+            mem.scale
+        };
         mem_addrs.push(DecodedMemAddr {
-            base: empty_to_none(cbuf_to_string(&mem.base)),
-            index: empty_to_none(cbuf_to_string(&mem.index)),
-            scale: mem.scale,
+            base,
+            index,
+            scale,
             disp: if is_implicit_stack_operand {
                 0
             } else {

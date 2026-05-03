@@ -54,3 +54,15 @@ fn decoder_exposes_xed_nominal_opcode_after_escape_bytes() {
     assert_eq!(instructions[0].mnemonic, "imul");
     assert_eq!(instructions[0].pos_nominal_opcode, 2);
 }
+
+#[test]
+fn decoder_normalizes_base_only_memory_scale_like_python() {
+    let bytes = [0x48_u8, 0x8b, 0x73, 0x10]; // mov rsi, [rbx+0x10]
+    let instructions = decode_raw(&bytes).expect("decode should succeed");
+
+    assert_eq!(instructions[0].mnemonic, "mov");
+    assert_eq!(instructions[0].mem_addrs.len(), 1);
+    assert_eq!(instructions[0].mem_addrs[0].base.as_deref(), Some("RBX"));
+    assert_eq!(instructions[0].mem_addrs[0].index.as_deref(), None);
+    assert_eq!(instructions[0].mem_addrs[0].scale, 1);
+}

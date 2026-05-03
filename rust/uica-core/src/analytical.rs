@@ -55,6 +55,9 @@ pub struct AnalyticalLatencyInstruction {
     pub instr_str: String,
     pub uops: i32,
     pub input_operands: Vec<String>,
+    /// Python parity: `Instr.inputRegOperands`, excluding memory address/data
+    /// operands. Used by `AbstractValueGenerator.__computeAbstractValue`.
+    pub abstract_value_input_operands: Vec<String>,
     pub output_operands: Vec<String>,
     pub input_mem_operands: Vec<AnalyticalMemOperand>,
     pub mem_addr_operands: Vec<String>,
@@ -65,6 +68,7 @@ pub struct AnalyticalLatencyInstruction {
     pub may_be_eliminated: bool,
     pub eliminated_move_input: Option<String>,
     pub eliminated_move_output_is_32_bit: bool,
+    pub immediate: Option<i64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -284,39 +288,165 @@ pub fn compute_final_prediction(limits: &BTreeMap<String, Option<f64>>) -> Analy
     }
 }
 
+#[derive(Clone, Debug)]
+struct AnalyticalAbstractValueGenerator {
+    init_policy: String,
+    next_value: u64,
+    init_value: (u64, i64),
+    values: BTreeMap<String, (u64, i64)>,
+    cur_instr_values: BTreeMap<String, (u64, i64)>,
+}
+
+fn parse_memory_operand_key(operand: &str) -> Option<(Option<String>, Option<String>, i32, i64)> {
+    let rest = operand.strip_prefix("MEM:")?;
+    let mut parts = rest.split(':');
+    let base = parts.next().filter(|s| !s.is_empty()).map(str::to_string);
+    let index = parts.next().filter(|s| !s.is_empty()).map(str::to_string);
+    let scale = parts.next()?.parse().ok()?;
+    let disp = parts.next()?.parse().ok()?;
+    Some((base, index, scale, disp))
+}
+
+fn is_abstract_register_operand(operand: &str) -> bool {
+    !is_memory_operand_key(operand)
+        && !matches!(operand, "C" | "SPAZO")
+        && (crate::x64::is_gp_reg(operand)
+            || operand.starts_with("XMM")
+            || operand.starts_with("YMM")
+            || operand.starts_with("ZMM")
+            || operand.starts_with('K'))
+}
+
+fn operand_lookup_key(operand: &str, abs_val_gen: &mut AnalyticalAbstractValueGenerator) -> String {
+    if let Some((base, index, scale, disp)) = parse_memory_operand_key(operand) {
+        let base = base.map(|reg| abs_val_gen.get_abstract_value_for_reg(&reg));
+        let index = index.map(|reg| abs_val_gen.get_abstract_value_for_reg(&reg));
+        return format!("MEMABS:{base:?}:{index:?}:{scale}:{disp}");
+    }
+    operand.to_string()
+}
+
+impl AnalyticalAbstractValueGenerator {
+    fn new(init_policy: &str) -> Self {
+        let mut gen = Self {
+            init_policy: init_policy.to_string(),
+            next_value: 0,
+            init_value: (0, 0),
+            values: BTreeMap::new(),
+            cur_instr_values: BTreeMap::new(),
+        };
+        gen.init_value = gen.generate_fresh_abstract_value();
+        if gen.init_policy == "stack" {
+            let rsp = gen.generate_fresh_abstract_value();
+            let rbp = gen.generate_fresh_abstract_value();
+            gen.values.insert("RSP".to_string(), rsp);
+            gen.values.insert("RBP".to_string(), rbp);
+        }
+        gen
+    }
+
+    fn get_abstract_value_for_reg(&mut self, reg: &str) -> (u64, i64) {
+        let key = crate::x64::get_canonical_reg(reg);
+        if !self.values.contains_key(&key) {
+            let value = if self.init_policy == "diff" {
+                self.generate_fresh_abstract_value()
+            } else {
+                self.init_value
+            };
+            self.values.insert(key.clone(), value);
+        }
+        self.values[&key]
+    }
+
+    fn set_abstract_value_for_cur_instr(
+        &mut self,
+        key: String,
+        instr: &AnalyticalLatencyInstruction,
+    ) {
+        let value = self.compute_abstract_value(instr);
+        self.cur_instr_values.insert(key, value);
+    }
+
+    fn finish_cur_instr(&mut self) {
+        self.values.append(&mut self.cur_instr_values);
+    }
+
+    fn generate_fresh_abstract_value(&mut self) -> (u64, i64) {
+        let value = (self.next_value, 0);
+        self.next_value += 1;
+        value
+    }
+
+    fn compute_abstract_value(&mut self, instr: &AnalyticalLatencyInstruction) -> (u64, i64) {
+        if let Some(first_reg) = instr.abstract_value_input_operands.first() {
+            let (base, offset) = self.get_abstract_value_for_reg(first_reg);
+            if instr.instr_str.contains("MOV") && !instr.instr_str.contains("CMOV") {
+                return (base, offset);
+            }
+            if instr.instr_str.contains("ADD") {
+                if let Some(imm) = instr.immediate {
+                    return (base, offset + imm);
+                }
+            }
+            if instr.instr_str.contains("SUB") {
+                if let Some(imm) = instr.immediate {
+                    return (base, offset - imm);
+                }
+            }
+            if instr.instr_str.contains("INC") {
+                return (base, offset + 1);
+            }
+            if instr.instr_str.contains("DEC") {
+                return (base, offset - 1);
+            }
+        }
+        self.generate_fresh_abstract_value()
+    }
+}
+
 pub fn generate_latency_graph(
     instructions: &[AnalyticalLatencyInstruction],
     fast_pointer_chasing: bool,
+    init_policy: &str,
 ) -> LatencyGraph {
     let prev_write_for_move = python_prev_write_for_move(instructions);
-    let mut prev_write: BTreeMap<String, (usize, String, bool)> = BTreeMap::new();
+    let mut prev_write: BTreeMap<String, (usize, String, bool, i32)> = BTreeMap::new();
+    let mut abs_val_gen = AnalyticalAbstractValueGenerator::new(init_policy);
 
-    let process_outputs = |idx: usize,
-                           instr: &AnalyticalLatencyInstruction,
-                           prev_write: &mut BTreeMap<String, (usize, String, bool)>,
-                           rsp_implicitly_changed: &mut bool| {
-        let fast_ptr_chasing = analytical_fast_ptr_chasing(
-            instructions,
-            &prev_write_for_move,
-            &*prev_write,
-            instr,
-            fast_pointer_chasing,
-        );
-        // Python parity: `facile.generateLatencyGraph()` keeps
-        // `RSPImplicitlyChanged` while processing outputs. Implicit stack
-        // changes (PUSH/POP/CALL/RET) make the next explicit RSP self-edge
-        // one cycle longer; any explicit RSP input/output clears it.
-        if instr.implicit_rsp_change != 0 {
-            *rsp_implicitly_changed = true;
-        } else if instr.non_implicit_input_operands.contains("RSP")
-            || instr.output_operands.iter().any(|output| output == "RSP")
-        {
-            *rsp_implicitly_changed = false;
-        }
-        for output in &instr.output_operands {
-            prev_write.insert(output.clone(), (idx, output.clone(), fast_ptr_chasing));
-        }
-    };
+    let process_outputs =
+        |idx: usize,
+         instr: &AnalyticalLatencyInstruction,
+         iteration: i32,
+         prev_write: &mut BTreeMap<String, (usize, String, bool, i32)>,
+         rsp_implicitly_changed: &mut bool,
+         abs_val_gen: &mut AnalyticalAbstractValueGenerator| {
+            let fast_ptr_chasing = analytical_fast_ptr_chasing(
+                instructions,
+                &prev_write_for_move,
+                &*prev_write,
+                instr,
+                fast_pointer_chasing,
+            );
+            // Python parity: `facile.generateLatencyGraph()` keeps
+            // `RSPImplicitlyChanged` while processing outputs. Implicit stack
+            // changes (PUSH/POP/CALL/RET) make the next explicit RSP self-edge
+            // one cycle longer; any explicit RSP input/output clears it.
+            if instr.implicit_rsp_change != 0 {
+                *rsp_implicitly_changed = true;
+            } else if instr.non_implicit_input_operands.contains("RSP")
+                || instr.output_operands.iter().any(|output| output == "RSP")
+            {
+                *rsp_implicitly_changed = false;
+            }
+            for output in &instr.output_operands {
+                let key = operand_lookup_key(output, abs_val_gen);
+                prev_write.insert(key, (idx, output.clone(), fast_ptr_chasing, iteration));
+                if is_abstract_register_operand(output) {
+                    abs_val_gen.set_abstract_value_for_cur_instr(output.clone(), instr);
+                }
+            }
+            abs_val_gen.finish_cur_instr();
+        };
 
     let mut rsp_implicitly_changed = false;
 
@@ -324,7 +454,14 @@ pub fn generate_latency_graph(
     // by processing `instructions * 2` before adding graph edges.
     for _ in 0..2 {
         for (idx, instr) in instructions.iter().enumerate() {
-            process_outputs(idx, instr, &mut prev_write, &mut rsp_implicitly_changed);
+            process_outputs(
+                idx,
+                instr,
+                0,
+                &mut prev_write,
+                &mut rsp_implicitly_changed,
+                &mut abs_val_gen,
+            );
         }
     }
 
@@ -340,7 +477,9 @@ pub fn generate_latency_graph(
         nodes_for_instr.push(nodes);
 
         for input in &instr.input_operands {
-            let Some((prev_idx, prev_output, fast_ptr_chasing)) = prev_write.get(input).cloned()
+            let input_key = operand_lookup_key(input, &mut abs_val_gen);
+            let Some((prev_idx, prev_output, fast_ptr_chasing, prev_it)) =
+                prev_write.get(&input_key).cloned()
             else {
                 continue;
             };
@@ -388,7 +527,7 @@ pub fn generate_latency_graph(
                 };
                 let source = format!("i{prev_idx}:{prev_input}");
                 let target = format!("i{idx}:{input}");
-                let time = if prev_idx < idx { 0 } else { 1 };
+                let time = if prev_it != 0 { 0 } else { 1 };
                 edges_for_node
                     .entry(source.clone())
                     .or_default()
@@ -401,7 +540,14 @@ pub fn generate_latency_graph(
             }
         }
 
-        process_outputs(idx, instr, &mut prev_write, &mut rsp_implicitly_changed);
+        process_outputs(
+            idx,
+            instr,
+            1,
+            &mut prev_write,
+            &mut rsp_implicitly_changed,
+            &mut abs_val_gen,
+        );
     }
 
     LatencyGraph {
@@ -413,7 +559,7 @@ pub fn generate_latency_graph(
 fn analytical_fast_ptr_chasing(
     instructions: &[AnalyticalLatencyInstruction],
     prev_write_for_move: &BTreeMap<usize, Option<usize>>,
-    prev_write: &BTreeMap<String, (usize, String, bool)>,
+    prev_write: &BTreeMap<String, (usize, String, bool, i32)>,
     instr: &AnalyticalLatencyInstruction,
     fast_pointer_chasing: bool,
 ) -> bool {
@@ -426,7 +572,7 @@ fn analytical_fast_ptr_chasing(
     let Some(base) = &mem.base else {
         return false;
     };
-    let Some((base_idx, _, _)) = prev_write.get(base) else {
+    let Some((base_idx, _, _, _)) = prev_write.get(base) else {
         return false;
     };
     let Some((base_idx, base_renamed_by_32_bit_move)) =
@@ -450,7 +596,7 @@ fn analytical_fast_ptr_chasing(
         return false;
     }
     mem.index.as_ref().is_none_or(|index| {
-        prev_write.get(index).is_some_and(|(index_idx, _, _)| {
+        prev_write.get(index).is_some_and(|(index_idx, _, _, _)| {
             resolve_python_non_eliminated_move_writer(instructions, prev_write_for_move, *index_idx)
                 .is_some_and(|(resolved_idx, _)| instructions[resolved_idx].uops == 0)
         })
@@ -689,7 +835,7 @@ mod tests {
             ..Default::default()
         };
 
-        let graph = generate_latency_graph(&[push, pop], false);
+        let graph = generate_latency_graph(&[push, pop], false, "diff");
         let mem_edges = graph.edges_for_node.get("i0:RBP").unwrap();
         assert!(mem_edges
             .iter()
@@ -722,7 +868,7 @@ mod tests {
             ..Default::default()
         };
 
-        let graph = generate_latency_graph(&[add_rsp, pop], false);
+        let graph = generate_latency_graph(&[add_rsp, pop], false, "diff");
         let rsp_edges = graph.edges_for_node.get("i0:RSP").unwrap();
         assert!(rsp_edges
             .iter()
@@ -779,7 +925,7 @@ mod tests {
             ..Default::default()
         };
 
-        let graph = generate_latency_graph(&[load_ptr, load_value, shr], true);
+        let graph = generate_latency_graph(&[load_ptr, load_value, shr], true, "diff");
         let addr_edges = graph.edges_for_node.get("i1:RAX").unwrap();
         assert!(addr_edges
             .iter()
@@ -839,6 +985,7 @@ mod tests {
                 use_value.clone(),
             ],
             true,
+            "diff",
         );
         assert!(graph
             .edges_for_node
@@ -856,8 +1003,11 @@ mod tests {
             eliminated_move_output_is_32_bit: true,
             ..Default::default()
         };
-        let graph =
-            generate_latency_graph(&[load_ptr, eliminated_mov32, load_value, use_value], true);
+        let graph = generate_latency_graph(
+            &[load_ptr, eliminated_mov32, load_value, use_value],
+            true,
+            "diff",
+        );
         assert!(graph
             .edges_for_node
             .get("i2:RBX")

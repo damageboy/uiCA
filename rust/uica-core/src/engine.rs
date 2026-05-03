@@ -105,6 +105,7 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
             // UnknownInstr with empty input/output operand lists. Matched
             // instructions fill these from record/XED operands below.
             input_operands: Vec::new(),
+            abstract_value_input_operands: Vec::new(),
             output_operands: Vec::new(),
             latencies: BTreeMap::new(),
             mem_addr_latency_pairs: std::collections::BTreeSet::new(),
@@ -116,6 +117,7 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
                 .output_regs
                 .first()
                 .is_some_and(|reg| crate::x64::get_reg_size(reg) == 32),
+            immediate: decoded_instr.immediate,
             // UnknownInstr still participates in frontend/issue loop modeling
             // with default uopsMITE=1 and retireSlots=1.
             matched: true,
@@ -233,6 +235,7 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
                 .next()
                 .map(|operand| operand.value.clone());
             fact.input_operands = flatten_input_operand_map(&input_map);
+            fact.abstract_value_input_operands = abstract_value_input_operands(&input_map);
             fact.non_implicit_input_operands = non_implicit_input_operands(&input_map);
             fact.output_operands = flatten_operand_map(&output_map);
             fact.latencies = map_record_latencies_to_decoded(
@@ -305,6 +308,7 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
                 &signature,
                 result.summary.cycles_simulated,
                 result.invocation.min_iterations,
+                &result.invocation.init_policy,
             ) {
                 throughput = loop_model.throughput;
                 iterations = loop_model.iterations;
@@ -393,6 +397,7 @@ struct LoopInstrFacts {
     instr_str: String,
     macro_fusible_with: Vec<String>,
     input_operands: Vec<String>,
+    abstract_value_input_operands: Vec<String>,
     output_operands: Vec<String>,
     input_mem_operands: Vec<AnalyticalMemOperand>,
     mem_addr_operands: Vec<String>,
@@ -403,6 +408,7 @@ struct LoopInstrFacts {
     may_be_eliminated: bool,
     eliminated_move_input: Option<String>,
     eliminated_move_output_is_32_bit: bool,
+    immediate: Option<i64>,
     matched: bool,
 }
 
@@ -533,12 +539,15 @@ fn refresh_summary_limits_from_python_bottlenecks(
     );
 
     let latency_instrs = facts_to_latency_instructions(facts);
-    let latency_graph = generate_latency_graph(&latency_instrs, arch.fast_pointer_chasing);
+    let latency_graph = generate_latency_graph(
+        &latency_instrs,
+        arch.fast_pointer_chasing,
+        &frontend.init_policy,
+    );
+    let max_latency_result = compute_maximum_latency_for_graph(&latency_graph);
     limits.insert(
         "dependencies".to_string(),
-        Some(round2(
-            compute_maximum_latency_for_graph(&latency_graph).max_cycle_ratio,
-        )),
+        Some(round2(max_latency_result.max_cycle_ratio)),
     );
 
     summary.limits = limits;
@@ -727,6 +736,7 @@ fn compute_loop_model(
     _signature: &str,
     cycles: u32,
     min_iterations: u32,
+    init_policy: &str,
 ) -> Option<LoopModel> {
     if facts.is_empty() {
         return None;
@@ -747,7 +757,8 @@ fn compute_loop_model(
     let frontend_limits = compute_frontend_limits(&frontend_instrs, arch, 0);
 
     let latency_instrs = facts_to_latency_instructions(facts);
-    let latency_graph = generate_latency_graph(&latency_instrs, arch.fast_pointer_chasing);
+    let latency_graph =
+        generate_latency_graph(&latency_instrs, arch.fast_pointer_chasing, init_policy);
     let max_latency = compute_maximum_latency_for_graph(&latency_graph).max_cycle_ratio;
     let dependencies = if max_latency > 0.0 {
         Some(round2(max_latency))
@@ -1063,6 +1074,23 @@ fn flatten_input_operand_map(map: &BTreeMap<String, Vec<MappedInputOperand>>) ->
     values
 }
 
+fn abstract_value_input_operands(map: &BTreeMap<String, Vec<MappedInputOperand>>) -> Vec<String> {
+    let mut values: Vec<String> = map
+        .values()
+        .flatten()
+        .filter(|operand| {
+            matches!(
+                operand.kind,
+                LatencyInputKind::Normal | LatencyInputKind::AgenBase | LatencyInputKind::AgenIndex
+            )
+        })
+        .map(|operand| operand.value.clone())
+        .collect();
+    values.sort();
+    values.dedup();
+    values
+}
+
 fn non_implicit_input_operands(
     map: &BTreeMap<String, Vec<MappedInputOperand>>,
 ) -> std::collections::BTreeSet<String> {
@@ -1224,6 +1252,7 @@ fn facts_to_latency_instructions(facts: &[LoopInstrFacts]) -> Vec<AnalyticalLate
             instr_str: fact.instr_str.clone(),
             uops: fact.uops,
             input_operands: fact.input_operands.clone(),
+            abstract_value_input_operands: fact.abstract_value_input_operands.clone(),
             output_operands: fact.output_operands.clone(),
             input_mem_operands: fact.input_mem_operands.clone(),
             mem_addr_operands: fact.mem_addr_operands.clone(),
@@ -1234,6 +1263,7 @@ fn facts_to_latency_instructions(facts: &[LoopInstrFacts]) -> Vec<AnalyticalLate
             may_be_eliminated: fact.may_be_eliminated,
             eliminated_move_input: fact.eliminated_move_input.clone(),
             eliminated_move_output_is_32_bit: fact.eliminated_move_output_is_32_bit,
+            immediate: fact.immediate,
         })
         .collect()
 }

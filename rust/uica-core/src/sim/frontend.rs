@@ -275,6 +275,7 @@ pub struct FrontEnd {
     pub unroll: bool,
     pub no_micro_fusion: bool,
     pub no_macro_fusion: bool,
+    pub init_policy: String,
     pub uop_source: Option<String>,
     pub lsd_unroll_count: u32,
     pub addresses_in_dsb: HashSet<u32>,
@@ -416,7 +417,7 @@ impl FrontEnd {
         }
 
         let mut frontend = Self {
-            renamer: Renamer::new_with_init_policy(arch.clone(), init_policy),
+            renamer: Renamer::new_with_init_policy(arch.clone(), init_policy.clone()),
             reorder_buffer: ReorderBuffer::new(arch.clone()),
             scheduler: Scheduler::new(arch.clone(), pack.all_ports.clone()),
             decoder: Decoder::new(arch.clone(), instruction_queue.clone()),
@@ -428,6 +429,7 @@ impl FrontEnd {
             unroll,
             no_micro_fusion,
             no_macro_fusion,
+            init_policy,
             uop_source,
             lsd_unroll_count,
             addresses_in_dsb,

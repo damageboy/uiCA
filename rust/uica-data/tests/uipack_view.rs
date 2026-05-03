@@ -30,11 +30,15 @@ fn sample_pack() -> DataPack {
 
     DataPack {
         schema_version: DATAPACK_SCHEMA_VERSION.to_string(),
+        all_ports: Default::default(),
+        alu_ports: Default::default(),
         instructions: vec![
             InstructionRecord {
                 arch: "SKL".to_string(),
                 iform: "ADD_GPRv_GPRv".to_string(),
                 string: "ADD".to_string(),
+                all_ports: Default::default(),
+                alu_ports: Default::default(),
                 locked: false,
                 xml_attrs: Default::default(),
                 imm_zero: false,
@@ -65,6 +69,8 @@ fn sample_pack() -> DataPack {
                 arch: "SKL".to_string(),
                 iform: "IMUL_GPRv_GPRv".to_string(),
                 string: "IMUL".to_string(),
+                all_ports: Default::default(),
+                alu_ports: Default::default(),
                 locked: false,
                 xml_attrs: Default::default(),
                 imm_zero: false,

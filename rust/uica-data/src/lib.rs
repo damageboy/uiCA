@@ -24,6 +24,12 @@ pub const DATAPACK_SCHEMA_VERSION: &str = "uica-instructions-pack-v2";
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DataPack {
     pub schema_version: String,
+    /// Python convertXML.py `uArchInfo.allPorts[arch]` generated from port data.
+    #[serde(default)]
+    pub all_ports: Vec<String>,
+    /// Python convertXML.py `uArchInfo.ALUPorts[arch]` generated from AND port data.
+    #[serde(default)]
+    pub alu_ports: Vec<String>,
     pub instructions: Vec<InstructionRecord>,
 }
 
@@ -32,6 +38,12 @@ pub struct InstructionRecord {
     pub arch: String,
     pub iform: String,
     pub string: String,
+    /// Copy of pack-level generated allPorts for code paths that only receive a row.
+    #[serde(default)]
+    pub all_ports: Vec<String>,
+    /// Copy of pack-level generated ALUPorts for code paths that only receive a row.
+    #[serde(default)]
+    pub alu_ports: Vec<String>,
     /// XML `locked` row metadata; Python stores this on instrData.
     #[serde(default)]
     pub locked: bool,

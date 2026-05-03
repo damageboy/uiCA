@@ -31,11 +31,35 @@ fn sample_pack() -> DataPack {
 
     DataPack {
         schema_version: DATAPACK_SCHEMA_VERSION.to_string(),
+        all_ports: vec![
+            "0".to_string(),
+            "1".to_string(),
+            "5".to_string(),
+            "6".to_string(),
+        ],
+        alu_ports: vec![
+            "0".to_string(),
+            "1".to_string(),
+            "5".to_string(),
+            "6".to_string(),
+        ],
         instructions: vec![
             InstructionRecord {
                 arch: "SKL".to_string(),
                 iform: "ADD_GPRv_GPRv".to_string(),
                 string: "ADD".to_string(),
+                all_ports: vec![
+                    "0".to_string(),
+                    "1".to_string(),
+                    "5".to_string(),
+                    "6".to_string(),
+                ],
+                alu_ports: vec![
+                    "0".to_string(),
+                    "1".to_string(),
+                    "5".to_string(),
+                    "6".to_string(),
+                ],
                 locked: false,
                 xml_attrs: BTreeMap::from([
                     ("eosz".to_string(), "3".to_string()),
@@ -126,6 +150,18 @@ fn sample_pack() -> DataPack {
                 arch: "SKL".to_string(),
                 iform: "IMUL_GPRv_GPRv".to_string(),
                 string: "IMUL".to_string(),
+                all_ports: vec![
+                    "0".to_string(),
+                    "1".to_string(),
+                    "5".to_string(),
+                    "6".to_string(),
+                ],
+                alu_ports: vec![
+                    "0".to_string(),
+                    "1".to_string(),
+                    "5".to_string(),
+                    "6".to_string(),
+                ],
                 locked: true,
                 xml_attrs: Default::default(),
                 imm_zero: false,
@@ -169,6 +205,8 @@ fn roundtrips_single_arch_uipack_and_keeps_index_compatibility() {
 
     let decoded = load_uipack_bytes(&bytes).unwrap();
     assert_eq!(decoded, pack);
+    assert_eq!(decoded.all_ports, vec!["0", "1", "5", "6"]);
+    assert_eq!(decoded.alu_ports, vec!["0", "1", "5", "6"]);
     assert_eq!(
         decoded.instructions[0].xml_attrs.get("eosz"),
         Some(&"3".to_string())

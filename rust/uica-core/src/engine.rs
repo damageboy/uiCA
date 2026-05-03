@@ -156,8 +156,7 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
             fact.retire_slots = retire_slots;
             fact.port_data = perf.ports.clone();
             if uses_sr_fallback_for_analytics && fact.port_data.is_empty() {
-                fact.port_data
-                    .insert(crate::micro_arch::alu_ports(arch.name).join(""), 1);
+                fact.port_data.insert(pack.alu_ports.join(""), 1);
             }
             if is_decoded_zero_idiom(decoded_instr) {
                 // Python parity: `instructions.py` drops zero-idiom input
@@ -343,7 +342,7 @@ pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -
         result.instructions = build_instructions_json_from_decode(code);
     }
 
-    let all_ports: Vec<&str> = crate::micro_arch::all_ports(arch.name).to_vec();
+    let all_ports: Vec<String> = pack.all_ports.clone();
     result.parameters = json!({
         "uArchName": arch.name,
         "IQWidth": arch.iq_width,
@@ -2253,10 +2252,14 @@ mod tests {
     fn sample_pack() -> DataPack {
         DataPack {
             schema_version: DATAPACK_SCHEMA_VERSION.to_string(),
+            all_ports: Default::default(),
+            alu_ports: Default::default(),
             instructions: vec![InstructionRecord {
                 arch: "SKL".to_string(),
                 iform: "ADD_GPRv_GPRv".to_string(),
                 string: "ADD".to_string(),
+                all_ports: Default::default(),
+                alu_ports: Default::default(),
                 locked: false,
                 xml_attrs: Default::default(),
                 imm_zero: false,

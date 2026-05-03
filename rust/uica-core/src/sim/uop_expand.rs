@@ -651,7 +651,8 @@ fn compute_uop_plans_inner(
     sorted_ports.sort_by_key(|(k, _)| k.as_str());
     let move_elim_ports;
     if sorted_ports.is_empty() && use_move_elim_fallback {
-        move_elim_ports = crate::micro_arch::alu_ports(arch_name).join("");
+        let _ = arch_name;
+        move_elim_ports = record.alu_ports.join("");
         sorted_ports.push((&move_elim_ports, &1));
     }
     for (port_str, &count) in &sorted_ports {
@@ -1845,6 +1846,8 @@ mod tests {
             arch: "HSW".to_string(),
             iform: "SBB_GPRv_GPRv_19".to_string(),
             string: "SBB_19 (R32, R32)".to_string(),
+            all_ports: Default::default(),
+            alu_ports: Default::default(),
             locked: false,
             xml_attrs: Default::default(),
             imm_zero: false,
@@ -1882,10 +1885,14 @@ mod tests {
     fn unmatched_iform_emits_unknown_instr_zero_port_uop() {
         let pack = DataPack {
             schema_version: uica_data::DATAPACK_SCHEMA_VERSION.to_string(),
+            all_ports: Default::default(),
+            alu_ports: Default::default(),
             instructions: vec![InstructionRecord {
                 arch: "HSW".to_string(),
                 iform: "MULX_GPR64q_GPR64q_GPR64q".to_string(),
                 string: "MULX (R64, R64, R64)".to_string(),
+                all_ports: Default::default(),
+                alu_ports: Default::default(),
                 locked: false,
                 xml_attrs: Default::default(),
                 imm_zero: false,
@@ -2000,6 +2007,8 @@ mod tests {
             arch: "HSW".to_string(),
             iform: "SUB_GPRv_GPRv_29".to_string(),
             string: "SUB_29 (R64, R64)".to_string(),
+            all_ports: Default::default(),
+            alu_ports: Default::default(),
             locked: false,
             xml_attrs: Default::default(),
             imm_zero: false,
@@ -2061,6 +2070,8 @@ mod tests {
             arch: "HSW".to_string(),
             iform: "PCMPGTB_XMMdq_XMMdq".to_string(),
             string: "PCMPGTB (XMM, XMM)".to_string(),
+            all_ports: Default::default(),
+            alu_ports: Default::default(),
             locked: false,
             xml_attrs: Default::default(),
             imm_zero: false,
@@ -2136,6 +2147,8 @@ mod tests {
             arch: "ICL".to_string(),
             iform: "KANDW_MASKmskw_MASKmskw_MASKmskw_AVX512".to_string(),
             string: "KANDW (K, K, K)".to_string(),
+            all_ports: Default::default(),
+            alu_ports: Default::default(),
             locked: false,
             xml_attrs: Default::default(),
             imm_zero: false,
@@ -2187,6 +2200,8 @@ mod tests {
         };
         let pack = DataPack {
             schema_version: uica_data::DATAPACK_SCHEMA_VERSION.to_string(),
+            all_ports: Default::default(),
+            alu_ports: Default::default(),
             instructions: vec![record],
         };
         let index = DataPackIndex::new(pack.clone());
@@ -2266,6 +2281,8 @@ mod tests {
             arch: "HSW".to_string(),
             iform: "SHL_GPRv_CL_D3r4".to_string(),
             string: "SHL (R64, CL)".to_string(),
+            all_ports: Default::default(),
+            alu_ports: Default::default(),
             locked: false,
             xml_attrs: Default::default(),
             imm_zero: false,

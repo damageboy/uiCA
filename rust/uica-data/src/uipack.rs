@@ -16,10 +16,10 @@ use crate::{
 };
 
 pub const UIPACK_MAGIC: [u8; 8] = *b"UIPACK\0\0";
-pub const UIPACK_VERSION: u16 = 7;
+pub const UIPACK_VERSION: u16 = 8;
 pub const UIPACK_CHECKSUM_FNV1A64: u16 = 1;
 
-const UIPACK_HEADER_SIZE: usize = 64;
+const UIPACK_HEADER_SIZE: usize = 72;
 const UIPACK_RECORD_SIZE: usize = 96;
 const UIPACK_PORT_ENTRY_SIZE: usize = 8;
 const UIPACK_ALIGNMENT: usize = 8;
@@ -43,6 +43,8 @@ pub struct UiPackHeader {
     pub ports_offset: u32,
     pub ports_count: u32,
     pub schema_offset: u32,
+    pub all_ports_offset: u32,
+    pub alu_ports_offset: u32,
 }
 
 #[derive(Debug)]
@@ -106,6 +108,8 @@ pub struct UiPackView<'a> {
     strings: &'a [u8],
     arch: &'a str,
     schema_version: &'a str,
+    all_ports_raw: &'a str,
+    alu_ports_raw: &'a str,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -193,6 +197,8 @@ impl<'a> UiPackView<'a> {
         let strings = &bytes[strings_start..strings_end];
         let arch = read_string_ref(strings, header.arch_offset)?;
         let schema_version = read_string_ref(strings, header.schema_offset)?;
+        let all_ports_raw = read_string_ref(strings, header.all_ports_offset)?;
+        let alu_ports_raw = read_string_ref(strings, header.alu_ports_offset)?;
 
         Ok(Self {
             bytes,
@@ -200,6 +206,8 @@ impl<'a> UiPackView<'a> {
             strings,
             arch,
             schema_version,
+            all_ports_raw,
+            alu_ports_raw,
         })
     }
 
@@ -217,6 +225,14 @@ impl<'a> UiPackView<'a> {
 
     pub fn schema_version(&self) -> &'a str {
         self.schema_version
+    }
+
+    pub fn all_ports(&self) -> Vec<String> {
+        split_port_list(self.all_ports_raw)
+    }
+
+    pub fn alu_ports(&self) -> Vec<String> {
+        split_port_list(self.alu_ports_raw)
     }
 
     pub fn record_count(&self) -> u32 {
@@ -254,6 +270,9 @@ impl<'a> UiPackView<'a> {
     pub fn to_data_pack(&'a self) -> Result<DataPack, UiPackError> {
         let mut instructions = Vec::with_capacity(usize::try_from(self.record_count()).unwrap());
 
+        let all_ports = self.all_ports();
+        let alu_ports = self.alu_ports();
+
         for index in 0..self.record_count() {
             let record = self.record(index)?;
             let mut ports = BTreeMap::new();
@@ -270,6 +289,8 @@ impl<'a> UiPackView<'a> {
                 arch: self.arch().to_string(),
                 iform: record.iform().to_string(),
                 string: record.string().to_string(),
+                all_ports: all_ports.clone(),
+                alu_ports: alu_ports.clone(),
                 locked: record.locked(),
                 xml_attrs: record.xml_attrs()?,
                 imm_zero: record.imm_zero(),
@@ -302,6 +323,8 @@ impl<'a> UiPackView<'a> {
 
         Ok(DataPack {
             schema_version: self.schema_version().to_string(),
+            all_ports,
+            alu_ports,
             instructions,
         })
     }
@@ -562,6 +585,8 @@ pub fn encode_uipack(pack: &DataPack, arch: &str) -> Result<Vec<u8>, UiPackError
     let mut strings = StringTable::new();
     let schema_offset = strings.intern(&pack.schema_version)?;
     let arch_offset = strings.intern(arch)?;
+    let all_ports_offset = strings.intern(&pack.all_ports.join(","))?;
+    let alu_ports_offset = strings.intern(&pack.alu_ports.join(","))?;
 
     let mut raw_records = Vec::with_capacity(pack.instructions.len());
     let mut port_entries = Vec::new();
@@ -721,6 +746,8 @@ pub fn encode_uipack(pack: &DataPack, arch: &str) -> Result<Vec<u8>, UiPackError
         ports_offset,
         ports_count,
         schema_offset,
+        all_ports_offset,
+        alu_ports_offset,
     };
 
     let mut bytes = vec![0_u8; usize::try_from(file_len).unwrap()];
@@ -773,6 +800,8 @@ pub fn read_uipack_header(bytes: &[u8]) -> Result<UiPackHeader, UiPackError> {
         ports_offset: read_u32(bytes, 52),
         ports_count: read_u32(bytes, 56),
         schema_offset: read_u32(bytes, 60),
+        all_ports_offset: read_u32(bytes, 64),
+        alu_ports_offset: read_u32(bytes, 68),
     };
 
     if header.version != UIPACK_VERSION {
@@ -1046,6 +1075,16 @@ fn write_header(dst: &mut [u8], header: &UiPackHeader) {
     dst[52..56].copy_from_slice(&header.ports_offset.to_le_bytes());
     dst[56..60].copy_from_slice(&header.ports_count.to_le_bytes());
     dst[60..64].copy_from_slice(&header.schema_offset.to_le_bytes());
+    dst[64..68].copy_from_slice(&header.all_ports_offset.to_le_bytes());
+    dst[68..72].copy_from_slice(&header.alu_ports_offset.to_le_bytes());
+}
+
+fn split_port_list(raw: &str) -> Vec<String> {
+    if raw.is_empty() {
+        Vec::new()
+    } else {
+        raw.split(',').map(str::to_string).collect()
+    }
 }
 
 fn record_size_for_version(version: u16) -> Result<usize, UiPackError> {

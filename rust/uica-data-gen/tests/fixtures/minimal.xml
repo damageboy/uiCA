@@ -1,5 +1,17 @@
 <root>
   <instruction
+    iform="AND_GPRv_IMMb"
+    string="AND"
+    category="BINARY"
+  >
+    <architecture name="HSW">
+      <measurement uops="1" ports="1*p0156" />
+    </architecture>
+    <architecture name="SKL">
+      <measurement uops="1" ports="1*p0156" />
+    </architecture>
+  </instruction>
+  <instruction
     iform="ADD_GPRv_GPRv"
     string="ADD"
     category="BINARY"

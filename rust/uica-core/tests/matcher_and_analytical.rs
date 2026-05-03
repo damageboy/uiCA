@@ -494,6 +494,8 @@ fn record_with_immzero(iform: &str, string: &str, imm_zero: bool) -> Instruction
         arch: "HSW".to_string(),
         iform: iform.to_string(),
         string: string.to_string(),
+        all_ports: Default::default(),
+        alu_ports: Default::default(),
         locked: false,
         xml_attrs: Default::default(),
         imm_zero,

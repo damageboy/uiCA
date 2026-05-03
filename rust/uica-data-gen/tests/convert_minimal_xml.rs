@@ -27,7 +27,7 @@ fn converts_minimal_xml_to_manifest_and_per_arch_uipacks() {
     let skl_entry = manifest_from_disk.architectures.get("SKL").unwrap();
     assert_eq!(skl_entry.path, "arch/SKL.uipack");
     assert_eq!(skl_entry.checksum_kind, "fnv1a64");
-    assert_eq!(skl_entry.record_count, 1);
+    assert_eq!(skl_entry.record_count, 2);
 
     let skl_path = out_dir.join(&skl_entry.path);
     let skl_bytes = std::fs::read(&skl_path).unwrap();
@@ -37,64 +37,53 @@ fn converts_minimal_xml_to_manifest_and_per_arch_uipacks() {
     assert_eq!(skl_entry.checksum, format!("{:016x}", skl_header.checksum));
 
     let skl_pack = uica_data::load_uipack(&skl_path).unwrap();
-    assert_eq!(skl_pack.instructions.len(), 1);
-    assert_eq!(skl_pack.instructions[0].arch, "SKL");
-    assert_eq!(skl_pack.instructions[0].iform, "ADD_GPRv_GPRv");
-    assert_eq!(skl_pack.instructions[0].perf.uops, 1);
-    assert_eq!(skl_pack.instructions[0].perf.retire_slots, 1);
-    assert_eq!(skl_pack.instructions[0].perf.uops_mite, 1);
-    assert_eq!(skl_pack.instructions[0].perf.uops_ms, 0);
-    assert_eq!(skl_pack.instructions[0].perf.tp, None);
-    assert_eq!(skl_pack.instructions[0].perf.ports.get("0156"), Some(&1));
-    assert!(!skl_pack.instructions[0].perf.can_be_used_by_lsd);
-    assert!(
-        skl_pack.instructions[0]
-            .perf
-            .cannot_be_in_dsb_due_to_jcc_erratum
-    );
-    assert!(skl_pack.instructions[0].perf.no_micro_fusion);
-    assert!(skl_pack.instructions[0].perf.no_macro_fusion);
+    assert_eq!(skl_pack.instructions.len(), 2);
+    assert_eq!(skl_pack.all_ports, vec!["0", "1", "5", "6"]);
+    assert_eq!(skl_pack.alu_ports, vec!["0", "1", "5", "6"]);
+    let add = skl_pack
+        .instructions
+        .iter()
+        .find(|record| record.iform == "ADD_GPRv_GPRv")
+        .expect("ADD row");
+    assert_eq!(add.arch, "SKL");
+    assert_eq!(add.perf.uops, 1);
+    assert_eq!(add.perf.retire_slots, 1);
+    assert_eq!(add.perf.uops_mite, 1);
+    assert_eq!(add.perf.uops_ms, 0);
+    assert_eq!(add.perf.tp, None);
+    assert_eq!(add.perf.ports.get("0156"), Some(&1));
+    assert!(!add.perf.can_be_used_by_lsd);
+    assert!(add.perf.cannot_be_in_dsb_due_to_jcc_erratum);
+    assert!(add.perf.no_micro_fusion);
+    assert!(add.perf.no_macro_fusion);
+    assert_eq!(add.xml_attrs.get("eosz"), Some(&"3".to_string()));
+    assert_eq!(add.xml_attrs.get("rm"), Some(&"3".to_string()));
     assert_eq!(
-        skl_pack.instructions[0].xml_attrs.get("eosz"),
-        Some(&"3".to_string())
-    );
-    assert_eq!(
-        skl_pack.instructions[0].xml_attrs.get("rm"),
-        Some(&"3".to_string())
-    );
-    assert_eq!(
-        skl_pack.instructions[0].perf.macro_fusible_with,
+        add.perf.macro_fusible_with,
         vec!["JO (Rel8)".to_string(), "JZ (Rel8)".to_string()]
     );
-    assert_eq!(skl_pack.instructions[0].perf.operands.len(), 4);
-    assert_eq!(skl_pack.instructions[0].perf.operands[0].name, "REG0");
-    assert_eq!(skl_pack.instructions[0].perf.operands[2].name, "MEM0");
+    assert_eq!(add.perf.operands.len(), 4);
+    assert_eq!(add.perf.operands[0].name, "REG0");
+    assert_eq!(add.perf.operands[2].name, "MEM0");
     assert_eq!(
-        skl_pack.instructions[0].perf.operands[2]
-            .mem_operand_role
-            .as_deref(),
+        add.perf.operands[2].mem_operand_role.as_deref(),
         Some("read")
     );
-    assert_eq!(skl_pack.instructions[0].perf.operands[3].name, "AGEN0");
-    assert!(skl_pack.instructions[0].perf.operands[3].is_agen);
+    assert_eq!(add.perf.operands[3].name, "AGEN0");
+    assert!(add.perf.operands[3].is_agen);
     assert_eq!(
-        skl_pack.instructions[0].perf.operands[3]
-            .mem_operand_role
-            .as_deref(),
+        add.perf.operands[3].mem_operand_role.as_deref(),
         Some("agen")
     );
-    assert_eq!(skl_pack.instructions[0].perf.latencies.len(), 1);
-    assert_eq!(skl_pack.instructions[0].perf.latencies[0].start_op, "REG1");
-    assert_eq!(skl_pack.instructions[0].perf.latencies[0].target_op, "REG0");
-    assert_eq!(
-        skl_pack.instructions[0].perf.latencies[0].cycles_same_reg,
-        Some(0)
-    );
+    assert_eq!(add.perf.latencies.len(), 1);
+    assert_eq!(add.perf.latencies[0].start_op, "REG1");
+    assert_eq!(add.perf.latencies[0].target_op, "REG0");
+    assert_eq!(add.perf.latencies[0].cycles_same_reg, Some(0));
 
     let hsw_entry = manifest_from_disk.architectures.get("HSW").unwrap();
     assert_eq!(hsw_entry.path, "arch/HSW.uipack");
     let hsw_pack = uica_data::load_uipack(out_dir.join(&hsw_entry.path)).unwrap();
-    assert_eq!(hsw_pack.instructions.len(), 1);
+    assert_eq!(hsw_pack.instructions.len(), 2);
     assert_eq!(hsw_pack.instructions[0].arch, "HSW");
     assert_eq!(hsw_pack.instructions[0].perf.uops, 2);
     assert_eq!(hsw_pack.instructions[0].perf.tp, None);

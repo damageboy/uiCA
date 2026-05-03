@@ -22,12 +22,13 @@
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
-use crate::micro_arch::{all_ports, MicroArchConfig};
+use crate::micro_arch::MicroArchConfig;
 
 use super::uop_storage::UopStorage;
 
 pub struct Scheduler {
     pub arch: MicroArchConfig,
+    pub all_ports: Vec<String>,
     pub port_usage: HashMap<String, u32>,
     pub port_usage_at_start_of_cycle: BTreeMap<u32, HashMap<String, u32>>,
     pub next_p23_port: String,
@@ -49,13 +50,12 @@ pub struct Scheduler {
 }
 
 impl Scheduler {
-    pub fn new(arch: MicroArchConfig) -> Self {
-        let ports = all_ports(&arch.name);
+    pub fn new(arch: MicroArchConfig, all_ports: Vec<String>) -> Self {
         let mut port_usage = HashMap::new();
         let mut ready_queue = HashMap::new();
-        for &port in ports {
-            port_usage.insert(port.to_string(), 0);
-            ready_queue.insert(port.to_string(), Vec::new());
+        for port in &all_ports {
+            port_usage.insert(port.clone(), 0);
+            ready_queue.insert(port.clone(), Vec::new());
         }
 
         let mut blocked_resources = HashMap::new();
@@ -63,6 +63,7 @@ impl Scheduler {
 
         Self {
             arch,
+            all_ports,
             port_usage,
             port_usage_at_start_of_cycle: BTreeMap::new(),
             next_p23_port: "2".to_string(),
@@ -180,14 +181,14 @@ impl Scheduler {
                 possible_ports[0].clone()
             } else if self.arch.simple_port_assignment {
                 possible_ports[0].clone()
-            } else if all_ports(&self.arch.name).len() == 10 {
+            } else if self.all_ports.len() == 10 {
                 self.select_port_10port_style(
                     clock,
                     issue_slot,
                     &possible_ports,
                     &mut port_combinations,
                 )
-            } else if all_ports(&self.arch.name).len() == 8 {
+            } else if self.all_ports.len() == 8 {
                 self.select_port_hsw_style(clock, issue_slot, &possible_ports)
             } else {
                 self.select_port_python_style(clock, issue_slot, &possible_ports)
@@ -471,10 +472,7 @@ impl Scheduler {
     }
 
     fn dispatch_uops(&mut self, clock: u32, storage: &mut UopStorage) {
-        let mut applicable_ports: Vec<String> = all_ports(&self.arch.name)
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let mut applicable_ports: Vec<String> = self.all_ports.clone();
 
         if applicable_ports.iter().any(|p| p == "4") && applicable_ports.iter().any(|p| p == "9") {
             if let (Some(uop4), Some(uop9)) =

@@ -11,10 +11,14 @@ use uica_data::{
 fn sample_pack(arch: &str) -> DataPack {
     DataPack {
         schema_version: DATAPACK_SCHEMA_VERSION.to_string(),
+        all_ports: Default::default(),
+        alu_ports: Default::default(),
         instructions: vec![InstructionRecord {
             arch: arch.to_string(),
             iform: "ADD_GPRv_GPRv".to_string(),
             string: "ADD".to_string(),
+            all_ports: Default::default(),
+            alu_ports: Default::default(),
             locked: false,
             xml_attrs: Default::default(),
             imm_zero: false,

@@ -408,7 +408,7 @@ impl FrontEnd {
         let mut frontend = Self {
             renamer: Renamer::new_with_init_policy(arch.clone(), init_policy),
             reorder_buffer: ReorderBuffer::new(arch.clone()),
-            scheduler: Scheduler::new(arch.clone()),
+            scheduler: Scheduler::new(arch.clone(), pack.all_ports.clone()),
             decoder: Decoder::new(arch.clone(), instruction_queue.clone()),
             predecoder: PreDecoder::new(arch.clone(), instruction_queue),
             dsb: Dsb::new(arch.clone()),
@@ -1202,10 +1202,7 @@ impl FrontEnd {
         let mut latencies_by_operand = std::collections::BTreeMap::new();
         latencies_by_operand.insert(OperandKey::Reg("RSP".to_string()), 1);
         let prop = UopProperties {
-            possible_ports: crate::micro_arch::alu_ports(self.arch.name)
-                .iter()
-                .map(|p| (*p).to_string())
-                .collect(),
+            possible_ports: self.pack.alu_ports.clone(),
             div_cycles: 0,
             is_load_uop: false,
             is_store_address_uop: false,

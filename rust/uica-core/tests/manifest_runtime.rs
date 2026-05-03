@@ -98,10 +98,14 @@ fn sample_pack(
 
     DataPack {
         schema_version: DATAPACK_SCHEMA_VERSION.to_string(),
+        all_ports: Default::default(),
+        alu_ports: Default::default(),
         instructions: vec![InstructionRecord {
             arch: arch.to_string(),
             iform,
             string: string.to_string(),
+            all_ports: Default::default(),
+            alu_ports: Default::default(),
             locked: false,
             xml_attrs: Default::default(),
             imm_zero: false,

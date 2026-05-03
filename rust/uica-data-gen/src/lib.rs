@@ -121,6 +121,8 @@ fn parse_xml_to_packs(xml_path: &Path) -> Result<BTreeMap<String, DataPack>> {
                 arch: arch_name.to_string(),
                 iform: iform.to_string(),
                 string: string.to_string(),
+                all_ports: Default::default(),
+                alu_ports: Default::default(),
                 locked: parse_bool_attr(instruction, &["locked"]),
                 imm_zero: xml_attrs
                     .get("immzero")
@@ -147,13 +149,44 @@ fn parse_xml_to_packs(xml_path: &Path) -> Result<BTreeMap<String, DataPack>> {
             .entry(arch)
             .or_insert_with(|| DataPack {
                 schema_version: DATAPACK_SCHEMA_VERSION.to_string(),
+                all_ports: Default::default(),
+                alu_ports: Default::default(),
                 instructions: Vec::new(),
             })
             .instructions
             .push(record);
     }
 
+    for pack in packs_by_arch.values_mut() {
+        populate_python_port_lists(pack);
+    }
+
     Ok(packs_by_arch)
+}
+
+fn populate_python_port_lists(pack: &mut DataPack) {
+    let mut all_ports = std::collections::BTreeSet::new();
+    for record in &pack.instructions {
+        for port_key in record.perf.ports.keys() {
+            for port in port_key.chars() {
+                all_ports.insert(port.to_string());
+            }
+        }
+    }
+    pack.all_ports = all_ports.into_iter().collect();
+
+    pack.alu_ports = pack
+        .instructions
+        .iter()
+        .find(|record| record.iform == "AND_GPRv_IMMb")
+        .and_then(|record| record.perf.ports.keys().next())
+        .map(|ports| ports.chars().map(|port| port.to_string()).collect())
+        .unwrap_or_default();
+
+    for record in &mut pack.instructions {
+        record.all_ports = pack.all_ports.clone();
+        record.alu_ports = pack.alu_ports.clone();
+    }
 }
 
 fn checksum_kind_name(kind: u16) -> &'static str {

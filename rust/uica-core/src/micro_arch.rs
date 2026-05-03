@@ -690,30 +690,3 @@ pub fn get_micro_arch(name: &str) -> Option<MicroArchConfig> {
         _ => None,
     }
 }
-
-/// Port tables mirroring instrData/uArchInfo.py allPorts.
-pub fn all_ports(arch_name: &str) -> &'static [&'static str] {
-    if arch_name.starts_with("CLX") {
-        return &["0", "1", "2", "3", "4", "5", "6", "7"];
-    }
-    match arch_name {
-        "SNB" | "IVB" => &["0", "1", "2", "3", "4", "5"],
-        "HSW" | "BDW" | "SKL" | "SKX" | "KBL" | "CFL" => &["0", "1", "2", "3", "4", "5", "6", "7"],
-        "ICL" | "TGL" | "RKL" => &["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
-        _ => &[],
-    }
-}
-
-/// ALU port tables mirroring instrData/uArchInfo.py ALUPorts.
-pub fn alu_ports(arch_name: &str) -> &'static [&'static str] {
-    if arch_name.starts_with("CLX") {
-        return &["0", "1", "5", "6"];
-    }
-    match arch_name {
-        "SNB" | "IVB" => &["0", "1", "5"],
-        "HSW" | "BDW" | "SKL" | "SKX" | "KBL" | "CFL" | "ICL" | "TGL" | "RKL" => {
-            &["0", "1", "5", "6"]
-        }
-        _ => &[],
-    }
-}

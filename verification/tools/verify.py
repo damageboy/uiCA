@@ -11,13 +11,14 @@ if __package__ in (None, ""):
 
 from verification.tools.canonicalize import canonicalize_result
 from verification.tools.common import (
-    assemble_case_snippet,
     case_manifest_path,
     get_git_commit_short,
     load_case_manifest,
     load_json,
     load_profile,
+    prepare_case_input,
     run_python_uica,
+    run_rust_uica,
 )
 
 
@@ -189,6 +190,50 @@ def collect_diff_lines(
     ]
 
 
+def _path_value(data: dict[str, Any], path: str):
+    cur: Any = data
+    for part in path.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+
+def compare_summary_only(
+    golden: dict[str, Any], candidate: dict[str, Any]
+) -> list[str]:
+    paths = [
+        "invocation.arch",
+        "invocation.alignmentOffset",
+        "invocation.initPolicy",
+        "invocation.noMicroFusion",
+        "invocation.noMacroFusion",
+        "invocation.simpleFrontEnd",
+        "invocation.minIterations",
+        "invocation.minCycles",
+        "summary.throughput_cycles_per_iteration",
+        "summary.iterations_simulated",
+        "summary.cycles_simulated",
+        "summary.mode",
+        "summary.bottlenecks_predicted",
+        "summary.limits",
+        "parameters.uArchName",
+        "parameters.IQWidth",
+        "parameters.IDQWidth",
+        "parameters.issueWidth",
+        "parameters.RBWidth",
+        "parameters.RSWidth",
+        "parameters.mode",
+    ]
+
+    mismatches = []
+    for path in paths:
+        if _path_value(golden, path) != _path_value(candidate, path):
+            mismatches.append(path)
+
+    return mismatches
+
+
 def compare_json_files(golden_path: Path, candidate_path: Path) -> str | None:
     golden = canonicalize_result(load_json(golden_path))
     candidate = canonicalize_result(load_json(candidate_path))
@@ -205,11 +250,8 @@ def verify_case_arch(
     golden_root: Path,
     golden_tag: str,
 ) -> tuple[bool, str | None, Path, Path]:
-    if engine == "rust":
-        raise NotImplementedError("rust engine verify not implemented yet")
-
-    if rust_bin is not None:
-        _ = rust_bin
+    if engine == "rust" and not rust_bin:
+        raise ValueError("pass --rust-bin when --engine rust")
 
     golden_path = golden_root / engine / golden_tag / case_id / f"{arch}.json"
     if not golden_path.exists():
@@ -217,15 +259,30 @@ def verify_case_arch(
 
     with tempfile.TemporaryDirectory() as td:
         work = Path(td)
-        obj = assemble_case_snippet(case_id, work)
+        obj, is_raw = prepare_case_input(case_id, case_manifest, work)
         candidate_path = work / "candidate.json"
-        run_python_uica(
-            obj,
-            candidate_path,
-            arch,
-            case_manifest.get("run", {}),
-            uica_commit=golden_tag,
-        )
+        if engine == "rust":
+            rust_bin_path = rust_bin
+            if rust_bin_path is None:
+                raise ValueError("pass --rust-bin when --engine rust")
+            run_rust_uica(
+                rust_bin_path,
+                obj,
+                candidate_path,
+                arch,
+                case_manifest.get("run", {}),
+                uica_commit=golden_tag,
+                raw=is_raw,
+            )
+        else:
+            run_python_uica(
+                obj,
+                candidate_path,
+                arch,
+                case_manifest.get("run", {}),
+                uica_commit=golden_tag,
+                raw=is_raw,
+            )
 
         mismatch = compare_json_files(golden_path, candidate_path)
         if mismatch:
@@ -317,6 +374,9 @@ def main(argv=None) -> int:
             print(f"Verified {mode} {target}: {len(case_ids)} cases resolved")
             return 0
 
+        if args.engine == "rust" and not args.rust_bin:
+            parser.error("pass --rust-bin when --engine rust")
+
         if args.jobs < 1:
             raise ValueError("--jobs must be >= 1")
 
@@ -382,7 +442,7 @@ def main(argv=None) -> int:
 
     except ValueError as exc:
         parser.error(str(exc))
-    except (FileNotFoundError, RuntimeError, NotImplementedError) as exc:
+    except (FileNotFoundError, RuntimeError) as exc:
         print(f"verify failed: {exc}", file=sys.stderr)
         return 1
 

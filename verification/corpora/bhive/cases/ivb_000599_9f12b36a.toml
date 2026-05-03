@@ -1,0 +1,20 @@
+id = "bhive/ivb_000599_9f12b36a"
+description = "BHive IVB raw basic block sample"
+tags = ["bhive", "raw", "ivb"]
+
+[input]
+format = "hex"
+hex = "488b8424c00000004c8bb424b80000004c8dbc24fc000000488d9c24f80000004531edc78424a4000000000000004889842488000000488b8424c8000000488944247889d04429e04883c0014889842490000000488b8424b00000004889442460488b8424a80000004889c54889442458488d8424f4000000488944247089d00f1f80000000004429e0488b74245883c0014c89ffc5fa116c2420898424fc00000031c0"
+source = "https://raw.githubusercontent.com/ithemal/bhive/master/benchmark/throughput/ivb.csv"
+measuredCyclesPer100Iterations = 1024.0
+measuredCyclesPerIteration = 10.24
+
+[run]
+arches = ["IVB"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

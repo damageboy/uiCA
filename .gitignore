@@ -137,3 +137,9 @@ xed.exe
 # Local worktrees
 .worktrees/
 
+tests/fixtures/*.o
+
+# Generated Rust datapacks
+rust/uica-data/generated/
+
+**/.pi-lens

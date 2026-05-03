@@ -1,0 +1,13 @@
+[package]
+name = "uica-wasm"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde_json = "1"
+uica-core = { path = "../uica-core" }
+uica-model = { path = "../uica-model" }
+wasm-bindgen = "0.2"

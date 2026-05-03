@@ -1,0 +1,13 @@
+[workspace]
+members = [
+  "rust/uica-model",
+  "rust/uica-data",
+  "rust/uica-data-gen",
+  "rust/uica-xed-sys",
+  "rust/uica-xed",
+  "rust/uica-decoder",
+  "rust/uica-core",
+  "rust/uica-cli",
+  "rust/uica-wasm",
+]
+resolver = "2"

@@ -1,6 +1,7 @@
 # Verification suite
 
 Pipeline overview (modes, Rust-parity usage, baseline policy):
+
 - [`docs/verification-pipeline.md`](../docs/verification-pipeline.md)
 
 ## Case structure
@@ -13,6 +14,10 @@ Current curated profile sizes:
 - `curated12`: 12 curated sentinel cases
 - `curated24`: 24 curated sentinel cases
 - `curated48`: 48 curated sentinel cases (includes AVX2 + AVX512 sampling)
+- `bhive_smoke`: 50 sampled raw-hex cases from BHive SKL throughput data
+- `bhive_1k`: 1000 sampled raw-hex cases from BHive SKL throughput data
+- `bhive_hsw_1k`: 1000 sampled raw-hex cases from BHive HSW throughput data
+- `bhive_ivb_1k`: 1000 sampled raw-hex cases from BHive IVB throughput data
 
 Example case directories:
 
@@ -20,10 +25,13 @@ Example case directories:
 - `verification/cases/curated/fusion_jcc_001/`
 - `verification/cases/curated/vector256_001/`
 
-Each case directory contains:
+Each curated case directory contains:
 
 - `case.toml` — case id, description, tags, run parameters, default arch list
 - `snippet.s` — assembly snippet used for capture and verification
+
+Corpus cases may live as TOML-only manifests under `verification/corpora/<corpus>/cases/`.
+BHive cases use `[input] format = "hex"`; capture/verify writes temporary raw bytes and runs uiCA with `-raw` / `--raw`.
 
 Case id matches directory path below `verification/cases/`.
 Example: `curated/add_loop_001` maps to `verification/cases/curated/add_loop_001/`.
@@ -76,6 +84,36 @@ CLI help:
 python3 verification/tools/capture.py --help
 ```
 
+## BHive corpus import
+
+Import a deterministic 50-case SKL smoke sample from upstream BHive:
+
+```bash
+python3 verification/tools/import_bhive.py --arch SKL --limit 50 --profile bhive_smoke
+```
+
+Generate larger pinned profiles:
+
+```bash
+python3 verification/tools/import_bhive.py --arch SKL --limit 1000 --profile bhive_1k
+python3 verification/tools/import_bhive.py --arch HSW --limit 1000 --profile bhive_hsw_1k
+python3 verification/tools/import_bhive.py --arch IVB --limit 1000 --profile bhive_ivb_1k
+```
+
+Use a local CSV instead of downloading:
+
+```bash
+python3 verification/tools/import_bhive.py --arch SKL --source /path/to/skl.csv --limit 1000 --profile bhive_1k
+```
+
+BHive throughput CSV values are `cycles_per_100_iterations`; imported manifests also store `measuredCyclesPerIteration` for evaluation metadata.
+
+Resolve the generated profile:
+
+```bash
+python3 verification/tools/verify.py --profile bhive_smoke --engine python --resolve-only
+```
+
 ## Verify goldens
 
 By default, verify executes engine runs and compares against captured goldens:
@@ -114,6 +152,50 @@ CLI help:
 ```bash
 python3 verification/tools/verify.py --help
 ```
+
+## Rust CLI usage
+
+Build Rust CLI:
+
+```bash
+cargo build -p uica-cli
+```
+
+Run Rust CLI on assembled object:
+
+```bash
+target/debug/uica-cli /tmp/uica-verification/add_loop_001/snippet.o --arch SKL --tp-only
+target/debug/uica-cli /tmp/uica-verification/add_loop_001/snippet.o --arch SKL --json /tmp/uica-verification/add_loop_001/SKL.rust.json --tp-only
+```
+
+## Rust parity commands
+
+Compare Rust engine against frozen Python baseline tag.
+Current verifier resolves goldens under engine-scoped roots, so mirror approved Python baseline tag under `rust/<tag>/` before running parity check.
+
+```bash
+python3 verification/tools/verify.py --profile quick --engine rust --rust-bin target/debug/uica-cli --golden-root verification/golden --golden-tag py-baseline-001
+```
+
+Focused Rust parity debug:
+
+```bash
+python3 verification/tools/verify.py --case curated/add_loop_001 --arch SKL --engine rust --rust-bin target/debug/uica-cli --golden-root verification/golden --golden-tag py-baseline-001 --dump-diff /tmp/uica-verification/add_loop_001.rust.diff
+```
+
+## CI parity gate commands
+
+Minimal local replay of CI gate:
+
+```bash
+TMP_GOLDEN_DIR=$(mktemp -d)
+python3 verification/tools/capture.py --profile quick --engine python --golden-root "$TMP_GOLDEN_DIR" --golden-tag py-ci-baseline
+python3 verification/tools/capture.py --profile quick --engine rust --rust-bin target/debug/uica-cli --golden-root "$TMP_GOLDEN_DIR" --golden-tag rust-ci-smoke
+python3 verification/tools/verify.py --profile quick --engine rust --rust-bin target/debug/uica-cli --golden-root "$TMP_GOLDEN_DIR" --golden-tag rust-ci-smoke
+./scripts/build-web.sh
+```
+
+`./scripts/build-web.sh` requires `wasm-pack` and writes bundle to `dist/`.
 
 ## Golden directory conventions
 

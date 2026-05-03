@@ -1,0 +1,16 @@
+repos:
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt (workspace)
+        entry: cargo fmt --all -- --check
+        language: system
+        pass_filenames: false
+        files: ^(rust/|Cargo\.toml|Cargo\.lock)
+
+      - id: cargo-clippy
+        name: cargo clippy (workspace)
+        entry: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        language: system
+        pass_filenames: false
+        files: ^(rust/|Cargo\.toml|Cargo\.lock)

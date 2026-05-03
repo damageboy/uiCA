@@ -1,0 +1,8 @@
+[package]
+name = "uica-xed"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+uica-xed-sys = { path = "../uica-xed-sys" }

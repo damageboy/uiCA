@@ -1,0 +1,53 @@
+<root>
+  <instruction
+    iform="AND_GPRv_IMMb"
+    string="AND"
+    category="BINARY"
+  >
+    <architecture name="HSW">
+      <measurement uops="1" ports="1*p0156" />
+    </architecture>
+    <architecture name="SKL">
+      <measurement uops="1" ports="1*p0156" />
+    </architecture>
+  </instruction>
+  <instruction
+    iform="ADD_GPRv_GPRv"
+    string="ADD"
+    category="BINARY"
+    canBeUsedByLSD="false"
+    cannotBeInDSBDueToJCCErratum="true"
+    noMicroFusion="true"
+    noMacroFusion="1"
+    eosz="3"
+    rm="3"
+  >
+    <operand idx="1" name="REG0" type="reg" r="1" w="1" />
+    <operand idx="2" name="REG1" type="reg" r="1" />
+    <operand idx="3" name="MEM0" type="mem" r="1" base="RAX" index="RCX" scale="2" disp="8" />
+    <operand idx="4" name="AGEN0" type="mem" r="1" base="RBX" index="RDX" scale="1" disp="0" />
+    <architecture name="HSW">
+      <measurement
+        uops="2"
+        uops_retire_slots="2"
+        uops_MITE="2"
+        uops_MS="0"
+        TP_loop="0.5"
+        ports="2*p01"
+      />
+    </architecture>
+    <architecture name="SKL">
+      <measurement
+        uops="1"
+        uops_retire_slots="1"
+        uops_MITE="1"
+        uops_MS="0"
+        TP_unrolled="1"
+        ports="1*p0156"
+        macro_fusible="JZ (Rel8);JO (Rel8)"
+      >
+        <latency start_op="2" target_op="1" cycles="1" cycles_same_reg="0" />
+      </measurement>
+    </architecture>
+  </instruction>
+</root>

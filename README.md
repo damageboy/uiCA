@@ -65,6 +65,21 @@ Quick entry points:
     python3 verification/tools/capture.py --help
     python3 verification/tools/verify.py --help
 
+Rust CLI + parity quickstart:
+
+    cargo build -p uica-cli
+    target/debug/uica-cli test.o --arch SKL --tp-only
+    target/debug/uica-cli test.o --arch SKL --json out.json --tp-only
+    python3 verification/tools/verify.py --profile quick --engine rust --rust-bin target/debug/uica-cli --golden-root verification/golden --golden-tag py-baseline-001
+
+Rust CI gate shape:
+
+    TMP_GOLDEN_DIR=$(mktemp -d)
+    python3 verification/tools/capture.py --profile quick --engine python --golden-root "$TMP_GOLDEN_DIR" --golden-tag py-ci-baseline
+    python3 verification/tools/capture.py --profile quick --engine rust --rust-bin target/debug/uica-cli --golden-root "$TMP_GOLDEN_DIR" --golden-tag rust-ci-smoke
+    python3 verification/tools/verify.py --profile quick --engine rust --rust-bin target/debug/uica-cli --golden-root "$TMP_GOLDEN_DIR" --golden-tag rust-ci-smoke
+    ./scripts/build-web.sh
+
 `capture.py` supports golden capture runs. `verify.py` runs execute+compare by default (with parallel workers), and supports fast manifest-only checks with `--resolve-only`; see verification guide for command matrix.
 
 ## Command-Line Options

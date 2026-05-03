@@ -1,0 +1,14 @@
+[package]
+name = "uica-data"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+memmap2 = "0.9"
+
+[dev-dependencies]
+tempfile = "3"

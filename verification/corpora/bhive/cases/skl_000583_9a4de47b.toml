@@ -1,0 +1,20 @@
+id = "bhive/skl_000583_9a4de47b"
+description = "BHive SKL raw basic block sample"
+tags = ["bhive", "raw", "skl"]
+
+[input]
+format = "hex"
+hex = "4885c948c78424000100000000000048c7842408010000ffffffff48c78424100100000000000048c78424180100000000000048c784242001000000000000"
+source = "https://raw.githubusercontent.com/ithemal/bhive/master/benchmark/throughput/skl.csv"
+measuredCyclesPer100Iterations = 498.0
+measuredCyclesPerIteration = 4.98
+
+[run]
+arches = ["SKL"]
+alignmentOffset = 0
+initPolicy = "diff"
+noMicroFusion = false
+noMacroFusion = false
+simpleFrontEnd = false
+minIterations = 10
+minCycles = 500

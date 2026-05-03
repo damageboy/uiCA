@@ -1,0 +1,35 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "cargo build (debug)",
+			"type": "shell",
+			"command": "cargo build -p uica-cli",
+			"group": "build",
+			"presentation": { "reveal": "silent" },
+			"problemMatcher": "$rustc"
+		},
+		{
+			"label": "cargo build (release)",
+			"type": "shell",
+			"command": "cargo build --release -p uica-cli",
+			"group": "build",
+			"presentation": { "reveal": "silent" },
+			"problemMatcher": "$rustc"
+		},
+		{
+			"label": "cargo test",
+			"type": "shell",
+			"command": "cargo test --release -q",
+			"group": "test",
+			"problemMatcher": "$rustc"
+		},
+		{
+			"label": "assemble fixtures",
+			"type": "shell",
+			"command": "for s in verification/cases/curated/*/snippet.s; do case=$(dirname $s | xargs basename); llvm-mc -filetype=obj -triple=x86_64-pc-linux-gnu $s -o tests/fixtures/${case}.o 2>/dev/null && echo ok: $case || echo skip: $case; done",
+			"group": "build",
+			"presentation": { "reveal": "always" }
+		}
+	]
+}

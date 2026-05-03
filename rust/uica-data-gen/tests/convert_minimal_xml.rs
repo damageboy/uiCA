@@ -160,12 +160,12 @@ fn mirrors_python_cond_branch_port_rewrite() {
     let icl_pack =
         uica_data::load_uipack(out_dir.join(&manifest.architectures["ICL"].path)).unwrap();
 
-    assert_eq!(skl_pack.instructions[0].perf.ports.get("0156"), Some(&1));
+    assert_eq!(skl_pack.instructions[0].perf.ports.get("6"), Some(&1));
     assert_eq!(icl_pack.instructions[0].perf.ports.get("06"), Some(&1));
 }
 
 #[test]
-fn mirrors_python_variant_uops_mite_default_and_locked_row_metadata() {
+fn preserves_locked_row_metadata_without_inventing_variant_uops_mite() {
     let temp = tempdir().unwrap();
     let xml = temp.path().join("instructions.xml");
     let out_dir = temp.path().join("generated");
@@ -193,7 +193,34 @@ fn mirrors_python_variant_uops_mite_default_and_locked_row_metadata() {
 
     assert!(record.locked);
     assert_eq!(same_reg.uops, Some(0));
-    assert_eq!(same_reg.uops_mite, Some(1));
+    assert_eq!(same_reg.uops_mite, None);
+}
+
+#[test]
+fn skips_architectures_not_supported_by_python_microarch_configs() {
+    let temp = tempdir().unwrap();
+    let xml = temp.path().join("instructions.xml");
+    let out_dir = temp.path().join("generated");
+    std::fs::write(
+        &xml,
+        r#"<root>
+  <instruction iform="ADD_GPRv_GPRv" string="ADD" category="BINARY">
+    <architecture name="SKL">
+      <measurement uops="1" ports="1*p0156" />
+    </architecture>
+    <architecture name="ZEN5">
+      <measurement uops="1" ports="1*p0" />
+    </architecture>
+  </instruction>
+</root>
+"#,
+    )
+    .unwrap();
+
+    let manifest = convert_xml_to_pack_dir(&xml, &out_dir).unwrap();
+
+    assert!(manifest.architectures.contains_key("SKL"));
+    assert!(!manifest.architectures.contains_key("ZEN5"));
 }
 
 #[test]
@@ -209,7 +236,7 @@ fn returns_error_for_malformed_xml() {
 }
 
 #[test]
-fn accepts_safe_arch_name_with_plus() {
+fn skips_safe_but_python_unsupported_arch_name_with_plus() {
     let temp = tempdir().unwrap();
     let xml = temp.path().join("instructions.xml");
     let out_dir = temp.path().join("generated");
@@ -228,9 +255,7 @@ fn accepts_safe_arch_name_with_plus() {
 
     let manifest = convert_xml_to_pack_dir(&xml, &out_dir).unwrap();
 
-    let zen_entry = manifest.architectures.get("ZEN+").unwrap();
-    assert_eq!(zen_entry.path, "arch/ZEN+.uipack");
-    assert!(out_dir.join(&zen_entry.path).is_file());
+    assert!(!manifest.architectures.contains_key("ZEN+"));
 }
 
 #[test]

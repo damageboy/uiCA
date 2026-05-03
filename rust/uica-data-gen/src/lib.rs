@@ -105,6 +105,10 @@ fn parse_xml_to_packs(xml_path: &Path) -> Result<BTreeMap<String, DataPack>> {
             let Some(arch_name) = arch.attribute("name") else {
                 continue;
             };
+            validate_arch_name(arch_name)?;
+            if !is_python_supported_arch(arch_name) {
+                continue;
+            }
             let Some(measurement) = arch
                 .children()
                 .find(|node| node.has_tag_name("measurement"))
@@ -157,6 +161,24 @@ fn checksum_kind_name(kind: u16) -> &'static str {
         UIPACK_CHECKSUM_FNV1A64 => "fnv1a64",
         _ => "unknown",
     }
+}
+
+fn is_python_supported_arch(arch_name: &str) -> bool {
+    matches!(
+        arch_name,
+        "BDW"
+            | "CFL"
+            | "CLX"
+            | "HSW"
+            | "ICL"
+            | "IVB"
+            | "KBL"
+            | "RKL"
+            | "SKL"
+            | "SKX"
+            | "SNB"
+            | "TGL"
+    )
 }
 
 fn parse_xml_match_attrs(instruction: roxmltree::Node<'_, '_>) -> BTreeMap<String, String> {
@@ -408,13 +430,8 @@ fn parse_perf_variants(
             uops,
             retire_slots: parse_i32_attr(measurement, &[&format!("uops_retire_slots{xml_suffix}")])
                 .map(|slots| slots.max(1)),
-            // Python convertXML.py writes uopsMITE_SR/uopsMITE_I = 1 even
-            // when the corresponding XML attribute is absent.
-            uops_mite: Some(
-                parse_i32_attr(measurement, &[&format!("uops_MITE{xml_suffix}")])
-                    .unwrap_or(1)
-                    .max(1),
-            ),
+            uops_mite: parse_i32_attr(measurement, &[&format!("uops_MITE{xml_suffix}")])
+                .map(|uops| uops.max(1)),
             uops_ms: parse_i32_attr(measurement, &[&format!("uops_MS{xml_suffix}")]),
             tp,
             ports,
@@ -561,7 +578,7 @@ fn parse_python_ports(
         && value == "1*p06"
         && !matches!(arch_name, "ICL" | "TGL" | "RKL" | "ADL-P")
     {
-        "1*p0156"
+        "1*p6"
     } else {
         value
     };

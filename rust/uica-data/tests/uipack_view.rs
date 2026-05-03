@@ -35,6 +35,7 @@ fn sample_pack() -> DataPack {
                 arch: "SKL".to_string(),
                 iform: "ADD_GPRv_GPRv".to_string(),
                 string: "ADD".to_string(),
+                xml_attrs: Default::default(),
                 imm_zero: false,
                 perf: PerfRecord {
                     operands: vec![],
@@ -63,6 +64,7 @@ fn sample_pack() -> DataPack {
                 arch: "SKL".to_string(),
                 iform: "IMUL_GPRv_GPRv".to_string(),
                 string: "IMUL".to_string(),
+                xml_attrs: Default::default(),
                 imm_zero: false,
                 perf: PerfRecord {
                     operands: vec![],

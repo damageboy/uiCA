@@ -55,6 +55,14 @@ fn converts_minimal_xml_to_manifest_and_per_arch_uipacks() {
     assert!(skl_pack.instructions[0].perf.no_micro_fusion);
     assert!(skl_pack.instructions[0].perf.no_macro_fusion);
     assert_eq!(
+        skl_pack.instructions[0].xml_attrs.get("eosz"),
+        Some(&"3".to_string())
+    );
+    assert_eq!(
+        skl_pack.instructions[0].xml_attrs.get("rm"),
+        Some(&"3".to_string())
+    );
+    assert_eq!(
         skl_pack.instructions[0].perf.macro_fusible_with,
         vec!["JO (Rel8)".to_string(), "JZ (Rel8)".to_string()]
     );

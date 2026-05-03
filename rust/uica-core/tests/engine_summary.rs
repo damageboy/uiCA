@@ -17,6 +17,7 @@ fn computes_summary_from_decoded_records() {
             arch: "SKL".to_string(),
             iform: "ADD_GPRv_GPRv".to_string(),
             string: "ADD".to_string(),
+            xml_attrs: Default::default(),
             imm_zero: false,
             perf: PerfRecord {
                 operands: vec![],
@@ -75,6 +76,7 @@ fn quick_add_loop_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "ADD_GPRv_GPRv".to_string(),
                     string: "ADD".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -103,6 +105,7 @@ fn quick_add_loop_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "DEC_GPRv".to_string(),
                     string: "DEC".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -131,6 +134,7 @@ fn quick_add_loop_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "JNZ_RELBRb".to_string(),
                     string: "JNZ".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -319,6 +323,7 @@ fn quick_dec_jcc_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "DEC_GPRv".to_string(),
                     string: "DEC".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -347,6 +352,7 @@ fn quick_dec_jcc_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "JNZ_RELBRb".to_string(),
                     string: "JNZ".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -410,6 +416,7 @@ fn mem_address_latency_feeds_dependency_limit_like_python() {
                 arch: "HSW".to_string(),
                 iform: "MOV_GPRv_MEMv".to_string(),
                 string: "MOV (R64, M64)".to_string(),
+                xml_attrs: Default::default(),
                 imm_zero: false,
                 perf: PerfRecord {
                     operands: vec![
@@ -479,6 +486,7 @@ fn mem_address_latency_feeds_dependency_limit_like_python() {
                 arch: "HSW".to_string(),
                 iform: "ADD_GPRv_GPRv".to_string(),
                 string: "ADD".to_string(),
+                xml_attrs: Default::default(),
                 imm_zero: false,
                 perf: PerfRecord {
                     operands: vec![
@@ -559,6 +567,7 @@ fn mem_address_latency_feeds_dependency_limit_like_python() {
                 arch: "HSW".to_string(),
                 iform: "DEC_GPRv".to_string(),
                 string: "DEC".to_string(),
+                xml_attrs: Default::default(),
                 imm_zero: false,
                 perf: PerfRecord {
                     operands: vec![OperandRecord {
@@ -610,6 +619,7 @@ fn mem_address_latency_feeds_dependency_limit_like_python() {
                 arch: "HSW".to_string(),
                 iform: "JNZ_RELBRb".to_string(),
                 string: "JNZ".to_string(),
+                xml_attrs: Default::default(),
                 imm_zero: false,
                 perf: PerfRecord {
                     operands: vec![],
@@ -698,6 +708,7 @@ fn quick_model_falls_back_safely_when_pack_is_incomplete() {
             arch: "SKL".to_string(),
             iform: "DEC_GPRv".to_string(),
             string: "DEC".to_string(),
+            xml_attrs: Default::default(),
             imm_zero: false,
             perf: PerfRecord {
                 operands: vec![],
@@ -819,6 +830,7 @@ fn curated12_cmov_setcc_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "CMP_GPRv_GPRv".to_string(),
                     string: "CMP".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -847,6 +859,7 @@ fn curated12_cmov_setcc_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "CMOVNLE_GPRv_GPRv".to_string(),
                     string: "CMOVNLE".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -879,6 +892,7 @@ fn curated12_cmov_setcc_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "SETZ_GPR8".to_string(),
                     string: "SETZ".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -907,6 +921,7 @@ fn curated12_cmov_setcc_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "ADD_GPRv_GPRv".to_string(),
                     string: "ADD".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -935,6 +950,7 @@ fn curated12_cmov_setcc_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "DEC_GPRv".to_string(),
                     string: "DEC".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -963,6 +979,7 @@ fn curated12_cmov_setcc_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "JNZ_RELBRb".to_string(),
                     string: "JNZ".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -1043,6 +1060,7 @@ fn curated12_alu_dep_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "ADD_GPRv_GPRv".to_string(),
                     string: "ADD".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -1071,6 +1089,7 @@ fn curated12_alu_dep_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "SUB_GPRv_GPRv".to_string(),
                     string: "SUB".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -1099,6 +1118,7 @@ fn curated12_alu_dep_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "ADC_GPRv_GPRv".to_string(),
                     string: "ADC".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -1127,6 +1147,7 @@ fn curated12_alu_dep_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "DEC_GPRv".to_string(),
                     string: "DEC".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -1155,6 +1176,7 @@ fn curated12_alu_dep_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "JNZ_RELBRb".to_string(),
                     string: "JNZ".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -1274,6 +1296,7 @@ fn curated12_flag_chain_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "ADD_GPRv_GPRv".to_string(),
                     string: "ADD".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -1302,6 +1325,7 @@ fn curated12_flag_chain_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "SBB_GPRv_GPRv".to_string(),
                     string: "SBB".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -1334,6 +1358,7 @@ fn curated12_flag_chain_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "ADC_GPRv_GPRv".to_string(),
                     string: "ADC".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -1366,6 +1391,7 @@ fn curated12_flag_chain_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "DEC_GPRv".to_string(),
                     string: "DEC".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -1394,6 +1420,7 @@ fn curated12_flag_chain_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "JNZ_RELBRb".to_string(),
                     string: "JNZ".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -1502,6 +1529,7 @@ fn curated12_load_store_mix_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "MOV_GPRv_GPRv".to_string(),
                     string: "MOV".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -1530,6 +1558,7 @@ fn curated12_load_store_mix_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "ADD_GPRv_GPRv".to_string(),
                     string: "ADD".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -1558,6 +1587,7 @@ fn curated12_load_store_mix_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "DEC_GPRv".to_string(),
                     string: "DEC".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -1586,6 +1616,7 @@ fn curated12_load_store_mix_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "JNZ_RELBRb".to_string(),
                     string: "JNZ".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -1684,6 +1715,7 @@ fn curated12_store_stream_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "MOV_GPRv_GPRv".to_string(),
                     string: "MOV".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -1712,6 +1744,7 @@ fn curated12_store_stream_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "ADD_GPRv_GPRv".to_string(),
                     string: "ADD".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -1740,6 +1773,7 @@ fn curated12_store_stream_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "DEC_GPRv".to_string(),
                     string: "DEC".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -1768,6 +1802,7 @@ fn curated12_store_stream_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "JNZ_RELBRb".to_string(),
                     string: "JNZ".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -1868,6 +1903,7 @@ fn curated12_div_mul_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "XOR_GPRv_GPRv".to_string(),
                     string: "XOR".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -1896,6 +1932,7 @@ fn curated12_div_mul_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "MOV_GPRv_GPRv".to_string(),
                     string: "MOV".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -1924,6 +1961,7 @@ fn curated12_div_mul_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "DIV_GPRv".to_string(),
                     string: "DIV".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -1952,6 +1990,7 @@ fn curated12_div_mul_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "IMUL_GPRv_GPRv".to_string(),
                     string: "IMUL".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -1980,6 +2019,7 @@ fn curated12_div_mul_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "DEC_GPRv".to_string(),
                     string: "DEC".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -2008,6 +2048,7 @@ fn curated12_div_mul_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "JNZ_RELBRb".to_string(),
                     string: "JNZ".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -2076,6 +2117,7 @@ fn curated12_shift_rotate_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "SHL_GPRv_GPRv".to_string(),
                     string: "SHL".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -2104,6 +2146,7 @@ fn curated12_shift_rotate_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "ROR_GPRv_GPRv".to_string(),
                     string: "ROR".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -2132,6 +2175,7 @@ fn curated12_shift_rotate_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "SAR_GPRv_GPRv".to_string(),
                     string: "SAR".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -2160,6 +2204,7 @@ fn curated12_shift_rotate_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "DEC_GPRv".to_string(),
                     string: "DEC".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -2188,6 +2233,7 @@ fn curated12_shift_rotate_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "JNZ_RELBRb".to_string(),
                     string: "JNZ".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -2297,6 +2343,7 @@ fn curated12_vector128_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "MOVDQA_XMMdq_XMMdq".to_string(),
                     string: "MOVDQA".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -2325,6 +2372,7 @@ fn curated12_vector128_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "PADDQ_XMMdq_XMMdq".to_string(),
                     string: "PADDQ".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -2353,6 +2401,7 @@ fn curated12_vector128_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "PXOR_XMMdq_XMMdq".to_string(),
                     string: "PXOR".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -2381,6 +2430,7 @@ fn curated12_vector128_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "DEC_GPRv".to_string(),
                     string: "DEC".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -2409,6 +2459,7 @@ fn curated12_vector128_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "JNZ_RELBRb".to_string(),
                     string: "JNZ".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -2477,6 +2528,7 @@ fn curated12_vector256_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "VADDPS_YMMqq_YMMqq_YMMqq".to_string(),
                     string: "VADDPS".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -2505,6 +2557,7 @@ fn curated12_vector256_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "VMULPS_YMMqq_YMMqq_YMMqq".to_string(),
                     string: "VMULPS".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -2533,6 +2586,7 @@ fn curated12_vector256_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "VPXOR_YMMqq_YMMqq_YMMqq".to_string(),
                     string: "VPXOR".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -2561,6 +2615,7 @@ fn curated12_vector256_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "DEC_GPRv".to_string(),
                     string: "DEC".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -2589,6 +2644,7 @@ fn curated12_vector256_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "JNZ_RELBRb".to_string(),
                     string: "JNZ".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -2661,6 +2717,7 @@ fn curated12_fence_mix_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "ADD_GPRv_MEMv".to_string(),
                     string: "ADD".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -2689,6 +2746,7 @@ fn curated12_fence_mix_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "LFENCE".to_string(),
                     string: "LFENCE".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -2717,6 +2775,7 @@ fn curated12_fence_mix_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "SFENCE".to_string(),
                     string: "SFENCE".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -2745,6 +2804,7 @@ fn curated12_fence_mix_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "DEC_GPRv".to_string(),
                     string: "DEC".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -2773,6 +2833,7 @@ fn curated12_fence_mix_model_matches_expected_outputs() {
                     arch: arch.to_string(),
                     iform: "JNZ_RELBRb".to_string(),
                     string: "JNZ".to_string(),
+                    xml_attrs: Default::default(),
                     imm_zero: false,
                     perf: PerfRecord {
                         operands: vec![],
@@ -2839,6 +2900,7 @@ fn emits_cycle_skeleton_with_expected_length_and_cycle_indices() {
             arch: "SKL".to_string(),
             iform: "ADD_GPRv_GPRv".to_string(),
             string: "ADD".to_string(),
+            xml_attrs: Default::default(),
             imm_zero: false,
             perf: PerfRecord {
                 operands: vec![],

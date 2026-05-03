@@ -97,6 +97,7 @@ fn sample_pack(
             arch: arch.to_string(),
             iform: format!("{mnemonic}_GPRv_GPRv"),
             string: string.to_string(),
+            xml_attrs: Default::default(),
             imm_zero: false,
             perf: PerfRecord {
                 operands: vec![
@@ -399,6 +400,7 @@ fn binary_manifest_pack_supports_index_matcher_and_perf_lookup() {
             mnemonic: "mov".to_string(),
             uses_high8_reg: false,
             explicit_reg_operands: Vec::new(),
+            xml_attrs: Default::default(),
             agen: None,
         },
         candidates,

@@ -32,6 +32,9 @@ pub struct InstructionRecord {
     pub arch: String,
     pub iform: String,
     pub string: String,
+    /// XML `allXmlAttributes` row attributes used by Python `xed.matchXMLAttributes()`.
+    #[serde(default)]
+    pub xml_attrs: BTreeMap<String, String>,
     /// XML `immzero` attribute; Python uses it during XED/XML attribute matching.
     #[serde(default)]
     pub imm_zero: bool,

@@ -61,6 +61,7 @@ fn matches_instruction_by_string_case_insensitively() {
         mnemonic: "add".to_string(),
         uses_high8_reg: false,
         explicit_reg_operands: Vec::new(),
+        xml_attrs: Default::default(),
         agen: None,
     };
     let candidates = vec![CandidateRecord {
@@ -82,6 +83,7 @@ fn matches_instruction_by_iform_prefix_when_string_differs() {
         mnemonic: "mov".to_string(),
         uses_high8_reg: false,
         explicit_reg_operands: Vec::new(),
+        xml_attrs: Default::default(),
         agen: None,
     };
     let candidates = vec![CandidateRecord {
@@ -103,6 +105,7 @@ fn returns_none_when_no_candidate_matches() {
         mnemonic: "sub".to_string(),
         uses_high8_reg: false,
         explicit_reg_operands: Vec::new(),
+        xml_attrs: Default::default(),
         agen: None,
     };
     let candidates = vec![CandidateRecord {
@@ -122,6 +125,7 @@ fn matches_jcc_aliases_to_xed_candidate_names() {
         mnemonic: "je rel8".to_string(),
         uses_high8_reg: false,
         explicit_reg_operands: Vec::new(),
+        xml_attrs: Default::default(),
         agen: None,
     };
     let jne = NormalizedInstr {
@@ -131,6 +135,7 @@ fn matches_jcc_aliases_to_xed_candidate_names() {
         mnemonic: "jne rel8".to_string(),
         uses_high8_reg: false,
         explicit_reg_operands: Vec::new(),
+        xml_attrs: Default::default(),
         agen: None,
     };
     let candidates = vec![
@@ -176,6 +181,7 @@ fn matches_cmov_and_setcc_aliases_to_candidates() {
         mnemonic: "cmovnle".to_string(),
         uses_high8_reg: false,
         explicit_reg_operands: Vec::new(),
+        xml_attrs: Default::default(),
         agen: None,
     };
     let setcc = NormalizedInstr {
@@ -185,6 +191,7 @@ fn matches_cmov_and_setcc_aliases_to_candidates() {
         mnemonic: "setz".to_string(),
         uses_high8_reg: false,
         explicit_reg_operands: Vec::new(),
+        xml_attrs: Default::default(),
         agen: None,
     };
 
@@ -215,6 +222,7 @@ fn does_not_fallback_to_mnemonic_when_decoded_iform_signature_misses() {
         mnemonic: "mulx".to_string(),
         uses_high8_reg: false,
         explicit_reg_operands: vec!["RAX".to_string(), "RBX".to_string(), "RCX".to_string()],
+        xml_attrs: Default::default(),
         agen: None,
     };
     let candidates = vec![record("MULX_GPR64q_GPR64q_GPR64q", "MULX (R64, R64, R64)")];
@@ -231,6 +239,7 @@ fn matches_nonzero_immediate_to_general_immediate_record() {
         mnemonic: "sar".to_string(),
         uses_high8_reg: false,
         explicit_reg_operands: Vec::new(),
+        xml_attrs: Default::default(),
         agen: None,
     };
     let candidates = vec![
@@ -252,6 +261,7 @@ fn matches_zero_immediate_metadata_independent_of_display_position() {
         mnemonic: "push".to_string(),
         uses_high8_reg: false,
         explicit_reg_operands: Vec::new(),
+        xml_attrs: Default::default(),
         agen: None,
     };
     let nonzero = NormalizedInstr {
@@ -272,6 +282,29 @@ fn matches_zero_immediate_metadata_independent_of_display_position() {
 }
 
 #[test]
+fn matches_python_xml_attributes_before_string_fallbacks() {
+    let instr = NormalizedInstr {
+        max_op_size_bytes: 8,
+        immediate: None,
+        iform_signature: "GPRv_MEMv".to_string(),
+        mnemonic: "cmp".to_string(),
+        uses_high8_reg: false,
+        explicit_reg_operands: Vec::new(),
+        xml_attrs: [("rm".to_string(), "7".to_string())].into_iter().collect(),
+        agen: None,
+    };
+    let mut wrong = record("CMP_GPRv_MEMv", "CMP (R64, M64 wrong rm)");
+    wrong.xml_attrs.insert("rm".to_string(), "3".to_string());
+    let mut right = record("CMP_GPRv_MEMv", "CMP (R64, M64 right rm)");
+    right.xml_attrs.insert("rm".to_string(), "67".to_string());
+
+    let candidates = vec![wrong, right];
+    let matched = match_instruction_record(&instr, &candidates).expect("xml attr match");
+
+    assert_eq!(matched.string, "CMP (R64, M64 right rm)");
+}
+
+#[test]
 fn matches_lea_agen_form_before_size_fallback() {
     let instr = NormalizedInstr {
         max_op_size_bytes: 8,
@@ -280,6 +313,7 @@ fn matches_lea_agen_form_before_size_fallback() {
         mnemonic: "lea".to_string(),
         uses_high8_reg: false,
         explicit_reg_operands: Vec::new(),
+        xml_attrs: Default::default(),
         agen: Some("B_IS_D8".to_string()),
     };
     let candidates = vec![
@@ -302,6 +336,7 @@ fn matches_high8_record_even_when_larger_dest_sets_max_size() {
         mnemonic: "movzx".to_string(),
         uses_high8_reg: true,
         explicit_reg_operands: vec!["ECX".to_string(), "AH".to_string()],
+        xml_attrs: Default::default(),
         agen: None,
     };
     let candidates = vec![
@@ -323,6 +358,7 @@ fn prefers_unmasked_evex_record_when_k0_is_implicit() {
         mnemonic: "vmovdqu64".to_string(),
         uses_high8_reg: false,
         explicit_reg_operands: vec!["ZMM0".to_string()],
+        xml_attrs: Default::default(),
         agen: None,
     };
     let candidates = vec![
@@ -350,6 +386,7 @@ fn prefers_masked_evex_record_when_mask_is_explicit() {
         mnemonic: "vmovdqu64".to_string(),
         uses_high8_reg: false,
         explicit_reg_operands: vec!["ZMM0".to_string(), "K1".to_string()],
+        xml_attrs: Default::default(),
         agen: None,
     };
     let candidates = vec![
@@ -377,6 +414,7 @@ fn matches_low8_record_without_high8_substring() {
         mnemonic: "mov".to_string(),
         uses_high8_reg: false,
         explicit_reg_operands: vec!["AL".to_string(), "BL".to_string()],
+        xml_attrs: Default::default(),
         agen: None,
     };
     let candidates = vec![
@@ -399,6 +437,7 @@ fn record_with_immzero(iform: &str, string: &str, imm_zero: bool) -> Instruction
         arch: "HSW".to_string(),
         iform: iform.to_string(),
         string: string.to_string(),
+        xml_attrs: Default::default(),
         imm_zero,
         perf: PerfRecord {
             uops: 1,

@@ -112,12 +112,16 @@ fn parse_xml_to_packs(xml_path: &Path) -> Result<BTreeMap<String, DataPack>> {
                 continue;
             };
 
+            let xml_attrs = parse_xml_match_attrs(instruction);
             let record = InstructionRecord {
                 arch: arch_name.to_string(),
                 iform: iform.to_string(),
                 string: string.to_string(),
-                imm_zero: parse_bool_opt_attr(instruction, &["immzero", "immZero"])
+                imm_zero: xml_attrs
+                    .get("immzero")
+                    .map(|value| matches!(value.as_str(), "1" | "true" | "True"))
                     .unwrap_or(false),
+                xml_attrs,
                 perf: parse_perf(instruction, measurement)?,
             };
             dedup.insert(
@@ -152,6 +156,20 @@ fn checksum_kind_name(kind: u16) -> &'static str {
         UIPACK_CHECKSUM_FNV1A64 => "fnv1a64",
         _ => "unknown",
     }
+}
+
+fn parse_xml_match_attrs(instruction: roxmltree::Node<'_, '_>) -> BTreeMap<String, String> {
+    const XML_ATTRS: &[&str] = &[
+        "agen", "bcast", "eosz", "high8", "immzero", "mask", "rep", "rm", "sae", "zeroing",
+    ];
+    XML_ATTRS
+        .iter()
+        .filter_map(|name| {
+            instruction
+                .attribute(*name)
+                .map(|value| ((*name).to_string(), value.to_string()))
+        })
+        .collect()
 }
 
 fn parse_perf(

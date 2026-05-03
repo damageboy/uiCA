@@ -16,11 +16,11 @@ use crate::{
 };
 
 pub const UIPACK_MAGIC: [u8; 8] = *b"UIPACK\0\0";
-pub const UIPACK_VERSION: u16 = 5;
+pub const UIPACK_VERSION: u16 = 6;
 pub const UIPACK_CHECKSUM_FNV1A64: u16 = 1;
 
 const UIPACK_HEADER_SIZE: usize = 64;
-const UIPACK_RECORD_SIZE: usize = 88;
+const UIPACK_RECORD_SIZE: usize = 96;
 const UIPACK_PORT_ENTRY_SIZE: usize = 8;
 const UIPACK_ALIGNMENT: usize = 8;
 const CHECKSUM_OFFSET: usize = 24;
@@ -270,6 +270,7 @@ impl<'a> UiPackView<'a> {
                 arch: self.arch().to_string(),
                 iform: record.iform().to_string(),
                 string: record.string().to_string(),
+                xml_attrs: record.xml_attrs()?,
                 imm_zero: record.imm_zero(),
                 perf: PerfRecord {
                     uops: record.perf().uops(),
@@ -401,6 +402,17 @@ impl<'a> UiPackRecordView<'a> {
             self.entry.macro_fusible_offset,
             self.entry.macro_fusible_size,
             "macro_fusible_with",
+        )?)?)
+    }
+
+    pub fn xml_attrs(&self) -> Result<BTreeMap<String, String>, UiPackError> {
+        if self.entry.xml_attrs_size == 0 {
+            return Ok(BTreeMap::new());
+        }
+        Ok(serde_json::from_slice(self.blob(
+            self.entry.xml_attrs_offset,
+            self.entry.xml_attrs_size,
+            "xml_attrs",
         )?)?)
     }
 
@@ -570,6 +582,7 @@ pub fn encode_uipack(pack: &DataPack, arch: &str) -> Result<Vec<u8>, UiPackError
         let latencies = serde_json::to_vec(&record.perf.latencies)?;
         let variants = serde_json::to_vec(&record.perf.variants)?;
         let macro_fusible_with = serde_json::to_vec(&record.perf.macro_fusible_with)?;
+        let xml_attrs = serde_json::to_vec(&record.xml_attrs)?;
 
         raw_records.push(RawRecordEntry {
             iform_offset,
@@ -597,6 +610,7 @@ pub fn encode_uipack(pack: &DataPack, arch: &str) -> Result<Vec<u8>, UiPackError
             latencies,
             variants,
             macro_fusible_with,
+            xml_attrs,
         });
     }
 
@@ -645,6 +659,12 @@ pub fn encode_uipack(pack: &DataPack, arch: &str) -> Result<Vec<u8>, UiPackError
         })?;
         blobs.extend_from_slice(&raw.macro_fusible_with);
 
+        let xml_attrs_offset = u32::try_from(blobs_offset + blobs.len())
+            .map_err(|_| UiPackError::InvalidFormat("uipack too large".to_string()))?;
+        let xml_attrs_size = u32::try_from(raw.xml_attrs.len())
+            .map_err(|_| UiPackError::InvalidFormat("uipack xml_attrs too large".to_string()))?;
+        blobs.extend_from_slice(&raw.xml_attrs);
+
         record_entries.push(RecordEntry {
             iform_offset: raw.iform_offset,
             string_offset: raw.string_offset,
@@ -667,6 +687,8 @@ pub fn encode_uipack(pack: &DataPack, arch: &str) -> Result<Vec<u8>, UiPackError
             variants_size,
             macro_fusible_offset,
             macro_fusible_size,
+            xml_attrs_offset,
+            xml_attrs_size,
         });
     }
     let file_len = u64::try_from(blobs_offset + blobs.len())
@@ -858,6 +880,7 @@ struct RawRecordEntry {
     latencies: Vec<u8>,
     variants: Vec<u8>,
     macro_fusible_with: Vec<u8>,
+    xml_attrs: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -883,6 +906,8 @@ struct RecordEntry {
     variants_size: u32,
     macro_fusible_offset: u32,
     macro_fusible_size: u32,
+    xml_attrs_offset: u32,
+    xml_attrs_size: u32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1049,6 +1074,8 @@ fn write_record_entry(dst: &mut [u8], record: &RecordEntry) {
     dst[76..80].copy_from_slice(&record.variants_size.to_le_bytes());
     dst[80..84].copy_from_slice(&record.macro_fusible_offset.to_le_bytes());
     dst[84..88].copy_from_slice(&record.macro_fusible_size.to_le_bytes());
+    dst[88..92].copy_from_slice(&record.xml_attrs_offset.to_le_bytes());
+    dst[92..96].copy_from_slice(&record.xml_attrs_size.to_le_bytes());
 }
 
 fn write_port_entry(dst: &mut [u8], port: &PortEntry) {
@@ -1077,8 +1104,10 @@ fn read_record_entry(src: &[u8], version: u16) -> RecordEntry {
         implicit_rsp_change: read_i32(src, 68),
         variants_offset: if version >= 4 { read_u32(src, 72) } else { 0 },
         variants_size: if version >= 4 { read_u32(src, 76) } else { 0 },
-        macro_fusible_offset: if version >= 5 { read_u32(src, 80) } else { 0 },
-        macro_fusible_size: if version >= 5 { read_u32(src, 84) } else { 0 },
+        macro_fusible_offset: read_u32(src, 80),
+        macro_fusible_size: read_u32(src, 84),
+        xml_attrs_offset: read_u32(src, 88),
+        xml_attrs_size: read_u32(src, 92),
     }
 }
 

@@ -38,8 +38,8 @@ impl UopSource {
     }
 }
 
-/// Python-like operand identity used by the simulator while the legacy string
-/// fields are being retired. Mirrors `RegOperand`, `FlagOperand`, `MemOperand`,
+/// Python-like operand identity used by the simulator while string-derived
+/// operand fields are being retired. Mirrors `RegOperand`, `FlagOperand`, `MemOperand`,
 /// and `PseudoOperand` from `instructions.py`.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum OperandKey {
@@ -272,6 +272,8 @@ pub struct InstrInstance {
     pub explicit_reg_operands: Vec<String>,
     /// XED `agen` attribute for LEA addressing forms (e.g. B_IS_D8).
     pub agen: Option<String>,
+    /// XED/XML match attributes used by Python `xed.matchXMLAttributes()`.
+    pub xml_attrs: BTreeMap<String, String>,
 
     // Decoder properties
     pub is_branch_instr: bool,
@@ -349,6 +351,7 @@ impl InstrInstance {
             uses_high8_reg: false,
             explicit_reg_operands: Vec::new(),
             agen: None,
+            xml_attrs: BTreeMap::new(),
             is_branch_instr: false,
             complex_decoder: false,
             n_available_simple_decoders: 4,
@@ -492,6 +495,7 @@ pub fn build_instruction_instances(
         inst.uses_high8_reg = dec.uses_high8_reg;
         inst.explicit_reg_operands = dec.explicit_reg_operands.clone();
         inst.agen = dec.agen.clone();
+        inst.xml_attrs = dec.xml_attrs.clone();
 
         // Detect conditional branches for decoder and macro-fusion handling.
         inst.is_branch_instr = is_conditional_branch(&dec.mnemonic);

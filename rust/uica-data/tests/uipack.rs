@@ -36,6 +36,10 @@ fn sample_pack() -> DataPack {
                 arch: "SKL".to_string(),
                 iform: "ADD_GPRv_GPRv".to_string(),
                 string: "ADD".to_string(),
+                xml_attrs: BTreeMap::from([
+                    ("eosz".to_string(), "3".to_string()),
+                    ("rm".to_string(), "3".to_string()),
+                ]),
                 imm_zero: false,
                 perf: PerfRecord {
                     operands: vec![
@@ -121,6 +125,7 @@ fn sample_pack() -> DataPack {
                 arch: "SKL".to_string(),
                 iform: "IMUL_GPRv_GPRv".to_string(),
                 string: "IMUL".to_string(),
+                xml_attrs: Default::default(),
                 imm_zero: false,
                 perf: PerfRecord {
                     operands: vec![],
@@ -162,6 +167,14 @@ fn roundtrips_single_arch_uipack_and_keeps_index_compatibility() {
 
     let decoded = load_uipack_bytes(&bytes).unwrap();
     assert_eq!(decoded, pack);
+    assert_eq!(
+        decoded.instructions[0].xml_attrs.get("eosz"),
+        Some(&"3".to_string())
+    );
+    assert_eq!(
+        decoded.instructions[0].xml_attrs.get("rm"),
+        Some(&"3".to_string())
+    );
     assert!(decoded.instructions[0].perf.can_be_used_by_lsd);
     assert!(
         decoded.instructions[0]

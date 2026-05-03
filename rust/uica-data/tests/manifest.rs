@@ -15,6 +15,7 @@ fn sample_pack(arch: &str) -> DataPack {
             arch: arch.to_string(),
             iform: "ADD_GPRv_GPRv".to_string(),
             string: "ADD".to_string(),
+            xml_attrs: Default::default(),
             imm_zero: false,
             perf: PerfRecord {
                 operands: vec![],

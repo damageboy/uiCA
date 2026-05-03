@@ -1,6 +1,8 @@
 #[cfg(not(target_arch = "wasm32"))]
 use std::os::raw::c_char;
 
+use std::collections::BTreeMap;
+
 #[cfg(not(target_arch = "wasm32"))]
 use anyhow::bail;
 use anyhow::Result;
@@ -46,6 +48,7 @@ pub struct DecodedInstruction {
     pub uses_high8_reg: bool,
     pub explicit_reg_operands: Vec<String>,
     pub agen: Option<String>,
+    pub xml_attrs: BTreeMap<String, String>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -97,6 +100,7 @@ pub fn decode_raw(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
         let disasm = normalize_disasm(&cbuf_to_string(&raw.disasm));
         let iform = cbuf_to_string(&raw.iform);
         let agen = nonempty(cbuf_to_string(&raw.agen));
+        let xml_attrs = decoded_xml_attrs(&raw);
 
         let (input_regs, output_regs) = decoded_regs(&raw, &disasm);
         let (has_memory_read, has_memory_write, mem_addrs) = decoded_mem_addrs(&raw);
@@ -129,11 +133,28 @@ pub fn decode_raw(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
             uses_high8_reg: raw.uses_high8_reg != 0,
             explicit_reg_operands,
             agen,
+            xml_attrs,
         });
         offset += len;
     }
 
     Ok(instructions)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn decoded_xml_attrs(raw: &uica_xed_inst_t) -> BTreeMap<String, String> {
+    let mut attrs = BTreeMap::new();
+    attrs.insert("bcast".to_string(), raw.bcast.to_string());
+    attrs.insert("eosz".to_string(), raw.eosz.to_string());
+    attrs.insert("high8".to_string(), cbuf_to_string(&raw.high8));
+    attrs.insert("immzero".to_string(), raw.immzero.to_string());
+    attrs.insert("mask".to_string(), raw.mask.to_string());
+    attrs.insert("rep".to_string(), raw.rep.to_string());
+    attrs.insert("rm".to_string(), raw.rm.to_string());
+    attrs.insert("sae".to_string(), raw.sae.to_string());
+    attrs.insert("zeroing".to_string(), raw.zeroing.to_string());
+    attrs.insert("agen".to_string(), cbuf_to_string(&raw.agen));
+    attrs
 }
 
 #[cfg(not(target_arch = "wasm32"))]

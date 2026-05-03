@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use uica_data::InstructionRecord;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -18,6 +20,8 @@ pub struct NormalizedInstr {
     pub uses_high8_reg: bool,
     /// Explicit register operands in instruction operand order for R8h/R8l matching.
     pub explicit_reg_operands: Vec<String>,
+    /// XED/XML match attributes used by Python `xed.matchXMLAttributes()`.
+    pub xml_attrs: BTreeMap<String, String>,
     /// XED `agen` attribute for LEA addressing forms (e.g. B_IS_D8).
     pub agen: Option<String>,
 }
@@ -64,6 +68,7 @@ pub fn match_instruction_record<'a>(
                         && iform_matches_signature(&candidate.iform, &raw_mnemonic, sig))
             })
             .collect();
+        let sig_matches = filter_xml_attr_matches(sig_matches, &instruction.xml_attrs);
         if !sig_matches.is_empty() {
             return best_record_match(
                 sig_matches,
@@ -87,6 +92,7 @@ pub fn match_instruction_record<'a>(
         .iter()
         .filter(|c| normalize_mnemonic(&c.string) == normalized_mnemonic)
         .collect();
+    let string_matches = filter_xml_attr_matches(string_matches, &instruction.xml_attrs);
     if !string_matches.is_empty() {
         return best_record_match(
             string_matches,
@@ -101,6 +107,7 @@ pub fn match_instruction_record<'a>(
         .iter()
         .filter(|candidate| normalize_iform_prefix(&candidate.iform) == normalized_mnemonic)
         .collect();
+    let iform_matches = filter_xml_attr_matches(iform_matches, &instruction.xml_attrs);
     best_record_match(
         iform_matches,
         max_size,
@@ -109,6 +116,35 @@ pub fn match_instruction_record<'a>(
         &instruction.explicit_reg_operands,
         instruction.agen.as_deref(),
     )
+}
+
+fn filter_xml_attr_matches<'a>(
+    candidates: Vec<&'a InstructionRecord>,
+    decoded_attrs: &BTreeMap<String, String>,
+) -> Vec<&'a InstructionRecord> {
+    candidates
+        .into_iter()
+        .filter(|record| xml_attrs_match(decoded_attrs, &record.xml_attrs))
+        .collect()
+}
+
+fn xml_attrs_match(
+    decoded_attrs: &BTreeMap<String, String>,
+    record_attrs: &BTreeMap<String, String>,
+) -> bool {
+    for (key, record_value) in record_attrs {
+        let Some(decoded_value) = decoded_attrs.get(key) else {
+            continue;
+        };
+        if key == "rm" {
+            if !record_value.contains(decoded_value) {
+                return false;
+            }
+        } else if decoded_value != record_value {
+            return false;
+        }
+    }
+    true
 }
 
 fn best_record_match<'a>(

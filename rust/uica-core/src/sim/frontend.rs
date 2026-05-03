@@ -46,6 +46,7 @@ fn populate_instr_instance_metadata(
         immediate: instr_i.immediate,
         uses_high8_reg: instr_i.uses_high8_reg,
         explicit_reg_operands: instr_i.explicit_reg_operands.clone(),
+        xml_attrs: instr_i.xml_attrs.clone(),
         agen: instr_i.agen.clone(),
     };
     let candidates = pack_index.candidates_for(&arch_name.to_ascii_uppercase(), &instr_i.mnemonic);

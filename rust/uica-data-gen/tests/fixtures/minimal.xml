@@ -7,6 +7,8 @@
     cannotBeInDSBDueToJCCErratum="true"
     noMicroFusion="true"
     noMacroFusion="1"
+    eosz="3"
+    rm="3"
   >
     <operand idx="1" name="REG0" type="reg" r="1" w="1" />
     <operand idx="2" name="REG1" type="reg" r="1" />

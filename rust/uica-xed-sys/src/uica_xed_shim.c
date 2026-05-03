@@ -94,6 +94,19 @@ static int uica_xed_is_high8_reg_name(const char* name) {
           strcmp(name, "CH") == 0 || strcmp(name, "DH") == 0;
 }
 
+static void uica_xed_append_high8_operand(uica_xed_inst_t* out, xed_operand_enum_t operand) {
+   const char* op_name = xed_operand_enum_t2str(operand);
+   size_t len;
+
+   if (out->high8[0] != 0) {
+      strncat(out->high8, ",", sizeof(out->high8) - strlen(out->high8) - 1);
+   }
+   len = strlen(out->high8);
+   if (len + 1 < sizeof(out->high8)) {
+      strncat(out->high8, op_name, sizeof(out->high8) - len - 1);
+   }
+}
+
 static void uica_xed_copy_reg_name(char* dst, size_t cap, xed_reg_enum_t reg) {
    if (uica_xed_is_invalid_reg(reg)) {
       uica_xed_copy_text(dst, cap, "");
@@ -238,6 +251,19 @@ static void uica_xed_copy_immediate(const xed_decoded_inst_t* xedd, uica_xed_ins
    out->has_immediate = 1;
    out->immediate_width_bits = width;
    out->immediate = xed_decoded_inst_get_signed_immediate(xedd);
+   if (out->immediate == 0) {
+      out->immzero = 1;
+   }
+}
+
+static void uica_xed_copy_match_attrs(const xed_decoded_inst_t* xedd, uica_xed_inst_t* out) {
+   out->bcast = xed3_operand_get_bcast(xedd);
+   out->eosz = xed3_operand_get_eosz(xedd);
+   out->mask = xed3_operand_get_mask(xedd) ? 1 : 0;
+   out->rep = xed3_operand_get_rep(xedd);
+   out->rm = xed3_operand_get_rm(xedd);
+   out->sae = xed3_operand_get_sae(xedd);
+   out->zeroing = xed3_operand_get_zeroing(xedd);
 }
 
 static void uica_xed_copy_registers(const xed_decoded_inst_t* xedd, uica_xed_inst_t* out) {
@@ -275,6 +301,9 @@ static void uica_xed_copy_registers(const xed_decoded_inst_t* xedd, uica_xed_ins
          visibility == XED_OPVIS_EXPLICIT ? 1 : 0,
          size_bytes
       );
+      if (visibility == XED_OPVIS_EXPLICIT && uica_xed_is_high8_reg_name(xed_reg_enum_t2str(reg))) {
+         uica_xed_append_high8_operand(out, name);
+      }
    }
 }
 
@@ -421,6 +450,7 @@ int uica_xed_decode_one(const uint8_t* bytes, uint32_t len, uint64_t ip, uica_xe
    uica_xed_copy_text(out->iform, UICA_XED_IFORM_CAP, iform);
 
    uica_xed_copy_flags(&xedd, out);
+   uica_xed_copy_match_attrs(&xedd, out);
    uica_xed_copy_immediate(&xedd, out);
    uica_xed_copy_registers(&xedd, out);
    uica_xed_copy_memories(&xedd, out);

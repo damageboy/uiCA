@@ -359,7 +359,8 @@ pub fn record_latency_cycles(
     if let Some(mem) = latency.cycles_mem {
         cycles = cycles.max(mem);
     }
-    cycles.max(old_uipack_complex_lea_latency(record, latency, arch_name).unwrap_or(cycles))
+    let _ = (record, arch_name);
+    cycles
 }
 
 pub fn record_latency_cycles_for_start(
@@ -374,29 +375,8 @@ pub fn record_latency_cycles_for_start(
         name if name.starts_with("__M_") => latency.cycles_mem,
         _ => None,
     };
-    field_cycles
-        .or_else(|| old_uipack_complex_lea_latency(record, latency, arch_name))
-        .unwrap_or(latency.cycles)
-}
-
-fn old_uipack_complex_lea_latency(
-    record: &uica_data::InstructionRecord,
-    latency: &uica_data::LatencyRecord,
-    arch_name: &str,
-) -> Option<i32> {
-    if latency.cycles_addr.is_none()
-        && latency.cycles_addr_index.is_none()
-        && latency.start_op == "AGEN"
-        && record.iform == "LEA_GPRv_AGEN"
-        && matches!(arch_name, "HSW" | "SKL")
-        && record.string.starts_with("LEA_B_I")
-        && record.perf.ports.len() == 1
-        && record.perf.ports.get("1") == Some(&1)
-    {
-        Some(3)
-    } else {
-        None
-    }
+    let _ = (record, arch_name);
+    field_cycles.unwrap_or(latency.cycles)
 }
 
 fn lea_agen_concrete_names(record: &uica_data::InstructionRecord) -> Vec<String> {
@@ -435,6 +415,7 @@ pub fn lookup_uops_mite_ms_indexed(
         immediate: None,
         uses_high8_reg: false,
         explicit_reg_operands: Vec::new(),
+        xml_attrs: Default::default(),
         agen: None,
     };
     let candidates = index.candidates_for(&arch_name.to_ascii_uppercase(), mnemonic);
@@ -481,6 +462,7 @@ pub fn expand_instr_instance_to_lam_uops_with_storage(
         immediate: instr.immediate,
         uses_high8_reg: instr.uses_high8_reg,
         explicit_reg_operands: instr.explicit_reg_operands.clone(),
+        xml_attrs: instr.xml_attrs.clone(),
         agen: instr.agen.clone(),
     };
     let candidates = index.candidates_for(&arch_name.to_ascii_uppercase(), &instr.mnemonic);
@@ -1861,6 +1843,7 @@ mod tests {
             arch: "HSW".to_string(),
             iform: "SBB_GPRv_GPRv_19".to_string(),
             string: "SBB_19 (R32, R32)".to_string(),
+            xml_attrs: Default::default(),
             imm_zero: false,
             perf: PerfRecord {
                 uops: 2,
@@ -1900,6 +1883,7 @@ mod tests {
                 arch: "HSW".to_string(),
                 iform: "MULX_GPR64q_GPR64q_GPR64q".to_string(),
                 string: "MULX (R64, R64, R64)".to_string(),
+                xml_attrs: Default::default(),
                 imm_zero: false,
                 perf: PerfRecord {
                     uops: 2,
@@ -2012,6 +1996,7 @@ mod tests {
             arch: "HSW".to_string(),
             iform: "SUB_GPRv_GPRv_29".to_string(),
             string: "SUB_29 (R64, R64)".to_string(),
+            xml_attrs: Default::default(),
             imm_zero: false,
             perf: PerfRecord {
                 uops: 1,
@@ -2071,6 +2056,7 @@ mod tests {
             arch: "HSW".to_string(),
             iform: "PCMPGTB_XMMdq_XMMdq".to_string(),
             string: "PCMPGTB (XMM, XMM)".to_string(),
+            xml_attrs: Default::default(),
             imm_zero: false,
             perf: PerfRecord {
                 uops: 1,
@@ -2144,6 +2130,7 @@ mod tests {
             arch: "ICL".to_string(),
             iform: "KANDW_MASKmskw_MASKmskw_MASKmskw_AVX512".to_string(),
             string: "KANDW (K, K, K)".to_string(),
+            xml_attrs: Default::default(),
             imm_zero: false,
             perf: PerfRecord {
                 uops: 1,
@@ -2272,6 +2259,7 @@ mod tests {
             arch: "HSW".to_string(),
             iform: "SHL_GPRv_CL_D3r4".to_string(),
             string: "SHL (R64, CL)".to_string(),
+            xml_attrs: Default::default(),
             imm_zero: false,
             perf: PerfRecord {
                 uops: 3,

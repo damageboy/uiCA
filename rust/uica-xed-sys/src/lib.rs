@@ -7,6 +7,7 @@ pub const UICA_XED_MAX_MEMS: usize = 4;
 pub const UICA_XED_MAX_EXPLICIT_REGS: usize = 16;
 pub const UICA_XED_TEXT_CAP: usize = 128;
 pub const UICA_XED_IFORM_CAP: usize = 96;
+pub const UICA_XED_HIGH8_CAP: usize = 64;
 
 pub const UICA_XED_STATUS_OK: u8 = 0;
 pub const UICA_XED_STATUS_INVALID: u8 = 1;
@@ -87,6 +88,15 @@ pub struct uica_xed_inst_t {
     pub max_op_size_bytes: u8,
     pub uses_high8_reg: u8,
     pub agen: [c_char; 32],
+    pub high8: [c_char; UICA_XED_HIGH8_CAP],
+    pub bcast: u32,
+    pub eosz: u32,
+    pub mask: u32,
+    pub rep: u32,
+    pub rm: u32,
+    pub sae: u32,
+    pub zeroing: u32,
+    pub immzero: u8,
 }
 
 impl Default for uica_xed_inst_t {
@@ -112,6 +122,15 @@ impl Default for uica_xed_inst_t {
             max_op_size_bytes: 0,
             uses_high8_reg: 0,
             agen: [0; 32],
+            high8: [0; UICA_XED_HIGH8_CAP],
+            bcast: 0,
+            eosz: 0,
+            mask: 0,
+            rep: 0,
+            rm: 0,
+            sae: 0,
+            zeroing: 0,
+            immzero: 0,
         }
     }
 }

@@ -12,6 +12,7 @@ extern "C" {
 #define UICA_XED_MAX_EXPLICIT_REGS 16
 #define UICA_XED_TEXT_CAP 128
 #define UICA_XED_IFORM_CAP 96
+#define UICA_XED_HIGH8_CAP 64
 
 #define UICA_XED_STATUS_OK 0
 #define UICA_XED_STATUS_INVALID 1
@@ -62,6 +63,15 @@ typedef struct uica_xed_inst_s {
     uint8_t max_op_size_bytes;
     uint8_t uses_high8_reg;
     char agen[32];
+    char high8[UICA_XED_HIGH8_CAP];
+    uint32_t bcast;
+    uint32_t eosz;
+    uint32_t mask;
+    uint32_t rep;
+    uint32_t rm;
+    uint32_t sae;
+    uint32_t zeroing;
+    uint8_t immzero;
 } uica_xed_inst_t;
 
 void uica_xed_init(void);

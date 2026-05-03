@@ -11,6 +11,7 @@ fn finds_candidates_by_arch_and_mnemonic() {
                 arch: "SKL".to_string(),
                 iform: "ADD_GPRv_GPRv".to_string(),
                 string: "ADD".to_string(),
+                xml_attrs: Default::default(),
                 imm_zero: false,
                 perf: PerfRecord {
                     operands: vec![],
@@ -39,6 +40,7 @@ fn finds_candidates_by_arch_and_mnemonic() {
                 arch: "HSW".to_string(),
                 iform: "ADD_GPRv_GPRv".to_string(),
                 string: "ADD".to_string(),
+                xml_attrs: Default::default(),
                 imm_zero: false,
                 perf: PerfRecord {
                     operands: vec![],
@@ -93,6 +95,7 @@ fn resolves_mnemonic_aliases_in_index_lookup() {
                 arch: "SKL".to_string(),
                 iform: "JNZ_RELBRb".to_string(),
                 string: "JNZ".to_string(),
+                xml_attrs: Default::default(),
                 imm_zero: false,
                 perf: PerfRecord {
                     operands: vec![],
@@ -121,6 +124,7 @@ fn resolves_mnemonic_aliases_in_index_lookup() {
                 arch: "SKL".to_string(),
                 iform: "CMOVG_GPRv_GPRv".to_string(),
                 string: "CMOVG".to_string(),
+                xml_attrs: Default::default(),
                 imm_zero: false,
                 perf: PerfRecord {
                     operands: vec![],
@@ -149,6 +153,7 @@ fn resolves_mnemonic_aliases_in_index_lookup() {
                 arch: "SKL".to_string(),
                 iform: "SETE_GPR8".to_string(),
                 string: "SETE".to_string(),
+                xml_attrs: Default::default(),
                 imm_zero: false,
                 perf: PerfRecord {
                     operands: vec![],
@@ -190,6 +195,7 @@ fn indexes_noncanonical_string_under_iform_prefix() {
             arch: "SKL".to_string(),
             iform: "MOV_GPRv_GPRv".to_string(),
             string: "MOVE".to_string(),
+            xml_attrs: Default::default(),
             imm_zero: false,
             perf: PerfRecord {
                 operands: vec![],

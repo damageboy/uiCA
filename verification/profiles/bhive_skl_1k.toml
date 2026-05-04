@@ -1,4 +1,4 @@
-name = "bhive_1k"
+name = "bhive_skl_1k"
 cases = [
   "bhive/skl_000000_56fde11a",
   "bhive/skl_000001_ba0105ea",

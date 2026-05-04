@@ -433,7 +433,7 @@ cargo test --workspace
 
 Expected: pass.
 
-- [ ] **Step 7: Verify bhive_1k correctness**
+- [ ] **Step 7: Verify bhive_skl_1k correctness**
 
 Capture previous commit baseline, then verify current:
 
@@ -445,7 +445,7 @@ TAG=pre-borrowed-index
 mkdir -p "$BASE"
 
 python3 verification/tools/capture.py \
-  --profile bhive_1k \
+  --profile bhive_skl_1k \
   --engine rust \
   --rust-bin target/release/uica-cli \
   --golden-root "$BASE" \
@@ -453,7 +453,7 @@ python3 verification/tools/capture.py \
   --jobs 8
 
 python3 verification/tools/verify.py \
-  --profile bhive_1k \
+  --profile bhive_skl_1k \
   --engine rust \
   --rust-bin target/release/uica-cli \
   --golden-root "$BASE" \
@@ -497,7 +497,7 @@ git commit -m "perf: reuse borrowed datapack index"
 Dispatch reviewer with:
 
 ```text
-Review commits from Task 1-4. Confirm DataPackIndex no longer clones InstructionRecord records, index is built once per engine invocation, run_simulation_for_cycles no longer builds its own no-op index, and bhive_1k verification remains green. No edits.
+Review commits from Task 1-4. Confirm DataPackIndex no longer clones InstructionRecord records, index is built once per engine invocation, run_simulation_for_cycles no longer builds its own no-op index, and bhive_skl_1k verification remains green. No edits.
 ```
 
 - [ ] **Quality/performance review**
@@ -514,7 +514,7 @@ Proceed to Phase 2 only if:
 
 ```text
 cargo test --workspace passes
-bhive_1k verify passes
+bhive_skl_1k verify passes
 reviewers find no correctness blockers
 ```
 
@@ -785,7 +785,7 @@ let record: &uica_data::InstructionRecord = match_instruction_record_iter(norm, 
 ```bash
 cargo test -q -p uica-core
 cargo test --workspace
-python3 verification/tools/verify.py --profile bhive_1k --engine rust --rust-bin target/release/uica-cli --golden-root "$BASE" --golden-tag "$TAG" --jobs 8
+python3 verification/tools/verify.py --profile bhive_skl_1k --engine rust --rust-bin target/release/uica-cli --golden-root "$BASE" --golden-tag "$TAG" --jobs 8
 ```
 
 Expected: pass and `1000 matched`.
@@ -927,7 +927,7 @@ DataPackIndex::new children %
 to_data_pack/materialization cost
 run time no perf
 run time under perf
-bhive_1k correctness
+bhive_skl_1k correctness
 ```
 
 - [ ] **Step 2: Ask user before default switch**
@@ -947,7 +947,7 @@ If switching default, update `load_default_pack` equivalent to return runtime-ba
 ```bash
 cargo build -q -r -p uica-cli
 cargo test --workspace
-python3 verification/tools/verify.py --profile bhive_1k --engine rust --rust-bin target/release/uica-cli --golden-root "$BASE" --golden-tag "$TAG" --jobs 8
+python3 verification/tools/verify.py --profile bhive_skl_1k --engine rust --rust-bin target/release/uica-cli --golden-root "$BASE" --golden-tag "$TAG" --jobs 8
 PERF_MODE=none /tmp/uica-rust-bhive1k.sh >/tmp/uica-runtime-default.out
 PERF_OUT=/tmp/uica-runtime-default.perf.data PERF_TXT=/tmp/uica-runtime-default.perf.txt /tmp/uica-rust-bhive1k.sh
 ```
@@ -956,7 +956,7 @@ Expected:
 
 ```text
 workspace tests pass
-bhive_1k: 1000 matched
+bhive_skl_1k: 1000 matched
 DataPackIndex::new no longer appears as major hotspot
 ```
 
@@ -977,7 +977,7 @@ Run after all approved tasks:
 cargo fmt --check
 cargo build -q -r -p uica-cli
 cargo test --workspace
-python3 verification/tools/verify.py --profile bhive_1k --engine rust --rust-bin target/release/uica-cli --golden-root "$BASE" --golden-tag "$TAG" --jobs 8
+python3 verification/tools/verify.py --profile bhive_skl_1k --engine rust --rust-bin target/release/uica-cli --golden-root "$BASE" --golden-tag "$TAG" --jobs 8
 ```
 
 Serial timing/perf:
@@ -1005,5 +1005,5 @@ Stop and ask user if:
 
 - Borrowed `FrontEnd<'a>` causes large API churn beyond listed files.
 - `UiPackView` runtime requires decoding JSON blobs so often that perf regresses.
-- Any `bhive_1k` mismatch appears.
+- Any `bhive_skl_1k` mismatch appears.
 - Switching CLI default would remove owned `DataPack` APIs used by tests or wasm.

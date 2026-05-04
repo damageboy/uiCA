@@ -15,7 +15,7 @@ Current curated profile sizes:
 - `curated24`: 24 curated sentinel cases
 - `curated48`: 48 curated sentinel cases (includes AVX2 + AVX512 sampling)
 - `bhive_smoke`: 50 sampled raw-hex cases from BHive SKL throughput data
-- `bhive_1k`: 1000 sampled raw-hex cases from BHive SKL throughput data
+- `bhive_skl_1k`: 1000 sampled raw-hex cases from BHive SKL throughput data
 - `bhive_hsw_1k`: 1000 sampled raw-hex cases from BHive HSW throughput data
 - `bhive_ivb_1k`: 1000 sampled raw-hex cases from BHive IVB throughput data
 
@@ -95,7 +95,7 @@ python3 verification/tools/import_bhive.py --arch SKL --limit 50 --profile bhive
 Generate larger pinned profiles:
 
 ```bash
-python3 verification/tools/import_bhive.py --arch SKL --limit 1000 --profile bhive_1k
+python3 verification/tools/import_bhive.py --arch SKL --limit 1000 --profile bhive_skl_1k
 python3 verification/tools/import_bhive.py --arch HSW --limit 1000 --profile bhive_hsw_1k
 python3 verification/tools/import_bhive.py --arch IVB --limit 1000 --profile bhive_ivb_1k
 ```
@@ -103,7 +103,7 @@ python3 verification/tools/import_bhive.py --arch IVB --limit 1000 --profile bhi
 Use a local CSV instead of downloading:
 
 ```bash
-python3 verification/tools/import_bhive.py --arch SKL --source /path/to/skl.csv --limit 1000 --profile bhive_1k
+python3 verification/tools/import_bhive.py --arch SKL --source /path/to/skl.csv --limit 1000 --profile bhive_skl_1k
 ```
 
 BHive throughput CSV values are `cycles_per_100_iterations`; imported manifests also store `measuredCyclesPerIteration` for evaluation metadata.
@@ -132,14 +132,14 @@ Emit serial command script without running verification. This prepares persisten
 
 ```bash
 python3 verification/tools/verify.py \
-  --profile bhive_1k \
+  --profile bhive_skl_1k \
   --engine python \
   --golden-tag timing-tag \
   --emit-command-script /tmp/python-bhive-1k.sh \
   --fixture-root /tmp/uica-bhive-python-fixtures
 
 python3 verification/tools/verify.py \
-  --profile bhive_1k \
+  --profile bhive_skl_1k \
   --engine rust \
   --rust-bin "$PWD/target/release/uica-cli" \
   --golden-tag timing-tag \

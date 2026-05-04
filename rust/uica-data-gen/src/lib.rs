@@ -106,9 +106,6 @@ fn parse_xml_to_packs(xml_path: &Path) -> Result<BTreeMap<String, DataPack>> {
                 continue;
             };
             validate_arch_name(arch_name)?;
-            if !is_python_supported_arch(arch_name) {
-                continue;
-            }
             let Some(measurement) = arch
                 .children()
                 .find(|node| node.has_tag_name("measurement"))
@@ -194,24 +191,6 @@ fn checksum_kind_name(kind: u16) -> &'static str {
         UIPACK_CHECKSUM_FNV1A64 => "fnv1a64",
         _ => "unknown",
     }
-}
-
-fn is_python_supported_arch(arch_name: &str) -> bool {
-    matches!(
-        arch_name,
-        "BDW"
-            | "CFL"
-            | "CLX"
-            | "HSW"
-            | "ICL"
-            | "IVB"
-            | "KBL"
-            | "RKL"
-            | "SKL"
-            | "SKX"
-            | "SNB"
-            | "TGL"
-    )
 }
 
 fn parse_xml_match_attrs(instruction: roxmltree::Node<'_, '_>) -> BTreeMap<String, String> {

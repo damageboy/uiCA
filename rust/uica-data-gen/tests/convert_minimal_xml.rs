@@ -186,7 +186,7 @@ fn preserves_locked_row_metadata_without_inventing_variant_uops_mite() {
 }
 
 #[test]
-fn skips_architectures_not_supported_by_python_microarch_configs() {
+fn includes_safe_architectures_without_python_microarch_configs() {
     let temp = tempdir().unwrap();
     let xml = temp.path().join("instructions.xml");
     let out_dir = temp.path().join("generated");
@@ -209,7 +209,11 @@ fn skips_architectures_not_supported_by_python_microarch_configs() {
     let manifest = convert_xml_to_pack_dir(&xml, &out_dir).unwrap();
 
     assert!(manifest.architectures.contains_key("SKL"));
-    assert!(!manifest.architectures.contains_key("ZEN5"));
+    assert!(manifest.architectures.contains_key("ZEN5"));
+    assert!(out_dir.join("arch/ZEN5.uipack").is_file());
+    let zen5_pack =
+        uica_data::load_uipack(out_dir.join(&manifest.architectures["ZEN5"].path)).unwrap();
+    assert_eq!(zen5_pack.instructions[0].arch, "ZEN5");
 }
 
 #[test]
@@ -225,7 +229,7 @@ fn returns_error_for_malformed_xml() {
 }
 
 #[test]
-fn skips_safe_but_python_unsupported_arch_name_with_plus() {
+fn includes_safe_arch_name_with_plus() {
     let temp = tempdir().unwrap();
     let xml = temp.path().join("instructions.xml");
     let out_dir = temp.path().join("generated");
@@ -244,7 +248,8 @@ fn skips_safe_but_python_unsupported_arch_name_with_plus() {
 
     let manifest = convert_xml_to_pack_dir(&xml, &out_dir).unwrap();
 
-    assert!(!manifest.architectures.contains_key("ZEN+"));
+    assert!(manifest.architectures.contains_key("ZEN+"));
+    assert!(out_dir.join("arch/ZEN+.uipack").is_file());
 }
 
 #[test]

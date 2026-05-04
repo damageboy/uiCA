@@ -586,6 +586,34 @@ fn event_trace_emits_executed_events_for_zero_port_uops() {
 }
 
 #[test]
+fn datapack_for_arch_without_microarch_model_fails_clearly() {
+    let _lock = env_lock().lock().unwrap();
+    let temp = tempdir().unwrap();
+    let pack_path = temp.path().join("ZEN5.uipack");
+    let pack = sample_pack("ZEN5", "ADD", "ADD", 1, &[("0", 2)]);
+    std::fs::write(&pack_path, encode_uipack(&pack, "ZEN5").unwrap()).unwrap();
+
+    let _env = EnvVarGuard::set("UICA_RUST_DATAPACK", &pack_path);
+    let invocation = Invocation {
+        arch: "ZEN5".to_string(),
+        ..Invocation::default()
+    };
+
+    let err = uica_core::engine::engine_output_with_uipack_verification(
+        &[0x48, 0x01, 0xd8],
+        &invocation,
+        false,
+        false,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("microarchitecture model not supported for ZEN5"),
+        "{err}"
+    );
+}
+
+#[test]
 fn verify_uipack_rejects_bad_checksum_but_default_load_skips_it() {
     let _lock = env_lock().lock().unwrap();
     let original = env::var_os("UICA_RUST_DATAPACK");

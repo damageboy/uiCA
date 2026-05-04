@@ -4,7 +4,6 @@ use std::process;
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use uica_core::engine;
 use uica_decoder::extract_text_from_object;
 use uica_model::Invocation;
 
@@ -146,7 +145,14 @@ fn run() -> Result<()> {
                 .map_err(|e| anyhow!("uipack verification failed: {e}"))?
                 .result
             } else {
-                engine(&bytes, &invocation)
+                uica_core::engine::engine_output_with_uipack_verification(
+                    &bytes,
+                    &invocation,
+                    false,
+                    false,
+                )
+                .map_err(|e| anyhow!("engine failed: {e}"))?
+                .result
             },
             reports: None,
         }

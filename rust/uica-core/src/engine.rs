@@ -86,10 +86,10 @@ fn engine_with_pack_internal(
     let arch = match get_micro_arch(&normalized_invocation.arch) {
         Some(arch) => arch,
         None => {
-            return Ok(EngineOutput {
-                result: fallback_result(code, &normalized_invocation),
-                reports: None,
-            })
+            return Err(format!(
+                "microarchitecture model not supported for {}; uipack data exists but no Rust pipeline configuration is available",
+                normalized_invocation.arch
+            ))
         }
     };
 

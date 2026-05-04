@@ -157,6 +157,24 @@ fn lookup_index_finds_records_by_mnemonic_and_iform() {
 }
 
 #[test]
+fn lookup_index_uses_iform_prefix_when_string_mnemonic_differs() {
+    let mut pack = sample_pack();
+    pack.instructions[0].iform = "MOV_GPRv_GPRv".to_string();
+    pack.instructions[0].string = "MOVE".to_string();
+    pack.instructions[1].iform = "MOV_GPRv_MEMv".to_string();
+    pack.instructions[1].string = "MOV".to_string();
+
+    let bytes = encode_uipack(&pack, "SKL").unwrap();
+    let view = UiPackView::from_bytes(&bytes).unwrap();
+    let index = UiPackViewIndex::new(&view).unwrap();
+
+    assert_eq!(index.record_indices_for_mnemonic("MOV"), &[0, 1]);
+    assert_eq!(index.record_indices_for_mnemonic("MOVE"), &[0]);
+    assert_eq!(index.record_indices_for_iform("MOV_GPRv_GPRv"), &[0]);
+    assert!(index.record_indices_for_iform("MOV").is_empty());
+}
+
+#[test]
 fn rejects_malformed_bytes_during_view_construction() {
     let bytes = encode_uipack(&sample_pack(), "SKL").unwrap();
     let header = read_uipack_header(&bytes).unwrap();

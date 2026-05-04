@@ -505,10 +505,13 @@ mod tests {
         }
     }
 
-    fn trace_frontend_with(instances: Vec<crate::sim::InstrInstance>) -> crate::sim::FrontEnd {
+    fn trace_frontend_with(
+        instances: Vec<crate::sim::InstrInstance>,
+    ) -> crate::sim::FrontEnd<'static> {
         let arch = crate::get_micro_arch("SKL").expect("SKL config should exist");
-        let pack = empty_pack();
-        let mut frontend = crate::sim::FrontEnd::new(arch, true, Vec::new(), 0, &pack);
+        let pack = Box::leak(Box::new(empty_pack()));
+        let index = Box::leak(Box::new(uica_data::DataPackIndex::new(pack)));
+        let mut frontend = crate::sim::FrontEnd::new(arch, true, Vec::new(), 0, pack, index);
         frontend.all_generated_instr_instances = instances;
         frontend
     }

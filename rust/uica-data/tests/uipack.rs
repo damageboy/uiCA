@@ -233,9 +233,9 @@ fn roundtrips_single_arch_uipack_and_keeps_index_compatibility() {
     assert_eq!(agen.mem_base.as_deref(), Some("RAX"));
 
     let decoded_via_auto = load_pack_bytes(&bytes).unwrap();
-    let index = DataPackIndex::new(decoded_via_auto);
-    let add_candidates = index.candidates_for("skl", "add rax, rbx");
-    let mul_candidates = index.candidates_for("SKL", "IMUL");
+    let index = DataPackIndex::new(&decoded_via_auto);
+    let add_candidates: Vec<_> = index.candidates_for("skl", "add rax, rbx").collect();
+    let mul_candidates: Vec<_> = index.candidates_for("SKL", "IMUL").collect();
 
     assert_eq!(add_candidates.len(), 1);
     assert_eq!(add_candidates[0].iform, "ADD_GPRv_GPRv");

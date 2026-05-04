@@ -3,7 +3,7 @@ use std::env;
 use std::sync::{Mutex, OnceLock};
 
 use tempfile::tempdir;
-use uica_core::{match_instruction_record, NormalizedInstr};
+use uica_core::{match_instruction_record_iter, NormalizedInstr};
 use uica_data::{
     encode_uipack, load_manifest_pack, read_uipack_header, DataPack, DataPackIndex,
     DataPackManifest, DataPackManifestArchEntry, InstructionRecord, LatencyRecord, OperandRecord,
@@ -224,6 +224,7 @@ fn dsb_multi_slot_instruction_expands_real_laminated_uops_once() {
     let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../uica-data/generated/manifest.json");
     let pack = load_manifest_pack(&manifest_path, "SKL").unwrap();
+    let index = DataPackIndex::new(&pack);
     let arch = uica_core::get_micro_arch("SKL").unwrap();
 
     // shl rax, cl; dec r15; jnz -8
@@ -233,7 +234,7 @@ fn dsb_multi_slot_instruction_expands_real_laminated_uops_once() {
         uica_decoder::decode_raw(&[0x48, 0xd3, 0xe0, 0x49, 0xff, 0xcf, 0x75, 0xf8]).unwrap();
     let base_instances = uica_core::sim::types::build_instruction_instances(&decoded, 0);
 
-    let mut frontend = uica_core::sim::FrontEnd::new(arch, false, base_instances, 0, &pack);
+    let mut frontend = uica_core::sim::FrontEnd::new(arch, false, base_instances, 0, &pack, &index);
 
     assert_eq!(frontend.uop_source.as_deref(), Some("DSB"));
     assert_laminated_uops_populated_once(&frontend);
@@ -270,6 +271,7 @@ fn stack_pointer_changes_disable_lsd_like_python_getinstructions() {
     let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../uica-data/generated/manifest.json");
     let pack = load_manifest_pack(&manifest_path, "HSW").unwrap();
+    let index = DataPackIndex::new(&pack);
     let arch = uica_core::get_micro_arch("HSW").unwrap();
 
     // push rax; pop rbx; add rbx, rcx; dec rdx; jnz back
@@ -387,7 +389,7 @@ fn stack_pointer_changes_disable_lsd_like_python_getinstructions() {
         }));
     }
 
-    let frontend = uica_core::sim::FrontEnd::new(arch, false, base_instances, 0, &pack);
+    let frontend = uica_core::sim::FrontEnd::new(arch, false, base_instances, 0, &pack, &index);
 
     assert_eq!(frontend.uop_source.as_deref(), Some("DSB"));
     assert!(frontend
@@ -409,10 +411,10 @@ fn binary_manifest_pack_supports_index_matcher_and_perf_lookup() {
     );
 
     let pack = load_manifest_pack(&manifest_path, "SKL").unwrap();
-    let index = DataPackIndex::new(pack);
+    let index = DataPackIndex::new(&pack);
     let candidates = index.candidates_for("skl", "move rax, rbx");
-    let matched = match_instruction_record(
-        &NormalizedInstr {
+    let matched = match_instruction_record_iter(
+        NormalizedInstr {
             max_op_size_bytes: 0,
             immediate: None,
             iform_signature: String::new(),
@@ -422,7 +424,8 @@ fn binary_manifest_pack_supports_index_matcher_and_perf_lookup() {
             explicit_reg_operands: Vec::new(),
             xml_attrs: Default::default(),
             agen: None,
-        },
+        }
+        .as_ref(),
         candidates,
     )
     .expect("iform fallback should match binary pack record");

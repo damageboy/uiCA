@@ -90,6 +90,11 @@ pub struct MappedUiPack {
     bytes: UiPackBytes,
 }
 
+pub struct MappedUiPackRuntime {
+    mapped: MappedUiPack,
+    index: UiPackViewIndex,
+}
+
 #[cfg(not(target_family = "wasm"))]
 enum UiPackBytes {
     Mmap(memmap2::Mmap),
@@ -189,6 +194,30 @@ impl MappedUiPack {
     }
 }
 
+impl MappedUiPackRuntime {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, UiPackError> {
+        Self::from_mapped(MappedUiPack::open(path)?)
+    }
+
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, UiPackError> {
+        Self::from_mapped(MappedUiPack::from_bytes(bytes))
+    }
+
+    pub fn view(&self) -> Result<UiPackView<'_>, UiPackError> {
+        self.mapped.view()
+    }
+
+    pub fn index(&self) -> &UiPackViewIndex {
+        &self.index
+    }
+
+    fn from_mapped(mapped: MappedUiPack) -> Result<Self, UiPackError> {
+        let view = mapped.view()?;
+        let index = UiPackViewIndex::new(&view)?;
+        Ok(Self { mapped, index })
+    }
+}
+
 impl<'a> UiPackView<'a> {
     pub fn from_bytes(bytes: &'a [u8]) -> Result<Self, UiPackError> {
         let header = read_uipack_header(bytes)?;
@@ -274,51 +303,11 @@ impl<'a> UiPackView<'a> {
         let alu_ports = self.alu_ports();
 
         for index in 0..self.record_count() {
-            let record = self.record(index)?;
-            let mut ports = BTreeMap::new();
-            for port in record.ports()? {
-                if ports.insert(port.key().to_string(), port.count()).is_some() {
-                    return Err(UiPackError::InvalidFormat(format!(
-                        "duplicate port key '{}' in uipack record",
-                        port.key()
-                    )));
-                }
-            }
-
-            instructions.push(InstructionRecord {
-                arch: self.arch().to_string(),
-                iform: record.iform().to_string(),
-                string: record.string().to_string(),
-                all_ports: all_ports.clone(),
-                alu_ports: alu_ports.clone(),
-                locked: record.locked(),
-                xml_attrs: record.xml_attrs()?,
-                imm_zero: record.imm_zero(),
-                perf: PerfRecord {
-                    uops: record.perf().uops(),
-                    retire_slots: record.perf().retire_slots(),
-                    uops_mite: record.perf().uops_mite(),
-                    uops_ms: record.perf().uops_ms(),
-                    tp: record.perf().tp(),
-                    ports,
-                    div_cycles: record.perf().div_cycles(),
-                    may_be_eliminated: record.perf().may_be_eliminated(),
-                    complex_decoder: record.perf().complex_decoder(),
-                    n_available_simple_decoders: record.perf().n_available_simple_decoders(),
-                    lcp_stall: record.perf().lcp_stall(),
-                    implicit_rsp_change: record.perf().implicit_rsp_change(),
-                    can_be_used_by_lsd: record.perf().can_be_used_by_lsd(),
-                    cannot_be_in_dsb_due_to_jcc_erratum: record
-                        .perf()
-                        .cannot_be_in_dsb_due_to_jcc_erratum(),
-                    no_micro_fusion: record.perf().no_micro_fusion(),
-                    no_macro_fusion: record.perf().no_macro_fusion(),
-                    macro_fusible_with: record.macro_fusible_with()?,
-                    operands: record.operands()?,
-                    latencies: record.latencies()?,
-                    variants: record.variants()?,
-                },
-            });
+            instructions.push(record_view_to_instruction_record_with_ports(
+                self.record(index)?,
+                &all_ports,
+                &alu_ports,
+            )?);
         }
 
         Ok(DataPack {
@@ -331,6 +320,10 @@ impl<'a> UiPackView<'a> {
 }
 
 impl<'a> UiPackRecordView<'a> {
+    pub fn view(&self) -> &'a UiPackView<'a> {
+        self.view
+    }
+
     pub fn index(&self) -> u32 {
         self.index
     }
@@ -461,6 +454,64 @@ impl<'a> UiPackRecordView<'a> {
     }
 }
 
+pub fn record_view_to_instruction_record(
+    record: UiPackRecordView<'_>,
+) -> Result<InstructionRecord, UiPackError> {
+    let all_ports = record.view().all_ports();
+    let alu_ports = record.view().alu_ports();
+    record_view_to_instruction_record_with_ports(record, &all_ports, &alu_ports)
+}
+
+fn record_view_to_instruction_record_with_ports(
+    record: UiPackRecordView<'_>,
+    all_ports: &[String],
+    alu_ports: &[String],
+) -> Result<InstructionRecord, UiPackError> {
+    let mut ports = BTreeMap::new();
+    for port in record.ports()? {
+        if ports.insert(port.key().to_string(), port.count()).is_some() {
+            return Err(UiPackError::InvalidFormat(format!(
+                "duplicate port key '{}' in uipack record",
+                port.key()
+            )));
+        }
+    }
+
+    let perf = record.perf();
+    Ok(InstructionRecord {
+        arch: record.view().arch().to_string(),
+        iform: record.iform().to_string(),
+        string: record.string().to_string(),
+        all_ports: all_ports.to_vec(),
+        alu_ports: alu_ports.to_vec(),
+        locked: record.locked(),
+        xml_attrs: record.xml_attrs()?,
+        imm_zero: record.imm_zero(),
+        perf: PerfRecord {
+            uops: perf.uops(),
+            retire_slots: perf.retire_slots(),
+            uops_mite: perf.uops_mite(),
+            uops_ms: perf.uops_ms(),
+            tp: perf.tp(),
+            ports,
+            div_cycles: perf.div_cycles(),
+            may_be_eliminated: perf.may_be_eliminated(),
+            complex_decoder: perf.complex_decoder(),
+            n_available_simple_decoders: perf.n_available_simple_decoders(),
+            lcp_stall: perf.lcp_stall(),
+            implicit_rsp_change: perf.implicit_rsp_change(),
+            can_be_used_by_lsd: perf.can_be_used_by_lsd(),
+            cannot_be_in_dsb_due_to_jcc_erratum: perf.cannot_be_in_dsb_due_to_jcc_erratum(),
+            no_micro_fusion: perf.no_micro_fusion(),
+            no_macro_fusion: perf.no_macro_fusion(),
+            macro_fusible_with: record.macro_fusible_with()?,
+            operands: record.operands()?,
+            latencies: record.latencies()?,
+            variants: record.variants()?,
+        },
+    })
+}
+
 impl UiPackPerfView {
     pub fn uops(&self) -> i32 {
         self.uops
@@ -540,10 +591,21 @@ impl UiPackViewIndex {
 
         for index in 0..view.record_count() {
             let record = view.record(index)?;
+            let string_mnemonic = crate::index::normalize_mnemonic(record.string());
+            let iform_mnemonic = crate::index::normalize_iform_prefix(record.iform());
+
             by_mnemonic
-                .entry(crate::index::normalize_mnemonic(record.string()))
+                .entry(string_mnemonic.clone())
                 .or_insert_with(Vec::new)
                 .push(index);
+
+            if string_mnemonic != iform_mnemonic {
+                by_mnemonic
+                    .entry(iform_mnemonic)
+                    .or_insert_with(Vec::new)
+                    .push(index);
+            }
+
             by_iform
                 .entry(record.iform().to_ascii_uppercase())
                 .or_insert_with(Vec::new)

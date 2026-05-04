@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 
 use serde_json::json;
 use uica_data::{
-    load_manifest_pack, load_uipack, DataPack, DataPackIndex, DATAPACK_MANIFEST_FILE_NAME,
+    load_manifest_runtime, record_view_to_instruction_record, DataPack, DataPackIndex,
+    MappedUiPackRuntime, DATAPACK_MANIFEST_FILE_NAME,
 };
 use uica_decoder::decode_raw;
 use uica_model::{Invocation, Summary, UicaResult};
@@ -15,7 +16,7 @@ use crate::analytical::{
     AnalyticalInstruction, AnalyticalLatencyInstruction, AnalyticalMemOperand,
     InstructionPortUsage,
 };
-use crate::matcher::{match_instruction_record_ref, NormalizedInstrRef};
+use crate::matcher::{match_instruction_record_iter, NormalizedInstrRef};
 use crate::micro_arch::{get_micro_arch, MicroArchConfig};
 
 #[derive(Clone, Debug, Default)]
@@ -29,7 +30,7 @@ pub fn engine_output(
     invocation: &Invocation,
     include_reports: bool,
 ) -> Result<EngineOutput, String> {
-    let Some(pack) = load_default_pack(&invocation.arch) else {
+    let Some(runtime) = load_default_runtime(&invocation.arch) else {
         if include_reports {
             return Err(format!("uipack data not found for {}", invocation.arch));
         }
@@ -38,12 +39,14 @@ pub fn engine_output(
             reports: None,
         });
     };
-    engine_output_with_pack(code, invocation, &pack, include_reports)
+    engine_output_with_uipack_runtime(code, invocation, &runtime, include_reports)
 }
 
 pub fn engine(code: &[u8], invocation: &Invocation) -> UicaResult {
-    if let Some(pack) = load_default_pack(&invocation.arch) {
-        return engine_with_pack(code, invocation, &pack);
+    if let Some(runtime) = load_default_runtime(&invocation.arch) {
+        return engine_output_with_uipack_runtime(code, invocation, &runtime, false)
+            .map(|output| output.result)
+            .unwrap_or_else(|_| fallback_result(code, invocation));
     }
 
     fallback_result(code, invocation)
@@ -86,7 +89,7 @@ fn engine_with_pack_internal(
         }
     };
 
-    let index = DataPackIndex::new(pack.clone());
+    let index = DataPackIndex::new(pack);
 
     let mut total_retire_slots = 0;
     let mut loop_facts = Vec::with_capacity(decoded.len());
@@ -163,7 +166,7 @@ fn engine_with_pack_internal(
         };
 
         let candidates = index.candidates_for(&result.invocation.arch, &decoded_instr.mnemonic);
-        if let Some(record) = match_instruction_record_ref(norm, candidates) {
+        if let Some(record) = match_instruction_record_iter(norm, candidates) {
             let uses_sr_fallback_for_analytics =
                 crate::sim::uop_expand::record_movzx_special_case_with_input_regs(
                     record,
@@ -368,7 +371,7 @@ fn engine_with_pack_internal(
     let mut lsd_active = false;
     let mut lsd_unroll_count = 1u32;
     if let Ok((frontend, uops_for_round, final_clock)) =
-        run_simulation_for_cycles(code, &normalized_invocation, pack)
+        run_simulation_for_cycles(code, &normalized_invocation, pack, &index)
     {
         lsd_active = frontend.uop_source.as_deref() == Some("LSD");
         lsd_unroll_count = frontend.lsd_unroll_count;
@@ -445,6 +448,50 @@ pub fn engine_output_with_pack(
     include_reports: bool,
 ) -> Result<EngineOutput, String> {
     engine_with_pack_internal(code, invocation, pack, include_reports)
+}
+
+pub fn engine_output_with_uipack_runtime(
+    code: &[u8],
+    invocation: &Invocation,
+    runtime: &MappedUiPackRuntime,
+    include_reports: bool,
+) -> Result<EngineOutput, String> {
+    let pack = materialize_runtime_pack_for_code(code, runtime)?;
+    engine_with_pack_internal(code, invocation, &pack, include_reports)
+}
+
+fn materialize_runtime_pack_for_code(
+    code: &[u8],
+    runtime: &MappedUiPackRuntime,
+) -> Result<DataPack, String> {
+    let view = runtime.view().map_err(|err| err.to_string())?;
+    let mut selected = BTreeSet::new();
+    let mut instructions = Vec::new();
+
+    if let Ok(decoded) = decode_raw(code) {
+        for decoded_instr in &decoded {
+            for &record_index in runtime
+                .index()
+                .record_indices_for_mnemonic(&decoded_instr.mnemonic)
+            {
+                if selected.insert(record_index) {
+                    instructions.push(
+                        record_view_to_instruction_record(
+                            view.record(record_index).map_err(|err| err.to_string())?,
+                        )
+                        .map_err(|err| err.to_string())?,
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(DataPack {
+        schema_version: view.schema_version().to_string(),
+        all_ports: view.all_ports(),
+        alu_ports: view.alu_ports(),
+        instructions,
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -1613,26 +1660,22 @@ fn fallback_result(code: &[u8], invocation: &Invocation) -> UicaResult {
     }
 }
 
-fn load_default_pack(arch: &str) -> Option<DataPack> {
+fn load_default_runtime(arch: &str) -> Option<MappedUiPackRuntime> {
     if let Ok(path) = env::var("UICA_RUST_DATAPACK") {
-        if let Some(pack) = load_runtime_pack_source(Path::new(&path), arch) {
-            return Some(pack);
+        if let Some(runtime) = load_runtime_source(Path::new(&path), arch) {
+            return Some(runtime);
         }
     }
 
     let generated_dir = PathBuf::from("rust/uica-data/generated");
-    if let Some(pack) = load_runtime_pack_source(&generated_dir, arch) {
-        return Some(pack);
-    }
-
-    None
+    load_runtime_source(&generated_dir, arch)
 }
 
-fn load_runtime_pack_source(path: &Path, arch: &str) -> Option<DataPack> {
+fn load_runtime_source(path: &Path, arch: &str) -> Option<MappedUiPackRuntime> {
     if let Some(manifest_path) = runtime_manifest_path(path) {
         if manifest_path.exists() {
-            if let Ok(pack) = load_manifest_pack(&manifest_path, arch) {
-                return Some(pack);
+            if let Ok(runtime) = load_manifest_runtime(&manifest_path, arch) {
+                return Some(runtime);
             }
         }
     }
@@ -1647,7 +1690,7 @@ fn load_runtime_pack_source(path: &Path, arch: &str) -> Option<DataPack> {
             .and_then(|ext| ext.to_str())
             .is_some_and(|ext| ext.eq_ignore_ascii_case("uipack"))
     {
-        return load_uipack(path).ok();
+        return MappedUiPackRuntime::open(path).ok();
     }
 
     None
@@ -1674,9 +1717,11 @@ pub fn engine_trace(
     code: &[u8],
     invocation: &Invocation,
 ) -> Result<crate::sim::TraceWriter, String> {
-    let pack = load_default_pack(&invocation.arch)
+    let runtime = load_default_runtime(&invocation.arch)
         .ok_or_else(|| format!("uipack data not found for {}", invocation.arch))?;
-    let (frontend, _, max_cycle) = run_simulation_for_cycles(code, invocation, &pack)?;
+    let pack = materialize_runtime_pack_for_code(code, &runtime)?;
+    let index = DataPackIndex::new(&pack);
+    let (frontend, _, max_cycle) = run_simulation_for_cycles(code, invocation, &pack, &index)?;
 
     // Emit trace events from simulator state, mirroring Python's generateEventTrace.
     emit_trace_from_frontend(&frontend, max_cycle)
@@ -2102,11 +2147,12 @@ struct UopsForRound {
 
 /// Run the simulator and return the frontend, Python-style uopsForRound, and
 /// final clock for cycles JSON extraction.
-fn run_simulation_for_cycles(
+fn run_simulation_for_cycles<'a>(
     code: &[u8],
     invocation: &Invocation,
-    pack: &DataPack,
-) -> Result<(crate::sim::FrontEnd, Vec<UopsForRound>, u32), String> {
+    pack: &'a DataPack,
+    pack_index: &'a DataPackIndex<'a>,
+) -> Result<(crate::sim::FrontEnd<'a>, Vec<UopsForRound>, u32), String> {
     use crate::sim::types::build_instruction_instances;
     use crate::sim::FrontEnd;
 
@@ -2116,20 +2162,6 @@ fn run_simulation_for_cycles(
     let decoded = decode_raw(code).map_err(|e| format!("decode error: {e}"))?;
 
     let base_instances = build_instruction_instances(&decoded, invocation.alignment_offset);
-
-    // Bail out early if the simulator cannot model every instruction in the
-    // stream yet. Keeps engine.rs on the analytical summary path for those
-    // cases without running a doomed simulation to the safety cap.
-    // Build DataPackIndex once for all checks (not per-instruction).
-    let check_index = uica_data::DataPackIndex::new(pack.clone());
-    for inst in &base_instances {
-        if !crate::sim::uop_expand::is_instr_supported(inst, &invocation.arch, &check_index) {
-            return Err(format!(
-                "unsupported instruction for simulator: {}",
-                inst.mnemonic
-            ));
-        }
-    }
 
     let min_cycles = invocation.min_cycles;
     let min_iterations = invocation.min_iterations;
@@ -2145,6 +2177,7 @@ fn run_simulation_for_cycles(
         base_instances.clone(),
         invocation.alignment_offset,
         pack,
+        pack_index,
         invocation.init_policy.clone(),
         invocation.simple_front_end,
         invocation.no_micro_fusion,
@@ -2494,7 +2527,8 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
     use uica_data::{
-        encode_uipack, DataPack, InstructionRecord, PerfRecord, DATAPACK_SCHEMA_VERSION,
+        encode_uipack, load_manifest_pack, DataPack, InstructionRecord, PerfRecord,
+        DATAPACK_SCHEMA_VERSION,
     };
 
     fn sample_pack(
@@ -2649,6 +2683,34 @@ mod tests {
     }
 
     #[test]
+    fn uipack_runtime_experimental_path_matches_owned_pack() {
+        let code = vec![0x48, 0x01, 0xd8];
+        let invocation = Invocation {
+            arch: "SKL".to_string(),
+            min_cycles: 8,
+            min_iterations: 1,
+            ..Invocation::default()
+        };
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../uica-data/generated/manifest.json");
+        let pack = load_manifest_pack(&manifest, "SKL").unwrap();
+        let runtime = uica_data::load_manifest_runtime(&manifest, "SKL").unwrap();
+
+        let owned = engine_output_with_pack(&code, &invocation, &pack, false)
+            .unwrap()
+            .result;
+        let mapped = engine_output_with_uipack_runtime(&code, &invocation, &runtime, false)
+            .unwrap()
+            .result;
+
+        assert_eq!(
+            mapped.summary.throughput_cycles_per_iteration,
+            owned.summary.throughput_cycles_per_iteration
+        );
+        assert_eq!(mapped.summary.limits, owned.summary.limits);
+    }
+
+    #[test]
     fn runtime_pack_source_ignores_legacy_instructions_json() {
         let temp = tempdir().unwrap();
         let legacy_path = temp.path().join("instructions.json");
@@ -2658,6 +2720,6 @@ mod tests {
         )
         .unwrap();
 
-        assert!(load_runtime_pack_source(temp.path(), "SKL").is_none());
+        assert!(load_runtime_source(temp.path(), "SKL").is_none());
     }
 }

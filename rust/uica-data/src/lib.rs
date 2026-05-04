@@ -9,14 +9,15 @@ use serde::{Deserialize, Serialize};
 
 pub use index::DataPackIndex;
 pub use manifest::{
-    load_manifest, load_manifest_pack, resolve_manifest_pack_path, DataPackManifest,
-    DataPackManifestArchEntry, DataPackManifestError, DATAPACK_MANIFEST_FILE_NAME,
-    DATAPACK_MANIFEST_SCHEMA_VERSION,
+    load_manifest, load_manifest_pack, load_manifest_runtime, resolve_manifest_pack_path,
+    DataPackManifest, DataPackManifestArchEntry, DataPackManifestError,
+    DATAPACK_MANIFEST_FILE_NAME, DATAPACK_MANIFEST_SCHEMA_VERSION,
 };
 pub use uipack::{
-    encode_uipack, load_pack_bytes, load_uipack_bytes, read_uipack_header, MappedUiPack,
-    UiPackError, UiPackHeader, UiPackPerfView, UiPackPortView, UiPackRecordView, UiPackView,
-    UiPackViewIndex, UIPACK_CHECKSUM_FNV1A64, UIPACK_MAGIC, UIPACK_VERSION,
+    encode_uipack, load_pack_bytes, load_uipack_bytes, read_uipack_header,
+    record_view_to_instruction_record, MappedUiPack, MappedUiPackRuntime, UiPackError,
+    UiPackHeader, UiPackPerfView, UiPackPortView, UiPackRecordView, UiPackView, UiPackViewIndex,
+    UIPACK_CHECKSUM_FNV1A64, UIPACK_MAGIC, UIPACK_VERSION,
 };
 
 pub const DATAPACK_SCHEMA_VERSION: &str = "uica-instructions-pack-v2";

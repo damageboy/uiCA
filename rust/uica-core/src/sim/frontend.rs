@@ -35,7 +35,7 @@ use super::uop_storage::UopStorage;
 fn populate_instr_instance_metadata(
     instr_i: &mut InstrInstance,
     arch_name: &str,
-    pack_index: &uica_data::DataPackIndex,
+    pack_index: &uica_data::DataPackIndex<'_>,
     no_micro_fusion: bool,
     no_macro_fusion: bool,
 ) {
@@ -51,7 +51,7 @@ fn populate_instr_instance_metadata(
         agen: instr_i.agen.as_deref(),
     };
     let candidates = pack_index.candidates_for(arch_name, &instr_i.mnemonic);
-    if let Some(record) = crate::matcher::match_instruction_record_ref(norm, candidates) {
+    if let Some(record) = crate::matcher::match_instruction_record_iter(norm, candidates) {
         let arch = crate::micro_arch::get_micro_arch(arch_name);
         let perf = if let Some(arch) = arch.as_ref() {
             perf_for_python_getinstructions(
@@ -150,7 +150,7 @@ fn populate_instr_instance_metadata(
 fn populate_and_recompute_cache_blocks(
     cache_blocks: &mut [Vec<InstrInstance>],
     arch_name: &str,
-    pack_index: &uica_data::DataPackIndex,
+    pack_index: &uica_data::DataPackIndex<'_>,
     no_micro_fusion: bool,
     no_macro_fusion: bool,
 ) {
@@ -262,7 +262,7 @@ fn find_cacheable_addresses_for_first_round(
     addresses
 }
 
-pub struct FrontEnd {
+pub struct FrontEnd<'a> {
     pub arch: MicroArchConfig,
     pub renamer: Renamer,
     pub reorder_buffer: ReorderBuffer,
@@ -292,17 +292,18 @@ pub struct FrontEnd {
     pub high8_reg_clean: std::collections::HashMap<String, bool>,
     pub reg_merge_issued_for: HashSet<u64>,
     pub uop_storage: UopStorage,
-    pub pack: uica_data::DataPack,
-    pub pack_index: uica_data::DataPackIndex,
+    pub pack: &'a uica_data::DataPack,
+    pub pack_index: &'a uica_data::DataPackIndex<'a>,
 }
 
-impl FrontEnd {
+impl<'a> FrontEnd<'a> {
     pub fn new(
         arch: MicroArchConfig,
         unroll: bool,
         base_instructions: Vec<InstrInstance>,
         alignment_offset: u32,
-        pack: &uica_data::DataPack,
+        pack: &'a uica_data::DataPack,
+        pack_index: &'a uica_data::DataPackIndex<'a>,
     ) -> Self {
         Self::new_with_init_policy(
             arch,
@@ -310,6 +311,7 @@ impl FrontEnd {
             base_instructions,
             alignment_offset,
             pack,
+            pack_index,
             "diff",
             false,
             false,
@@ -323,7 +325,8 @@ impl FrontEnd {
         unroll: bool,
         base_instructions: Vec<InstrInstance>,
         alignment_offset: u32,
-        pack: &uica_data::DataPack,
+        pack: &'a uica_data::DataPack,
+        pack_index: &'a uica_data::DataPackIndex<'a>,
         init_policy: impl Into<String>,
         simple_front_end: bool,
         no_micro_fusion: bool,
@@ -362,7 +365,6 @@ impl FrontEnd {
         // For loop mode, check if we can use DSB or LSD using the first
         // generated round, matching Python FrontEnd.__init__.
         if !unroll && !simple_front_end {
-            let pack_index = uica_data::DataPackIndex::new(pack.clone());
             let mut first_round_blocks =
                 CacheBlocksForNextRoundGenerator::new(base_instructions.clone(), alignment_offset)
                     .next()
@@ -371,7 +373,7 @@ impl FrontEnd {
             populate_and_recompute_cache_blocks(
                 &mut first_round_blocks,
                 arch.name,
-                &pack_index,
+                pack_index,
                 no_micro_fusion,
                 no_macro_fusion,
             );
@@ -455,37 +457,40 @@ impl FrontEnd {
             .collect(),
             reg_merge_issued_for: HashSet::new(),
             uop_storage: UopStorage::new(),
-            pack_index: uica_data::DataPackIndex::new(pack.clone()),
-            pack: pack.clone(),
+            pack,
+            pack_index,
         };
 
         // Pre-load LSD iterations (ported from uiCA.py FrontEnd.__init__).
         if !unroll && !simple_front_end && frontend.uop_source.as_deref() == Some("LSD") {
             // Collect all cache blocks to pre-load
             let mut all_blocks = Vec::new();
-            if let Some(ref mut gen) = frontend.cache_blocks_generator {
-                // First round
-                if let Some(mut first_round) = gen.next() {
-                    populate_and_recompute_cache_blocks(
-                        &mut first_round,
-                        frontend.arch.name,
-                        &frontend.pack_index,
-                        frontend.no_micro_fusion,
-                        frontend.no_macro_fusion,
-                    );
-                    all_blocks.extend(first_round);
-                }
-                // (LSDUnrollCount - 1) additional rounds
-                for _ in 0..(frontend.lsd_unroll_count - 1) {
-                    if let Some(mut additional_round) = gen.next() {
+            {
+                let pack_index = frontend.pack_index;
+                if let Some(ref mut gen) = frontend.cache_blocks_generator {
+                    // First round
+                    if let Some(mut first_round) = gen.next() {
                         populate_and_recompute_cache_blocks(
-                            &mut additional_round,
+                            &mut first_round,
                             frontend.arch.name,
-                            &frontend.pack_index,
+                            pack_index,
                             frontend.no_micro_fusion,
                             frontend.no_macro_fusion,
                         );
-                        all_blocks.extend(additional_round);
+                        all_blocks.extend(first_round);
+                    }
+                    // (LSDUnrollCount - 1) additional rounds
+                    for _ in 0..(frontend.lsd_unroll_count - 1) {
+                        if let Some(mut additional_round) = gen.next() {
+                            populate_and_recompute_cache_blocks(
+                                &mut additional_round,
+                                frontend.arch.name,
+                                pack_index,
+                                frontend.no_micro_fusion,
+                                frontend.no_macro_fusion,
+                            );
+                            all_blocks.extend(additional_round);
+                        }
                     }
                 }
             }
@@ -496,16 +501,19 @@ impl FrontEnd {
         } else if !unroll && !simple_front_end {
             // DSB or MITE: load first round
             let mut first_round_blocks = Vec::new();
-            if let Some(ref mut gen) = frontend.cache_blocks_generator {
-                if let Some(mut first_round) = gen.next() {
-                    populate_and_recompute_cache_blocks(
-                        &mut first_round,
-                        frontend.arch.name,
-                        &frontend.pack_index,
-                        frontend.no_micro_fusion,
-                        frontend.no_macro_fusion,
-                    );
-                    first_round_blocks.extend(first_round);
+            {
+                let pack_index = frontend.pack_index;
+                if let Some(ref mut gen) = frontend.cache_blocks_generator {
+                    if let Some(mut first_round) = gen.next() {
+                        populate_and_recompute_cache_blocks(
+                            &mut first_round,
+                            frontend.arch.name,
+                            pack_index,
+                            frontend.no_micro_fusion,
+                            frontend.no_macro_fusion,
+                        );
+                        first_round_blocks.extend(first_round);
+                    }
                 }
             }
             for cache_block in first_round_blocks {
@@ -520,7 +528,7 @@ impl FrontEnd {
         populate_instr_instance_metadata(
             instr_i,
             self.arch.name,
-            &self.pack_index,
+            self.pack_index,
             self.no_micro_fusion,
             self.no_macro_fusion,
         );
@@ -536,8 +544,8 @@ impl FrontEnd {
             &mut self.lam_idx_counter,
             &mut self.uop_storage,
             self.arch.name,
-            &self.pack,
-            Some(&self.pack_index),
+            self.pack,
+            Some(self.pack_index),
         ) {
             for &lam_idx in &lam_idxs {
                 if let Some(lam_uop) = self.uop_storage.get_laminated_uop_mut(lam_idx) {
@@ -568,13 +576,15 @@ impl FrontEnd {
         {
             blocks.push(next_block);
         }
-        populate_and_recompute_cache_blocks(
-            &mut blocks,
-            self.arch.name,
-            &self.pack_index,
-            self.no_micro_fusion,
-            self.no_macro_fusion,
-        );
+        {
+            populate_and_recompute_cache_blocks(
+                &mut blocks,
+                self.arch.name,
+                self.pack_index,
+                self.no_micro_fusion,
+                self.no_macro_fusion,
+            );
+        }
         if first_was_fused_with_prev {
             if let Some(first) = blocks[0].first_mut() {
                 first.macro_fused_with_prev_instr = true;
@@ -661,7 +671,7 @@ impl FrontEnd {
                             populate_and_recompute_cache_blocks(
                                 &mut cache_blocks,
                                 self.arch.name,
-                                &self.pack_index,
+                                self.pack_index,
                                 self.no_micro_fusion,
                                 self.no_macro_fusion,
                             );
@@ -689,7 +699,7 @@ impl FrontEnd {
                         populate_and_recompute_cache_blocks(
                             &mut cache_blocks,
                             self.arch.name,
-                            &self.pack_index,
+                            self.pack_index,
                             self.no_micro_fusion,
                             self.no_macro_fusion,
                         );
@@ -1325,7 +1335,7 @@ mod tests {
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../uica-data/generated/manifest.json");
         let pack = uica_data::load_manifest_pack(manifest, "SKL").unwrap();
-        let index = uica_data::DataPackIndex::new(pack);
+        let index = uica_data::DataPackIndex::new(&pack);
 
         populate_instr_instance_metadata(&mut instances[0], "SKL", &index, false, false);
 

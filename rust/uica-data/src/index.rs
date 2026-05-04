@@ -2,49 +2,51 @@ use std::collections::BTreeMap;
 
 use crate::{DataPack, InstructionRecord};
 
-pub struct DataPackIndex {
-    by_arch_and_mnemonic: BTreeMap<(String, String), Vec<InstructionRecord>>,
-    empty: Vec<InstructionRecord>,
+pub struct DataPackIndex<'a> {
+    pack: &'a DataPack,
+    by_arch_and_mnemonic: BTreeMap<(String, String), Vec<usize>>,
+    empty: Vec<usize>,
 }
 
-impl DataPackIndex {
-    pub fn new(pack: DataPack) -> Self {
-        let mut by_arch_and_mnemonic: BTreeMap<(String, String), Vec<InstructionRecord>> =
-            BTreeMap::new();
+impl<'a> DataPackIndex<'a> {
+    pub fn new(pack: &'a DataPack) -> Self {
+        let mut by_arch_and_mnemonic: BTreeMap<(String, String), Vec<usize>> = BTreeMap::new();
 
-        for record in pack.instructions {
+        for (index, record) in pack.instructions.iter().enumerate() {
             let arch = record.arch.to_ascii_uppercase();
             let string_mnemonic = normalize_mnemonic(&record.string);
             let iform_mnemonic = normalize_iform_prefix(&record.iform);
 
-            if string_mnemonic == iform_mnemonic {
-                by_arch_and_mnemonic
-                    .entry((arch, string_mnemonic))
-                    .or_default()
-                    .push(record);
-            } else {
-                by_arch_and_mnemonic
-                    .entry((arch.clone(), string_mnemonic))
-                    .or_default()
-                    .push(record.clone());
+            by_arch_and_mnemonic
+                .entry((arch.clone(), string_mnemonic.clone()))
+                .or_default()
+                .push(index);
+
+            if string_mnemonic != iform_mnemonic {
                 by_arch_and_mnemonic
                     .entry((arch, iform_mnemonic))
                     .or_default()
-                    .push(record);
+                    .push(index);
             }
         }
 
         Self {
+            pack,
             by_arch_and_mnemonic,
             empty: Vec::new(),
         }
     }
 
-    pub fn candidates_for(&self, arch: &str, mnemonic: &str) -> &[InstructionRecord] {
+    pub fn candidates_for(
+        &'a self,
+        arch: &str,
+        mnemonic: &str,
+    ) -> impl Iterator<Item = &'a InstructionRecord> + 'a {
         self.by_arch_and_mnemonic
             .get(&(arch.to_ascii_uppercase(), normalize_mnemonic(mnemonic)))
-            .map(Vec::as_slice)
-            .unwrap_or(self.empty.as_slice())
+            .unwrap_or(&self.empty)
+            .iter()
+            .map(|&index| &self.pack.instructions[index])
     }
 }
 
@@ -97,6 +99,6 @@ fn canonical_mnemonic_alias(mnemonic: &str) -> &str {
     }
 }
 
-fn normalize_iform_prefix(iform: &str) -> String {
+pub(crate) fn normalize_iform_prefix(iform: &str) -> String {
     normalize_mnemonic(iform.split('_').next().unwrap_or(""))
 }

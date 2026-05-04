@@ -4,7 +4,9 @@ use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{DataPack, MappedUiPack, UiPackError, UIPACK_CHECKSUM_FNV1A64};
+use crate::{
+    DataPack, MappedUiPack, MappedUiPackRuntime, UiPackError, UiPackView, UIPACK_CHECKSUM_FNV1A64,
+};
 
 pub const DATAPACK_MANIFEST_SCHEMA_VERSION: &str = "uica-datapack-manifest-v2";
 pub const DATAPACK_MANIFEST_FILE_NAME: &str = "manifest.json";
@@ -102,6 +104,45 @@ pub fn load_manifest_pack(
     let pack_path = resolve_pack_path(manifest_path, &entry.path)?;
     let mapped = MappedUiPack::open(&pack_path)?;
     let view = mapped.view()?;
+
+    validate_manifest_view(&manifest, manifest_arch, entry, &view)?;
+
+    Ok(view.to_data_pack()?)
+}
+
+pub fn load_manifest_runtime(
+    manifest_path: impl AsRef<Path>,
+    arch: &str,
+) -> Result<MappedUiPackRuntime, DataPackManifestError> {
+    let manifest_path = manifest_path.as_ref();
+    let manifest = load_manifest(manifest_path)?;
+    let (manifest_arch, entry) = manifest_arch_entry(&manifest, arch)?;
+    let pack_path = resolve_pack_path(manifest_path, &entry.path)?;
+    let runtime = MappedUiPackRuntime::open(&pack_path)?;
+    let view = runtime.view()?;
+
+    validate_manifest_view(&manifest, manifest_arch, entry, &view)?;
+
+    Ok(runtime)
+}
+
+fn validate_manifest(manifest: &DataPackManifest) -> Result<(), DataPackManifestError> {
+    if manifest.schema_version != DATAPACK_MANIFEST_SCHEMA_VERSION {
+        return Err(DataPackManifestError::InvalidManifest(format!(
+            "unsupported manifest schema version '{}'",
+            manifest.schema_version
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_manifest_view(
+    manifest: &DataPackManifest,
+    manifest_arch: &str,
+    entry: &DataPackManifestArchEntry,
+    view: &UiPackView<'_>,
+) -> Result<(), DataPackManifestError> {
     let header = view.header();
 
     if manifest.uipack_version != header.version {
@@ -149,17 +190,6 @@ pub fn load_manifest_pack(
     if !view.arch().eq_ignore_ascii_case(manifest_arch) {
         return Err(DataPackManifestError::InvalidManifest(format!(
             "manifest arch '{manifest_arch}' does not match pack record arch"
-        )));
-    }
-
-    Ok(view.to_data_pack()?)
-}
-
-fn validate_manifest(manifest: &DataPackManifest) -> Result<(), DataPackManifestError> {
-    if manifest.schema_version != DATAPACK_MANIFEST_SCHEMA_VERSION {
-        return Err(DataPackManifestError::InvalidManifest(format!(
-            "unsupported manifest schema version '{}'",
-            manifest.schema_version
         )));
     }
 

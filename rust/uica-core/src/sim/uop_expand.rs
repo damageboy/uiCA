@@ -176,7 +176,7 @@ pub struct UopPlan {
 pub fn is_instr_supported(
     instr: &InstrInstance,
     arch_name: &str,
-    index: &uica_data::DataPackIndex,
+    index: &uica_data::DataPackIndex<'_>,
 ) -> bool {
     let _ = (instr, arch_name, index);
     // Python parity: missing `archData.instrData[iform]` becomes UnknownInstr,
@@ -192,17 +192,13 @@ pub fn lookup_uops_mite_ms(
     arch_name: &str,
     pack: &uica_data::DataPack,
 ) -> (u32, u32) {
-    let owned;
-    let index: &uica_data::DataPackIndex = {
-        owned = uica_data::DataPackIndex::new(pack.clone());
-        &owned
-    };
+    let index = uica_data::DataPackIndex::new(pack);
     lookup_uops_mite_ms_indexed(
         mnemonic,
         iform_signature,
         max_op_size_bytes,
         arch_name,
-        index,
+        &index,
     )
 }
 
@@ -429,9 +425,9 @@ pub fn lookup_uops_mite_ms_indexed(
     iform_signature: &str,
     max_op_size_bytes: u8,
     arch_name: &str,
-    index: &uica_data::DataPackIndex,
+    index: &uica_data::DataPackIndex<'_>,
 ) -> (u32, u32) {
-    use crate::matcher::{match_instruction_record_ref, NormalizedInstrRef};
+    use crate::matcher::{match_instruction_record_iter, NormalizedInstrRef};
     let explicit_reg_operands = Vec::new();
     let xml_attrs = BTreeMap::new();
     let norm = NormalizedInstrRef {
@@ -446,7 +442,7 @@ pub fn lookup_uops_mite_ms_indexed(
         agen: None,
     };
     let candidates = index.candidates_for(arch_name, mnemonic);
-    match match_instruction_record_ref(norm, candidates) {
+    match match_instruction_record_iter(norm, candidates) {
         Some(rec) => (record_uops_mite(rec), rec.perf.uops_ms as u32),
         None => (1, 0),
     }
@@ -467,19 +463,19 @@ pub fn expand_instr_instance_to_lam_uops_with_storage(
     storage: &mut UopStorage,
     arch_name: &str,
     pack: &uica_data::DataPack,
-    pack_index: Option<&uica_data::DataPackIndex>,
+    pack_index: Option<&uica_data::DataPackIndex<'_>>,
 ) -> Result<Vec<u64>, String> {
     if instr.macro_fused_with_prev_instr {
         return Ok(vec![]);
     }
-    use crate::matcher::{match_instruction_record_ref, NormalizedInstrRef};
+    use crate::matcher::{match_instruction_record_iter, NormalizedInstrRef};
 
     // Use pre-built index if provided (avoids O(n) rebuild per call).
     let owned_index;
     let index = if let Some(idx) = pack_index {
         idx
     } else {
-        owned_index = uica_data::DataPackIndex::new(pack.clone());
+        owned_index = uica_data::DataPackIndex::new(pack);
         &owned_index
     };
     let norm = NormalizedInstrRef {
@@ -494,7 +490,7 @@ pub fn expand_instr_instance_to_lam_uops_with_storage(
         agen: instr.agen.as_deref(),
     };
     let candidates = index.candidates_for(arch_name, &instr.mnemonic);
-    let record = match match_instruction_record_ref(norm, candidates) {
+    let record = match match_instruction_record_iter(norm, candidates) {
         Some(rec) => rec,
         None => {
             // Python parity: `getInstructions()` creates `UnknownInstr` for
@@ -1986,7 +1982,7 @@ mod tests {
                 },
             }],
         };
-        let index = DataPackIndex::new(pack.clone());
+        let index = DataPackIndex::new(&pack);
         let mut instr = super::super::types::InstrInstance::new(
             0,
             0,
@@ -2029,10 +2025,9 @@ mod tests {
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../uica-data/generated/manifest.json");
         let pack = load_manifest_pack(manifest, "HSW").unwrap();
-        let index = DataPackIndex::new(pack);
+        let index = DataPackIndex::new(&pack);
         let record = index
             .candidates_for("HSW", "CMOVG")
-            .iter()
             .find(|record| record.iform == "CMOVNLE_GPRv_GPRv")
             .expect("CMOVNLE_GPRv_GPRv record");
 
@@ -2051,10 +2046,9 @@ mod tests {
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../uica-data/generated/manifest.json");
         let pack = load_manifest_pack(manifest, "SKL").unwrap();
-        let index = DataPackIndex::new(pack);
+        let index = DataPackIndex::new(&pack);
         let record = index
             .candidates_for("SKL", "VMULSD")
-            .iter()
             .find(|record| record.iform == "VMULSD_XMMdq_XMMdq_MEMq")
             .expect("VMULSD_XMMdq_XMMdq_MEMq record");
 
@@ -2071,10 +2065,9 @@ mod tests {
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../uica-data/generated/manifest.json");
         let pack = load_manifest_pack(manifest, "HSW").unwrap();
-        let index = DataPackIndex::new(pack);
+        let index = DataPackIndex::new(&pack);
         let record = index
             .candidates_for("HSW", "MOV")
-            .iter()
             .find(|record| {
                 super::record_may_be_eliminated(record) && record.string == "MOV_89 (R64, R64)"
             })
@@ -2413,7 +2406,7 @@ mod tests {
             alu_ports: Default::default(),
             instructions: vec![record],
         };
-        let index = DataPackIndex::new(pack.clone());
+        let index = DataPackIndex::new(&pack);
         let mut instr = super::super::types::InstrInstance::new(
             0,
             0,
@@ -2467,10 +2460,9 @@ mod tests {
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../uica-data/generated/manifest.json");
         let pack = load_manifest_pack(manifest, "HSW").unwrap();
-        let index = DataPackIndex::new(pack);
+        let index = DataPackIndex::new(&pack);
         let record = index
             .candidates_for("HSW", "LFENCE")
-            .iter()
             .find(|record| record.iform == "LFENCE")
             .expect("LFENCE record");
 

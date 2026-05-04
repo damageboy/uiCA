@@ -2,6 +2,28 @@ use std::collections::BTreeMap;
 
 use uica_data::InstructionRecord;
 
+pub trait InstrRecordLike {
+    fn iform(&self) -> &str;
+    fn string(&self) -> &str;
+    fn xml_attrs(&self) -> &BTreeMap<String, String>;
+    fn imm_zero(&self) -> bool;
+}
+
+impl InstrRecordLike for InstructionRecord {
+    fn iform(&self) -> &str {
+        &self.iform
+    }
+    fn string(&self) -> &str {
+        &self.string
+    }
+    fn xml_attrs(&self) -> &BTreeMap<String, String> {
+        &self.xml_attrs
+    }
+    fn imm_zero(&self) -> bool {
+        self.imm_zero
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct NormalizedInstr {
     pub mnemonic: String,
@@ -90,6 +112,18 @@ pub fn match_instruction_record_ref<'a>(
     instruction: NormalizedInstrRef<'_>,
     candidates: &'a [InstructionRecord],
 ) -> Option<&'a InstructionRecord> {
+    match_instruction_record_iter(instruction, candidates.iter())
+}
+
+pub fn match_instruction_record_iter<'a, R, I>(
+    instruction: NormalizedInstrRef<'_>,
+    candidates: I,
+) -> Option<&'a R>
+where
+    R: InstrRecordLike + 'a,
+    I: IntoIterator<Item = &'a R>,
+{
+    let candidates: Vec<&'a R> = candidates.into_iter().collect();
     let normalized_mnemonic = normalize_mnemonic(instruction.mnemonic);
     let raw_mnemonic = raw_mnemonic(instruction.mnemonic);
     let sig = instruction.iform_signature.trim();
@@ -97,9 +131,10 @@ pub fn match_instruction_record_ref<'a>(
     let max_size = instruction.max_op_size_bytes;
     let decoded_iform = instruction.decoded_iform.trim();
     if !decoded_iform.is_empty() {
-        let exact_matches: Vec<&InstructionRecord> = candidates
+        let exact_matches: Vec<&R> = candidates
             .iter()
-            .filter(|candidate| candidate.iform == decoded_iform)
+            .copied()
+            .filter(|candidate| candidate.iform() == decoded_iform)
             .collect();
         let exact_matches = filter_xml_attr_matches(exact_matches, instruction.xml_attrs);
         if exact_matches.is_empty() {
@@ -118,12 +153,13 @@ pub fn match_instruction_record_ref<'a>(
     // Prefer candidates whose iform carries the same operand-kind signature,
     // e.g. ADC_GPRv_GPRv_11 for a register/register ADC.
     if !sig.is_empty() {
-        let sig_matches: Vec<&InstructionRecord> = candidates
+        let sig_matches: Vec<&R> = candidates
             .iter()
+            .copied()
             .filter(|candidate| {
-                iform_matches_signature(&candidate.iform, &normalized_mnemonic, sig)
+                iform_matches_signature(candidate.iform(), &normalized_mnemonic, sig)
                     || (raw_mnemonic != normalized_mnemonic
-                        && iform_matches_signature(&candidate.iform, &raw_mnemonic, sig))
+                        && iform_matches_signature(candidate.iform(), &raw_mnemonic, sig))
             })
             .collect();
         let sig_matches = filter_xml_attr_matches(sig_matches, instruction.xml_attrs);
@@ -146,9 +182,10 @@ pub fn match_instruction_record_ref<'a>(
     }
 
     // Fallback: string mnemonic match when no iform signature is available.
-    let string_matches: Vec<&InstructionRecord> = candidates
+    let string_matches: Vec<&R> = candidates
         .iter()
-        .filter(|c| normalize_mnemonic(&c.string) == normalized_mnemonic)
+        .copied()
+        .filter(|c| normalize_mnemonic(c.string()) == normalized_mnemonic)
         .collect();
     let string_matches = filter_xml_attr_matches(string_matches, instruction.xml_attrs);
     if !string_matches.is_empty() {
@@ -161,9 +198,10 @@ pub fn match_instruction_record_ref<'a>(
             instruction.agen,
         );
     }
-    let iform_matches: Vec<&InstructionRecord> = candidates
+    let iform_matches: Vec<&R> = candidates
         .iter()
-        .filter(|candidate| normalize_iform_prefix(&candidate.iform) == normalized_mnemonic)
+        .copied()
+        .filter(|candidate| normalize_iform_prefix(candidate.iform()) == normalized_mnemonic)
         .collect();
     let iform_matches = filter_xml_attr_matches(iform_matches, instruction.xml_attrs);
     best_record_match(
@@ -176,13 +214,16 @@ pub fn match_instruction_record_ref<'a>(
     )
 }
 
-fn filter_xml_attr_matches<'a>(
-    candidates: Vec<&'a InstructionRecord>,
+fn filter_xml_attr_matches<'a, R>(
+    candidates: Vec<&'a R>,
     decoded_attrs: &BTreeMap<String, String>,
-) -> Vec<&'a InstructionRecord> {
+) -> Vec<&'a R>
+where
+    R: InstrRecordLike + 'a,
+{
     candidates
         .into_iter()
-        .filter(|record| xml_attrs_match(decoded_attrs, &record.xml_attrs))
+        .filter(|record| xml_attrs_match(decoded_attrs, record.xml_attrs()))
         .collect()
 }
 
@@ -205,14 +246,17 @@ fn xml_attrs_match(
     true
 }
 
-fn best_record_match<'a>(
-    candidates: Vec<&'a InstructionRecord>,
+fn best_record_match<'a, R>(
+    candidates: Vec<&'a R>,
     max_size: u8,
     immediate: Option<i64>,
     uses_high8_reg: bool,
     explicit_reg_operands: &[String],
     agen: Option<&str>,
-) -> Option<&'a InstructionRecord> {
+) -> Option<&'a R>
+where
+    R: InstrRecordLike + 'a,
+{
     let size_tag = match max_size {
         8 => "R64",
         4 => "R32",
@@ -220,13 +264,13 @@ fn best_record_match<'a>(
         1 => "R8",
         _ => "",
     };
-    let sized: Vec<&InstructionRecord> = if size_tag.is_empty() {
+    let sized: Vec<&R> = if size_tag.is_empty() {
         candidates
     } else {
-        let filtered: Vec<&InstructionRecord> = candidates
+        let filtered: Vec<&R> = candidates
             .iter()
             .copied()
-            .filter(|c| c.string.contains(size_tag))
+            .filter(|c| c.string().contains(size_tag))
             .collect();
         if filtered.is_empty() {
             candidates
@@ -235,12 +279,12 @@ fn best_record_match<'a>(
         }
     };
 
-    let sized: Vec<&InstructionRecord> = if let Some(agen) = agen {
+    let sized: Vec<&R> = if let Some(agen) = agen {
         let lea_prefix = format!("LEA_{agen} ");
-        let filtered: Vec<&InstructionRecord> = sized
+        let filtered: Vec<&R> = sized
             .iter()
             .copied()
-            .filter(|c| c.string.starts_with(&lea_prefix))
+            .filter(|c| c.string().starts_with(&lea_prefix))
             .collect();
         if filtered.is_empty() {
             sized
@@ -251,22 +295,22 @@ fn best_record_match<'a>(
         sized
     };
 
-    let sized: Vec<&InstructionRecord> = prefer_explicit_mask_form(sized, explicit_reg_operands);
+    let sized: Vec<&R> = prefer_explicit_mask_form(sized, explicit_reg_operands);
 
-    let sized: Vec<&InstructionRecord> = if sized
+    let sized: Vec<&R> = if sized
         .iter()
-        .any(|c| c.string.contains("R8h") || c.string.contains("R8l"))
+        .any(|c| c.string().contains("R8h") || c.string().contains("R8l"))
     {
         let explicit_tags = explicit_r8_tags(explicit_reg_operands);
-        let filtered: Vec<&InstructionRecord> = if explicit_tags.is_empty() {
+        let filtered: Vec<&R> = if explicit_tags.is_empty() {
             sized
                 .iter()
                 .copied()
                 .filter(|c| {
                     if uses_high8_reg {
-                        c.string.contains("R8h")
+                        c.string().contains("R8h")
                     } else {
-                        c.string.contains("R8l") && !c.string.contains("R8h")
+                        c.string().contains("R8l") && !c.string().contains("R8h")
                     }
                 })
                 .collect()
@@ -274,7 +318,7 @@ fn best_record_match<'a>(
             sized
                 .iter()
                 .copied()
-                .filter(|c| record_r8_tags(&c.string) == explicit_tags)
+                .filter(|c| record_r8_tags(c.string()) == explicit_tags)
                 .collect()
         };
         if filtered.is_empty() {
@@ -288,10 +332,10 @@ fn best_record_match<'a>(
 
     if let Some(imm) = immediate {
         if imm == 0 {
-            if let Some(hit) = sized.iter().find(|c| c.imm_zero) {
+            if let Some(hit) = sized.iter().find(|c| c.imm_zero()) {
                 return Some(*hit);
             }
-        } else if let Some(hit) = sized.iter().find(|c| !c.imm_zero) {
+        } else if let Some(hit) = sized.iter().find(|c| !c.imm_zero()) {
             return Some(*hit);
         }
     }
@@ -299,12 +343,17 @@ fn best_record_match<'a>(
     sized.into_iter().next()
 }
 
-fn prefer_explicit_mask_form<'a>(
-    candidates: Vec<&'a InstructionRecord>,
+fn prefer_explicit_mask_form<'a, R>(
+    candidates: Vec<&'a R>,
     explicit_reg_operands: &[String],
-) -> Vec<&'a InstructionRecord> {
-    let has_mask_alternatives = candidates.iter().any(|c| has_evex_mask_operand(&c.string))
-        && candidates.iter().any(|c| !has_evex_mask_operand(&c.string));
+) -> Vec<&'a R>
+where
+    R: InstrRecordLike + 'a,
+{
+    let has_mask_alternatives = candidates.iter().any(|c| has_evex_mask_operand(c.string()))
+        && candidates
+            .iter()
+            .any(|c| !has_evex_mask_operand(c.string()));
     if !has_mask_alternatives {
         return candidates;
     }
@@ -312,10 +361,10 @@ fn prefer_explicit_mask_form<'a>(
     let has_explicit_mask = explicit_reg_operands
         .iter()
         .any(|reg| reg.to_ascii_uppercase().starts_with('K'));
-    let filtered: Vec<&InstructionRecord> = candidates
+    let filtered: Vec<&R> = candidates
         .iter()
         .copied()
-        .filter(|c| has_evex_mask_operand(&c.string) == has_explicit_mask)
+        .filter(|c| has_evex_mask_operand(c.string()) == has_explicit_mask)
         .collect();
     if filtered.is_empty() {
         candidates

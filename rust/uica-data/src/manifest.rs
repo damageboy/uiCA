@@ -114,11 +114,30 @@ pub fn load_manifest_runtime(
     manifest_path: impl AsRef<Path>,
     arch: &str,
 ) -> Result<MappedUiPackRuntime, DataPackManifestError> {
+    load_manifest_runtime_with_checksum(manifest_path, arch, false)
+}
+
+pub fn load_manifest_runtime_verified(
+    manifest_path: impl AsRef<Path>,
+    arch: &str,
+) -> Result<MappedUiPackRuntime, DataPackManifestError> {
+    load_manifest_runtime_with_checksum(manifest_path, arch, true)
+}
+
+fn load_manifest_runtime_with_checksum(
+    manifest_path: impl AsRef<Path>,
+    arch: &str,
+    verify_checksum: bool,
+) -> Result<MappedUiPackRuntime, DataPackManifestError> {
     let manifest_path = manifest_path.as_ref();
     let manifest = load_manifest(manifest_path)?;
     let (manifest_arch, entry) = manifest_arch_entry(&manifest, arch)?;
     let pack_path = resolve_pack_path(manifest_path, &entry.path)?;
-    let runtime = MappedUiPackRuntime::open(&pack_path)?;
+    let runtime = if verify_checksum {
+        MappedUiPackRuntime::open_verified(&pack_path)?
+    } else {
+        MappedUiPackRuntime::open(&pack_path)?
+    };
     let view = runtime.view()?;
 
     validate_manifest_view(&manifest, manifest_arch, entry, &view)?;

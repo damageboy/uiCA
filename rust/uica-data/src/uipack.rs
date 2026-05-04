@@ -4,6 +4,7 @@
 // - Record section stores fixed-width instruction records.
 // - Port section stores fixed-width port/count pairs referenced by record ranges.
 
+use std::cell::OnceCell;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
@@ -88,6 +89,7 @@ impl From<serde_json::Error> for UiPackError {
 
 pub struct MappedUiPack {
     bytes: UiPackBytes,
+    header: OnceCell<UiPackHeader>,
 }
 
 pub struct MappedUiPackRuntime {
@@ -160,25 +162,58 @@ pub struct UiPackViewIndex {
 
 impl MappedUiPack {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, UiPackError> {
+        Self::open_with_checksum(path, false)
+    }
+
+    pub fn open_verified(path: impl AsRef<Path>) -> Result<Self, UiPackError> {
+        Self::open_with_checksum(path, true)
+    }
+
+    fn open_with_checksum(
+        path: impl AsRef<Path>,
+        verify_checksum: bool,
+    ) -> Result<Self, UiPackError> {
         #[cfg(not(target_family = "wasm"))]
         {
             let file = File::open(path)?;
             let mmap = unsafe { memmap2::MmapOptions::new().map(&file)? };
-            Ok(Self {
+            let mapped = Self {
                 bytes: UiPackBytes::Mmap(mmap),
-            })
+                header: OnceCell::new(),
+            };
+            mapped.cache_header(verify_checksum)?;
+            Ok(mapped)
         }
 
         #[cfg(target_family = "wasm")]
         {
-            Ok(Self::from_bytes(std::fs::read(path)?))
+            Self::from_bytes_with_checksum(std::fs::read(path)?, verify_checksum)
         }
     }
 
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
-        Self {
+        let mapped = Self {
             bytes: UiPackBytes::Owned(bytes.into_boxed_slice()),
-        }
+            header: OnceCell::new(),
+        };
+        let _ = mapped.cache_header(false);
+        mapped
+    }
+
+    pub fn from_bytes_verified(bytes: Vec<u8>) -> Result<Self, UiPackError> {
+        Self::from_bytes_with_checksum(bytes, true)
+    }
+
+    fn from_bytes_with_checksum(
+        bytes: Vec<u8>,
+        verify_checksum: bool,
+    ) -> Result<Self, UiPackError> {
+        let mapped = Self {
+            bytes: UiPackBytes::Owned(bytes.into_boxed_slice()),
+            header: OnceCell::new(),
+        };
+        mapped.cache_header(verify_checksum)?;
+        Ok(mapped)
     }
 
     pub fn bytes(&self) -> &[u8] {
@@ -190,7 +225,20 @@ impl MappedUiPack {
     }
 
     pub fn view(&self) -> Result<UiPackView<'_>, UiPackError> {
-        UiPackView::from_bytes(self.bytes())
+        UiPackView::from_bytes_and_header(self.bytes(), self.cached_header()?)
+    }
+
+    fn cached_header(&self) -> Result<UiPackHeader, UiPackError> {
+        if let Some(header) = self.header.get() {
+            return Ok(*header);
+        }
+        self.cache_header(false)
+    }
+
+    fn cache_header(&self, verify_checksum: bool) -> Result<UiPackHeader, UiPackError> {
+        let header = read_uipack_header_with_checksum(self.bytes(), verify_checksum)?;
+        let _ = self.header.set(header);
+        Ok(header)
     }
 }
 
@@ -199,8 +247,16 @@ impl MappedUiPackRuntime {
         Self::from_mapped(MappedUiPack::open(path)?)
     }
 
+    pub fn open_verified(path: impl AsRef<Path>) -> Result<Self, UiPackError> {
+        Self::from_mapped(MappedUiPack::open_verified(path)?)
+    }
+
     pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, UiPackError> {
         Self::from_mapped(MappedUiPack::from_bytes(bytes))
+    }
+
+    pub fn from_bytes_verified(bytes: Vec<u8>) -> Result<Self, UiPackError> {
+        Self::from_mapped(MappedUiPack::from_bytes_verified(bytes)?)
     }
 
     pub fn view(&self) -> Result<UiPackView<'_>, UiPackError> {
@@ -221,6 +277,15 @@ impl MappedUiPackRuntime {
 impl<'a> UiPackView<'a> {
     pub fn from_bytes(bytes: &'a [u8]) -> Result<Self, UiPackError> {
         let header = read_uipack_header(bytes)?;
+        Self::from_bytes_and_header(bytes, header)
+    }
+
+    pub fn from_bytes_verified(bytes: &'a [u8]) -> Result<Self, UiPackError> {
+        let header = read_uipack_header_verified(bytes)?;
+        Self::from_bytes_and_header(bytes, header)
+    }
+
+    fn from_bytes_and_header(bytes: &'a [u8], header: UiPackHeader) -> Result<Self, UiPackError> {
         let strings_start = usize::try_from(header.strings_offset).unwrap();
         let strings_end = strings_start + usize::try_from(header.strings_size).unwrap();
         let strings = &bytes[strings_start..strings_end];
@@ -837,6 +902,17 @@ pub fn encode_uipack(pack: &DataPack, arch: &str) -> Result<Vec<u8>, UiPackError
 }
 
 pub fn read_uipack_header(bytes: &[u8]) -> Result<UiPackHeader, UiPackError> {
+    read_uipack_header_with_checksum(bytes, false)
+}
+
+pub fn read_uipack_header_verified(bytes: &[u8]) -> Result<UiPackHeader, UiPackError> {
+    read_uipack_header_with_checksum(bytes, true)
+}
+
+fn read_uipack_header_with_checksum(
+    bytes: &[u8],
+    verify_checksum: bool,
+) -> Result<UiPackHeader, UiPackError> {
     if bytes.len() < UIPACK_HEADER_SIZE {
         return Err(UiPackError::InvalidFormat(
             "uipack header truncated".to_string(),
@@ -938,12 +1014,14 @@ pub fn read_uipack_header(bytes: &[u8]) -> Result<UiPackHeader, UiPackError> {
         ));
     }
 
-    let actual_checksum = fnv1a64_with_zeroed_checksum(bytes);
-    if actual_checksum != header.checksum {
-        return Err(UiPackError::InvalidFormat(format!(
-            "uipack checksum mismatch: expected {:016x}, got {:016x}",
-            header.checksum, actual_checksum
-        )));
+    if verify_checksum {
+        let actual_checksum = fnv1a64_with_zeroed_checksum(bytes);
+        if actual_checksum != header.checksum {
+            return Err(UiPackError::InvalidFormat(format!(
+                "uipack checksum mismatch: expected {:016x}, got {:016x}",
+                header.checksum, actual_checksum
+            )));
+        }
     }
 
     Ok(header)
@@ -951,6 +1029,11 @@ pub fn read_uipack_header(bytes: &[u8]) -> Result<UiPackHeader, UiPackError> {
 
 pub fn load_uipack_bytes(bytes: &[u8]) -> Result<DataPack, UiPackError> {
     let view = UiPackView::from_bytes(bytes)?;
+    view.to_data_pack()
+}
+
+pub fn load_uipack_bytes_verified(bytes: &[u8]) -> Result<DataPack, UiPackError> {
+    let view = UiPackView::from_bytes_verified(bytes)?;
     view.to_data_pack()
 }
 

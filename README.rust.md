@@ -179,7 +179,7 @@ Core analysis building blocks (partial/in progress):
 
 Native Rust binary:
 
-- parses clap-based flags (`--raw`, `--arch`, `--json`, `--tp-only`, `--event-trace`, `--min-cycles`, `--min-iterations`, `--alignment-offset`, `--init-policy`, `--no-micro-fusion`, `--no-macro-fusion`, `--simple-front-end`)
+- parses clap-based flags (`--raw`, `--arch`, `--json`, `--tp-only`, `--event-trace`, `--min-cycles`, `--min-iterations`, `--alignment-offset`, `--init-policy`, `--no-micro-fusion`, `--no-macro-fusion`, `--simple-front-end`, `--verify-uipack`)
 - loads bytes
 - calls `uica_core::engine`
 - writes JSON / prints throughput

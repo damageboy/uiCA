@@ -147,6 +147,19 @@ python3 verification/tools/verify.py \
   --fixture-root /tmp/uica-bhive-rust-fixtures
 ```
 
+Record emitted commands as one unified Linux perf capture. `perf record` runs the shell script directly and follows child `uica-cli` processes, producing one `perf.data` for all commands plus CSV/JSON symbol summaries:
+
+```bash
+python3 verification/tools/perf_runs.py \
+  --command-script /tmp/rust-bhive-1k.sh \
+  --out-dir /tmp/uica-perf-rust-bhive-1k \
+  --event cpu-clock:u \
+  --frequency 997 \
+  --call-graph dwarf,8192
+
+perf report -i /tmp/uica-perf-rust-bhive-1k/perf.data
+```
+
 Focused compare for one case and one arch:
 
 ```bash

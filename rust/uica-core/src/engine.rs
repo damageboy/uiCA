@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use serde_json::json;
 use uica_data::{
-    load_manifest_runtime, record_view_to_instruction_record, DataPack, DataPackIndex,
-    MappedUiPackRuntime, DATAPACK_MANIFEST_FILE_NAME,
+    load_manifest_runtime, load_manifest_runtime_verified, record_view_to_instruction_record,
+    DataPack, DataPackIndex, MappedUiPackRuntime, DATAPACK_MANIFEST_FILE_NAME,
 };
 use uica_decoder::decode_raw;
 use uica_model::{Invocation, Summary, UicaResult};
@@ -30,20 +30,34 @@ pub fn engine_output(
     invocation: &Invocation,
     include_reports: bool,
 ) -> Result<EngineOutput, String> {
-    let Some(runtime) = load_default_runtime(&invocation.arch) else {
-        if include_reports {
-            return Err(format!("uipack data not found for {}", invocation.arch));
-        }
-        return Ok(EngineOutput {
-            result: fallback_result(code, invocation),
-            reports: None,
-        });
+    engine_output_with_uipack_verification(code, invocation, include_reports, false)
+}
+
+pub fn engine_output_with_uipack_verification(
+    code: &[u8],
+    invocation: &Invocation,
+    include_reports: bool,
+    verify_uipack: bool,
+) -> Result<EngineOutput, String> {
+    let runtime = if verify_uipack {
+        load_default_runtime_verified(&invocation.arch)?
+    } else {
+        let Some(runtime) = load_default_runtime(&invocation.arch, false) else {
+            if include_reports {
+                return Err(format!("uipack data not found for {}", invocation.arch));
+            }
+            return Ok(EngineOutput {
+                result: fallback_result(code, invocation),
+                reports: None,
+            });
+        };
+        runtime
     };
     engine_output_with_uipack_runtime(code, invocation, &runtime, include_reports)
 }
 
 pub fn engine(code: &[u8], invocation: &Invocation) -> UicaResult {
-    if let Some(runtime) = load_default_runtime(&invocation.arch) {
+    if let Some(runtime) = load_default_runtime(&invocation.arch, false) {
         return engine_output_with_uipack_runtime(code, invocation, &runtime, false)
             .map(|output| output.result)
             .unwrap_or_else(|_| fallback_result(code, invocation));
@@ -1660,21 +1674,39 @@ fn fallback_result(code: &[u8], invocation: &Invocation) -> UicaResult {
     }
 }
 
-fn load_default_runtime(arch: &str) -> Option<MappedUiPackRuntime> {
+fn load_default_runtime(arch: &str, verify_uipack: bool) -> Option<MappedUiPackRuntime> {
     if let Ok(path) = env::var("UICA_RUST_DATAPACK") {
-        if let Some(runtime) = load_runtime_source(Path::new(&path), arch) {
+        if let Some(runtime) = load_runtime_source(Path::new(&path), arch, verify_uipack) {
             return Some(runtime);
         }
     }
 
     let generated_dir = PathBuf::from("rust/uica-data/generated");
-    load_runtime_source(&generated_dir, arch)
+    load_runtime_source(&generated_dir, arch, verify_uipack)
 }
 
-fn load_runtime_source(path: &Path, arch: &str) -> Option<MappedUiPackRuntime> {
+fn load_default_runtime_verified(arch: &str) -> Result<MappedUiPackRuntime, String> {
+    if let Ok(path) = env::var("UICA_RUST_DATAPACK") {
+        return load_runtime_source_verified(Path::new(&path), arch);
+    }
+
+    let generated_dir = PathBuf::from("rust/uica-data/generated");
+    load_runtime_source_verified(&generated_dir, arch)
+}
+
+fn load_runtime_source(
+    path: &Path,
+    arch: &str,
+    verify_uipack: bool,
+) -> Option<MappedUiPackRuntime> {
     if let Some(manifest_path) = runtime_manifest_path(path) {
         if manifest_path.exists() {
-            if let Ok(runtime) = load_manifest_runtime(&manifest_path, arch) {
+            let loaded = if verify_uipack {
+                load_manifest_runtime_verified(&manifest_path, arch)
+            } else {
+                load_manifest_runtime(&manifest_path, arch)
+            };
+            if let Ok(runtime) = loaded {
                 return Some(runtime);
             }
         }
@@ -1690,10 +1722,34 @@ fn load_runtime_source(path: &Path, arch: &str) -> Option<MappedUiPackRuntime> {
             .and_then(|ext| ext.to_str())
             .is_some_and(|ext| ext.eq_ignore_ascii_case("uipack"))
     {
-        return MappedUiPackRuntime::open(path).ok();
+        return if verify_uipack {
+            MappedUiPackRuntime::open_verified(path).ok()
+        } else {
+            MappedUiPackRuntime::open(path).ok()
+        };
     }
 
     None
+}
+
+fn load_runtime_source_verified(path: &Path, arch: &str) -> Result<MappedUiPackRuntime, String> {
+    if let Some(manifest_path) = runtime_manifest_path(path) {
+        if manifest_path.exists() {
+            return load_manifest_runtime_verified(&manifest_path, arch)
+                .map_err(|err| err.to_string());
+        }
+    }
+
+    if path.is_file()
+        && path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("uipack"))
+    {
+        return MappedUiPackRuntime::open_verified(path).map_err(|err| err.to_string());
+    }
+
+    Err(format!("uipack data not found for {arch}"))
 }
 
 fn runtime_manifest_path(path: &Path) -> Option<PathBuf> {
@@ -1717,8 +1773,20 @@ pub fn engine_trace(
     code: &[u8],
     invocation: &Invocation,
 ) -> Result<crate::sim::TraceWriter, String> {
-    let runtime = load_default_runtime(&invocation.arch)
-        .ok_or_else(|| format!("uipack data not found for {}", invocation.arch))?;
+    engine_trace_with_uipack_verification(code, invocation, false)
+}
+
+pub fn engine_trace_with_uipack_verification(
+    code: &[u8],
+    invocation: &Invocation,
+    verify_uipack: bool,
+) -> Result<crate::sim::TraceWriter, String> {
+    let runtime = if verify_uipack {
+        load_default_runtime_verified(&invocation.arch)?
+    } else {
+        load_default_runtime(&invocation.arch, false)
+            .ok_or_else(|| format!("uipack data not found for {}", invocation.arch))?
+    };
     let pack = materialize_runtime_pack_for_code(code, &runtime)?;
     let index = DataPackIndex::new(&pack);
     let (frontend, _, max_cycle) = run_simulation_for_cycles(code, invocation, &pack, &index)?;
@@ -2720,6 +2788,6 @@ mod tests {
         )
         .unwrap();
 
-        assert!(load_runtime_source(temp.path(), "SKL").is_none());
+        assert!(load_runtime_source(temp.path(), "SKL", false).is_none());
     }
 }

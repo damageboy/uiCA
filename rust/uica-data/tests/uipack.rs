@@ -2,9 +2,11 @@ use std::collections::BTreeMap;
 
 use tempfile::tempdir;
 use uica_data::{
-    encode_uipack, load_pack, load_pack_bytes, load_uipack, load_uipack_bytes, read_uipack_header,
-    DataPack, DataPackIndex, InstructionRecord, LatencyRecord, OperandRecord, PerfRecord,
-    DATAPACK_SCHEMA_VERSION, UIPACK_MAGIC, UIPACK_VERSION,
+    encode_uipack, load_pack, load_pack_bytes, load_uipack, load_uipack_bytes,
+    load_uipack_bytes_verified, load_uipack_verified, read_uipack_header,
+    read_uipack_header_verified, DataPack, DataPackIndex, InstructionRecord, LatencyRecord,
+    MappedUiPack, MappedUiPackRuntime, OperandRecord, PerfRecord, DATAPACK_SCHEMA_VERSION,
+    UIPACK_MAGIC, UIPACK_VERSION,
 };
 
 const CHECKSUM_OFFSET: usize = 24;
@@ -245,7 +247,7 @@ fn roundtrips_single_arch_uipack_and_keeps_index_compatibility() {
 }
 
 #[test]
-fn rejects_bad_magic_version_and_checksum() {
+fn rejects_bad_magic_and_version_but_skips_checksum_by_default() {
     let bytes = encode_uipack(&sample_pack(), "SKL").unwrap();
 
     let mut bad_magic = bytes.clone();
@@ -259,9 +261,39 @@ fn rejects_bad_magic_version_and_checksum() {
     assert!(err.contains("unsupported uipack version"), "{err}");
 
     let mut bad_checksum = bytes.clone();
-    let last = bad_checksum.len() - 1;
-    bad_checksum[last] ^= 1;
-    let err = load_uipack_bytes(&bad_checksum).unwrap_err().to_string();
+    bad_checksum[24] ^= 1;
+    assert!(load_uipack_bytes(&bad_checksum).is_ok());
+    let err = load_uipack_bytes_verified(&bad_checksum)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("uipack checksum mismatch"), "{err}");
+}
+
+#[test]
+fn verified_header_and_file_load_reject_bad_checksum() {
+    let temp = tempdir().unwrap();
+    let path = temp.path().join("SKL.uipack");
+    let mut bytes = encode_uipack(&sample_pack(), "SKL").unwrap();
+    bytes[24] ^= 1;
+    std::fs::write(&path, &bytes).unwrap();
+
+    assert!(read_uipack_header(&bytes).is_ok());
+    let err = read_uipack_header_verified(&bytes).unwrap_err().to_string();
+    assert!(err.contains("uipack checksum mismatch"), "{err}");
+    assert!(load_uipack(&path).is_ok());
+    assert!(MappedUiPack::open(&path).is_ok());
+
+    let err = load_uipack_verified(&path).unwrap_err().to_string();
+    assert!(err.contains("uipack checksum mismatch"), "{err}");
+    let err = match MappedUiPack::open_verified(&path) {
+        Ok(_) => panic!("verified mapped open should reject bad checksum"),
+        Err(err) => err.to_string(),
+    };
+    assert!(err.contains("uipack checksum mismatch"), "{err}");
+    let err = match MappedUiPackRuntime::open_verified(&path) {
+        Ok(_) => panic!("verified runtime open should reject bad checksum"),
+        Err(err) => err.to_string(),
+    };
     assert!(err.contains("uipack checksum mismatch"), "{err}");
 }
 

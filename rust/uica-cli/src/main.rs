@@ -71,6 +71,10 @@ struct Cli {
     #[arg(long = "no-macro-fusion")]
     no_macro_fusion: bool,
 
+    /// Verify UIPack checksum on first datapack load.
+    #[arg(long = "verify-uipack")]
+    verify_uipack: bool,
+
     /// Simulate a simple front-end limited only by issue width.
     #[arg(long = "simple-front-end")]
     simple_front_end: bool,
@@ -110,8 +114,12 @@ fn run() -> Result<()> {
     };
 
     if let Some(path) = &args.event_trace {
-        let trace = uica_core::engine::engine_trace(&bytes, &invocation)
-            .map_err(|e| anyhow!("trace engine failed: {e}"))?;
+        let trace = uica_core::engine::engine_trace_with_uipack_verification(
+            &bytes,
+            &invocation,
+            args.verify_uipack,
+        )
+        .map_err(|e| anyhow!("trace engine failed: {e}"))?;
         trace
             .finish_to_path(path)
             .with_context(|| format!("failed to write event trace {}", path.display()))?;
@@ -119,11 +127,27 @@ fn run() -> Result<()> {
 
     let wants_reports = args.trace.is_some() || args.graph.is_some();
     let output = if wants_reports {
-        uica_core::engine::engine_output(&bytes, &invocation, true)
-            .map_err(|e| anyhow!("report engine failed: {e}"))?
+        uica_core::engine::engine_output_with_uipack_verification(
+            &bytes,
+            &invocation,
+            true,
+            args.verify_uipack,
+        )
+        .map_err(|e| anyhow!("report engine failed: {e}"))?
     } else {
         uica_core::engine::EngineOutput {
-            result: engine(&bytes, &invocation),
+            result: if args.verify_uipack {
+                uica_core::engine::engine_output_with_uipack_verification(
+                    &bytes,
+                    &invocation,
+                    false,
+                    true,
+                )
+                .map_err(|e| anyhow!("uipack verification failed: {e}"))?
+                .result
+            } else {
+                engine(&bytes, &invocation)
+            },
             reports: None,
         }
     };
@@ -204,6 +228,7 @@ mod tests {
             "--no-micro-fusion",
             "--no-macro-fusion",
             "--simple-front-end",
+            "--verify-uipack",
             "--event-trace",
             "events.trace",
             "--trace",
@@ -225,6 +250,7 @@ mod tests {
         assert!(cli.no_micro_fusion);
         assert!(cli.no_macro_fusion);
         assert!(cli.simple_front_end);
+        assert!(cli.verify_uipack);
         assert_eq!(cli.event_trace, Some(PathBuf::from("events.trace")));
         assert_eq!(cli.trace, Some(PathBuf::from("trace.html")));
         assert_eq!(cli.graph, Some(PathBuf::from("graph.html")));
@@ -267,6 +293,7 @@ mod tests {
         assert!(!cli.no_micro_fusion);
         assert!(!cli.no_macro_fusion);
         assert!(!cli.simple_front_end);
+        assert!(!cli.verify_uipack);
         assert_eq!(cli.event_trace, None);
         assert_eq!(cli.trace, None);
         assert_eq!(cli.graph, None);

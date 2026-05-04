@@ -586,6 +586,40 @@ fn event_trace_emits_executed_events_for_zero_port_uops() {
 }
 
 #[test]
+fn verify_uipack_rejects_bad_checksum_but_default_load_skips_it() {
+    let _lock = env_lock().lock().unwrap();
+    let original = env::var_os("UICA_RUST_DATAPACK");
+    let temp = tempdir().unwrap();
+    let pack_path = temp.path().join("SKL.uipack");
+    let pack = sample_pack("SKL", "ADD", "ADD", 1, &[("0", 2)]);
+    let mut bytes = encode_uipack(&pack, "SKL").unwrap();
+    bytes[24] ^= 1;
+    std::fs::write(&pack_path, bytes).unwrap();
+
+    {
+        let _env = EnvVarGuard::set("UICA_RUST_DATAPACK", &pack_path);
+        let invocation = Invocation {
+            arch: "SKL".to_string(),
+            ..Invocation::default()
+        };
+        let result = uica_core::engine::engine(&[0x48, 0x01, 0xd8], &invocation);
+        assert_eq!(result.summary.throughput_cycles_per_iteration, Some(2.0));
+
+        let err = uica_core::engine::engine_output_with_uipack_verification(
+            &[0x48, 0x01, 0xd8],
+            &invocation,
+            false,
+            true,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("uipack checksum mismatch"), "{err}");
+    }
+
+    assert_eq!(env::var_os("UICA_RUST_DATAPACK"), original);
+}
+
+#[test]
 fn engine_loads_single_uipack_file_from_env_path() {
     let _lock = env_lock().lock().unwrap();
     let original = env::var_os("UICA_RUST_DATAPACK");

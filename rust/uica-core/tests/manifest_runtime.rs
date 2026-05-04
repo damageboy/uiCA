@@ -601,14 +601,9 @@ fn datapack_for_arch_without_microarch_model_fails_clearly() {
         ..Invocation::default()
     };
 
-    let err = uica_core::engine::engine_output_with_uipack_verification(
-        &[0x48, 0x01, 0xd8],
-        &invocation,
-        false,
-        false,
-    )
-    .unwrap_err()
-    .to_string();
+    let err = uica_core::engine::engine_output(&[0x48, 0x01, 0xd8], &invocation, false, false)
+        .unwrap_err()
+        .to_string();
     assert!(
         err.contains("microarchitecture model not supported for ZEN5"),
         "{err}"

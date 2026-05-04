@@ -16,15 +16,20 @@ use uica_model::Invocation;
 )]
 struct Cli {
     /// Input file: object (.o) by default, or a raw byte stream with --raw.
-    input: PathBuf,
+    #[arg(required_unless_present = "arch_list")]
+    input: Option<PathBuf>,
+
+    /// List real micro-architectures supported by the simulator and exit.
+    #[arg(long = "arch-list", exclusive = true)]
+    arch_list: bool,
 
     /// Treat `input` as a raw byte stream instead of an object file.
     #[arg(long)]
     raw: bool,
 
     /// Target micro-architecture (e.g. SKL, HSW, ICL).
-    #[arg(short = 'a', long)]
-    arch: String,
+    #[arg(short = 'a', long, required_unless_present = "arch_list")]
+    arch: Option<String>,
 
     /// Write JSON result envelope to PATH.
     #[arg(short = 'j', long, value_name = "PATH")]
@@ -82,7 +87,7 @@ struct Cli {
 impl Cli {
     fn invocation(&self) -> Invocation {
         Invocation {
-            arch: self.arch.clone(),
+            arch: self.arch.clone().unwrap_or_default(),
             alignment_offset: self.alignment_offset,
             init_policy: self.init_policy.clone(),
             min_iterations: self.min_iterations,
@@ -103,13 +108,23 @@ fn main() {
 
 fn run() -> Result<()> {
     let args = Cli::parse();
+    if args.arch_list {
+        for arch in uica_core::supported_real_arches() {
+            println!("{arch}");
+        }
+        return Ok(());
+    }
+
+    let input = args
+        .input
+        .as_ref()
+        .ok_or_else(|| anyhow!("missing input path"))?;
     let invocation = args.invocation();
 
     let bytes = if args.raw {
-        fs::read(&args.input)
-            .with_context(|| format!("failed to read raw input {}", args.input.display()))?
+        fs::read(input).with_context(|| format!("failed to read raw input {}", input.display()))?
     } else {
-        extract_text_from_object(&args.input)?
+        extract_text_from_object(input)?
     };
 
     if let Some(path) = &args.event_trace {
@@ -225,9 +240,9 @@ mod tests {
         ])
         .expect("args should parse");
 
-        assert_eq!(cli.input, PathBuf::from("loop.bin"));
+        assert_eq!(cli.input, Some(PathBuf::from("loop.bin")));
         assert!(cli.raw);
-        assert_eq!(cli.arch, "SKL");
+        assert_eq!(cli.arch.as_deref(), Some("SKL"));
         assert_eq!(cli.json, Some(PathBuf::from("out.json")));
         assert!(cli.tp_only);
         assert_eq!(cli.alignment_offset, 4);
@@ -263,7 +278,7 @@ mod tests {
     fn short_flags_work() {
         let cli = Cli::try_parse_from(["uica-cli", "snippet.o", "-a", "HSW", "-j", "out.json"])
             .expect("short flags should parse");
-        assert_eq!(cli.arch, "HSW");
+        assert_eq!(cli.arch.as_deref(), Some("HSW"));
         assert_eq!(cli.json, Some(PathBuf::from("out.json")));
     }
 
@@ -284,6 +299,32 @@ mod tests {
         assert_eq!(cli.event_trace, None);
         assert_eq!(cli.trace, None);
         assert_eq!(cli.graph, None);
+    }
+
+    #[test]
+    fn arch_list_parses_without_input_or_arch() {
+        let cli = Cli::try_parse_from(["uica-cli", "--arch-list"])
+            .expect("arch list should parse by itself");
+        assert!(cli.arch_list);
+        assert_eq!(cli.input, None);
+    }
+
+    #[test]
+    fn arch_list_rejects_arch() {
+        let err = Cli::try_parse_from(["uica-cli", "--arch-list", "--arch", "SKL"])
+            .expect_err("arch list should conflict with arch");
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn arch_list_rejects_other_flags_and_input() {
+        let raw_err = Cli::try_parse_from(["uica-cli", "--arch-list", "--raw"])
+            .expect_err("arch list should conflict with raw");
+        assert_eq!(raw_err.kind(), clap::error::ErrorKind::ArgumentConflict);
+
+        let input_err = Cli::try_parse_from(["uica-cli", "loop.bin", "--arch-list"])
+            .expect_err("arch list should conflict with input");
+        assert_eq!(input_err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
     #[test]

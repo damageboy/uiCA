@@ -666,6 +666,12 @@ fn clx_simple_ports_no_move_elim() -> MicroArchConfig {
     cfg
 }
 
+pub fn supported_real_arches() -> &'static [&'static str] {
+    &[
+        "SNB", "IVB", "HSW", "BDW", "SKL", "SKX", "KBL", "CFL", "CLX", "ICL", "TGL", "RKL",
+    ]
+}
+
 pub fn get_micro_arch(name: &str) -> Option<MicroArchConfig> {
     let upper = name.to_ascii_uppercase();
     match upper.as_str() {

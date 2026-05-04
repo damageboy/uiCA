@@ -13,5 +13,5 @@ pub use matcher::{
     match_instruction_record_ref, normalize_mnemonic, CandidateRecord, NormalizedInstr,
     NormalizedInstrRef,
 };
-pub use micro_arch::{get_micro_arch, MicroArchConfig};
+pub use micro_arch::{get_micro_arch, supported_real_arches, MicroArchConfig};
 pub use x64::get_canonical_reg;

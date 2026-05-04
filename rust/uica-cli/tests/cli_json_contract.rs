@@ -5,6 +5,38 @@ use serde_json::Value;
 use tempfile::tempdir;
 
 #[test]
+fn arch_list_prints_real_simulation_architectures_without_input() {
+    let output = Command::new(env!("CARGO_BIN_EXE_uica-cli"))
+        .arg("--arch-list")
+        .output()
+        .expect("cli should run");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "SNB\nIVB\nHSW\nBDW\nSKL\nSKX\nKBL\nCFL\nCLX\nICL\nTGL\nRKL\n"
+    );
+}
+
+#[test]
+fn arch_list_conflicts_with_arch_flag() {
+    let output = Command::new(env!("CARGO_BIN_EXE_uica-cli"))
+        .arg("--arch-list")
+        .arg("--arch")
+        .arg("SKL")
+        .output()
+        .expect("cli should run");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("cannot be used with"), "{stderr}");
+}
+
+#[test]
 fn raw_cli_accepts_run_config_flags_and_writes_v1_json() {
     let temp = tempdir().expect("tempdir should exist");
     let input = temp.path().join("loop.bin");

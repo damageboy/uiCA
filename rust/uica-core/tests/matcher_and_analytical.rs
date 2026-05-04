@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use uica_core::analytical::{compute_dsb_limit, AnalyticalInstruction};
 use uica_core::{
     compute_issue_limit, compute_port_usage_limit, get_micro_arch, match_instruction,
-    match_instruction_record, normalize_mnemonic, CandidateRecord, InstructionPortUsage,
-    NormalizedInstr,
+    match_instruction_record, match_instruction_record_ref, normalize_mnemonic, CandidateRecord,
+    InstructionPortUsage, NormalizedInstr, NormalizedInstrRef,
 };
 use uica_data::{InstructionRecord, PerfRecord};
 
@@ -236,6 +236,45 @@ fn does_not_fallback_to_mnemonic_when_decoded_iform_signature_misses() {
     let candidates = vec![record("MULX_GPR64q_GPR64q_GPR64q", "MULX (R64, R64, R64)")];
 
     assert!(match_instruction_record(&instr, &candidates).is_none());
+}
+
+#[test]
+fn borrowed_matcher_input_matches_owned_matcher_without_cloning_fields() {
+    let explicit_reg_operands = vec!["RAX".to_string(), "RBX".to_string()];
+    let xml_attrs: BTreeMap<String, String> =
+        [("rm".to_string(), "7".to_string())].into_iter().collect();
+    let instr = NormalizedInstr {
+        max_op_size_bytes: 8,
+        immediate: None,
+        iform_signature: "GPRv_MEMv".to_string(),
+        mnemonic: "cmp".to_string(),
+        decoded_iform: String::new(),
+        uses_high8_reg: false,
+        explicit_reg_operands: explicit_reg_operands.clone(),
+        xml_attrs: xml_attrs.clone(),
+        agen: Some("B_IS_D8".to_string()),
+    };
+    let borrowed = NormalizedInstrRef {
+        max_op_size_bytes: instr.max_op_size_bytes,
+        immediate: instr.immediate,
+        iform_signature: &instr.iform_signature,
+        mnemonic: &instr.mnemonic,
+        decoded_iform: &instr.decoded_iform,
+        uses_high8_reg: instr.uses_high8_reg,
+        explicit_reg_operands: &instr.explicit_reg_operands,
+        xml_attrs: &instr.xml_attrs,
+        agen: instr.agen.as_deref(),
+    };
+    let mut wrong = record("CMP_GPRv_MEMv", "CMP wrong rm");
+    wrong.xml_attrs.insert("rm".to_string(), "3".to_string());
+    let mut right = record("CMP_GPRv_MEMv", "CMP right rm");
+    right.xml_attrs.insert("rm".to_string(), "67".to_string());
+    let candidates = vec![wrong, right];
+
+    let owned = match_instruction_record(&instr, &candidates).expect("owned match");
+    let borrowed = match_instruction_record_ref(borrowed, &candidates).expect("borrowed match");
+
+    assert_eq!(borrowed.string, owned.string);
 }
 
 #[test]

@@ -21,8 +21,8 @@ use super::renamer::Renamer;
 use super::reorder_buffer::ReorderBuffer;
 use super::scheduler::Scheduler;
 use super::types::{
-    recompute_macro_fusion_and_is_last, FusedUop, InstrInstance, LaminatedUop, OperandKey, Uop,
-    UopProperties, UopSource,
+    build_instruction_templates, recompute_macro_fusion_and_is_last, shared_slice, FusedUop,
+    InstrInstance, InstrTemplate, LaminatedUop, OperandKey, Uop, UopProperties, UopSource,
 };
 use super::uop_expand::{
     apply_python_pop5c_decoder_shape, expand_instr_instance_to_lam_uops_with_storage,
@@ -39,19 +39,19 @@ fn populate_instr_instance_metadata(
     no_micro_fusion: bool,
     no_macro_fusion: bool,
 ) {
-    let norm = crate::matcher::NormalizedInstr {
-        mnemonic: instr_i.mnemonic.clone(),
-        decoded_iform: instr_i.decoded_iform.clone(),
-        iform_signature: instr_i.iform_signature.clone(),
+    let norm = crate::matcher::NormalizedInstrRef {
+        mnemonic: &instr_i.mnemonic,
+        decoded_iform: &instr_i.decoded_iform,
+        iform_signature: &instr_i.iform_signature,
         max_op_size_bytes: instr_i.max_op_size_bytes,
         immediate: instr_i.immediate,
         uses_high8_reg: instr_i.uses_high8_reg,
-        explicit_reg_operands: instr_i.explicit_reg_operands.clone(),
-        xml_attrs: instr_i.xml_attrs.clone(),
-        agen: instr_i.agen.clone(),
+        explicit_reg_operands: &instr_i.explicit_reg_operands,
+        xml_attrs: &instr_i.xml_attrs,
+        agen: instr_i.agen.as_deref(),
     };
-    let candidates = pack_index.candidates_for(&arch_name.to_ascii_uppercase(), &instr_i.mnemonic);
-    if let Some(record) = crate::matcher::match_instruction_record(&norm, candidates) {
+    let candidates = pack_index.candidates_for(arch_name, &instr_i.mnemonic);
+    if let Some(record) = crate::matcher::match_instruction_record_ref(norm, candidates) {
         let arch = crate::micro_arch::get_micro_arch(arch_name);
         let perf = if let Some(arch) = arch.as_ref() {
             perf_for_python_getinstructions(
@@ -73,8 +73,8 @@ fn populate_instr_instance_metadata(
         instr_i.div_cycles = perf.div_cycles;
         instr_i.retire_slots = perf.retire_slots.max(1) as u32;
         instr_i.instr_tp = perf.tp.map(|tp| tp.ceil().max(0.0) as u32);
-        instr_i.instr_str = record.string.clone();
-        instr_i.macro_fusible_with = record.perf.macro_fusible_with.clone();
+        instr_i.instr_str = record.string.clone().into();
+        instr_i.macro_fusible_with = shared_slice(record.perf.macro_fusible_with.clone());
         instr_i.is_macro_fusible_with_next = !instr_i.macro_fusible_with.is_empty();
         if instr_i.implicit_rsp_change == 0 {
             instr_i.implicit_rsp_change = record.perf.implicit_rsp_change;
@@ -120,7 +120,7 @@ fn populate_instr_instance_metadata(
         instr_i.no_micro_fusion = perf.no_micro_fusion || no_micro_fusion;
         instr_i.no_macro_fusion = perf.no_macro_fusion || no_macro_fusion;
         if instr_i.no_macro_fusion {
-            instr_i.macro_fusible_with.clear();
+            instr_i.macro_fusible_with = shared_slice(Vec::new());
             instr_i.is_macro_fusible_with_next = false;
         }
         if no_micro_fusion {
@@ -283,6 +283,7 @@ pub struct FrontEnd {
     pub cache_block_generator: Option<CacheBlockGenerator>,
     pub pending_cache_block: Option<Vec<InstrInstance>>,
     pub cache_blocks_generator: Option<CacheBlocksForNextRoundGenerator>,
+    pub instr_templates: Vec<InstrTemplate>,
     pub all_generated_instr_instances: Vec<InstrInstance>,
     pub uop_idx_counter: u64,
     pub fused_idx_counter: u64,
@@ -329,6 +330,7 @@ impl FrontEnd {
         no_macro_fusion: bool,
     ) -> Self {
         let init_policy = init_policy.into();
+        let instr_templates = build_instruction_templates(&base_instructions);
         let instruction_queue = Rc::new(RefCell::new(VecDeque::<InstrInstance>::new()));
 
         let mut uop_source = if simple_front_end {
@@ -437,6 +439,7 @@ impl FrontEnd {
             cache_block_generator,
             pending_cache_block: None,
             cache_blocks_generator,
+            instr_templates,
             all_generated_instr_instances: Vec::new(),
             uop_idx_counter: 0,
             fused_idx_counter: 0,
@@ -1057,7 +1060,7 @@ impl FrontEnd {
                 regs_to_merge.push(canonical);
             }
         }
-        for mem_addr in &instr.mem_addrs {
+        for mem_addr in instr.mem_addrs.iter() {
             for reg in [&mem_addr.base, &mem_addr.index].into_iter().flatten() {
                 let canonical = crate::x64::get_canonical_reg(reg);
                 if matches!(canonical.as_str(), "RAX" | "RBX" | "RCX" | "RDX")
@@ -1082,7 +1085,7 @@ impl FrontEnd {
             .iter()
             .map(|reg| crate::x64::get_canonical_reg(reg))
             .collect();
-        for mem_addr in &instr.mem_addrs {
+        for mem_addr in instr.mem_addrs.iter() {
             if mem_addr.is_implicit_stack_operand {
                 continue;
             }
@@ -1103,7 +1106,7 @@ impl FrontEnd {
                 clock,
                 instr.idx,
                 UopProperties {
-                    possible_ports: vec!["1".to_string(), "5".to_string()],
+                    possible_ports: shared_slice(vec!["1".to_string(), "5".to_string()]),
                     div_cycles: 0,
                     is_load_uop: false,
                     is_store_address_uop: false,
@@ -1112,13 +1115,13 @@ impl FrontEnd {
                     is_last_uop_of_instr: true,
                     is_reg_merge_uop: true,
                     is_serializing_instr: false,
-                    input_reg_operands: vec![canonical.clone()],
-                    output_reg_operands: vec![canonical.clone()],
+                    input_reg_operands: shared_slice(vec![canonical.clone()]),
+                    output_reg_operands: shared_slice(vec![canonical.clone()]),
                     may_be_eliminated: false,
                     latencies: [(canonical.clone(), 1)].into_iter().collect(),
-                    input_operands: vec![OperandKey::Reg(canonical.clone())],
-                    instr_input_operands: instr_input_operands.clone(),
-                    output_operands: vec![OperandKey::Reg(canonical.clone())],
+                    input_operands: shared_slice(vec![OperandKey::Reg(canonical.clone())]),
+                    instr_input_operands: shared_slice(instr_input_operands.clone()),
+                    output_operands: shared_slice(vec![OperandKey::Reg(canonical.clone())]),
                     latencies_by_operand: [(OperandKey::Reg(canonical.clone()), 1)]
                         .into_iter()
                         .collect(),
@@ -1147,7 +1150,7 @@ impl FrontEnd {
                 self.high8_reg_clean.insert(canonical, true);
             }
         }
-        for mem_addr in &instr.mem_addrs {
+        for mem_addr in instr.mem_addrs.iter() {
             for reg in [&mem_addr.base, &mem_addr.index].into_iter().flatten() {
                 let canonical = crate::x64::get_canonical_reg(reg);
                 if matches!(canonical.as_str(), "RAX" | "RBX" | "RCX" | "RDX")
@@ -1157,7 +1160,7 @@ impl FrontEnd {
                 }
             }
         }
-        for reg in &instr.output_regs {
+        for reg in instr.output_regs.iter() {
             if crate::x64::is_high8_reg(reg) {
                 self.high8_reg_clean
                     .insert(crate::x64::get_canonical_reg(reg), false);
@@ -1240,7 +1243,7 @@ impl FrontEnd {
         latencies_by_operand.insert(OperandKey::Reg("RSP".to_string()), 1);
         let instr_input_operands = first_uop.prop.instr_input_operands.clone();
         let prop = UopProperties {
-            possible_ports: self.pack.alu_ports.clone(),
+            possible_ports: shared_slice(self.pack.alu_ports.clone()),
             div_cycles: 0,
             is_load_uop: false,
             is_store_address_uop: false,
@@ -1249,13 +1252,13 @@ impl FrontEnd {
             is_last_uop_of_instr: true,
             is_reg_merge_uop: false,
             is_serializing_instr: false,
-            input_reg_operands: vec!["RSP".to_string()],
-            output_reg_operands: vec!["RSP".to_string()],
+            input_reg_operands: shared_slice(vec!["RSP".to_string()]),
+            output_reg_operands: shared_slice(vec!["RSP".to_string()]),
             may_be_eliminated: false,
             latencies,
-            input_operands: vec![OperandKey::Reg("RSP".to_string())],
+            input_operands: shared_slice(vec![OperandKey::Reg("RSP".to_string())]),
             instr_input_operands,
-            output_operands: vec![OperandKey::Reg("RSP".to_string())],
+            output_operands: shared_slice(vec![OperandKey::Reg("RSP".to_string())]),
             latencies_by_operand,
             instr_tp: None,
             // Python parity: `StackSyncUop` stores the original `instrI.instr`.
@@ -1326,7 +1329,7 @@ mod tests {
 
         populate_instr_instance_metadata(&mut instances[0], "SKL", &index, false, false);
 
-        assert_eq!(instances[0].instr_str, "POP (R64)");
+        assert_eq!(instances[0].instr_str.as_ref(), "POP (R64)");
         assert!(instances[0].opcode_hex.ends_with("5C"));
         assert!(instances[0].complex_decoder);
         assert_eq!(instances[0].n_available_simple_decoders, 4);

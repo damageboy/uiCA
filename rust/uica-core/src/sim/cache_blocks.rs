@@ -91,7 +91,8 @@ impl Iterator for CacheBlockGenerator {
             inst.idx = self.next_instance_idx;
             self.next_instance_idx += 1;
 
-            self.cache_block.push(inst.clone());
+            let inst_size = inst.size;
+            self.cache_block.push(inst);
 
             let is_last = self.idx_in_instr_list == self.instructions.len() - 1;
             self.idx_in_instr_list += 1;
@@ -103,7 +104,7 @@ impl Iterator for CacheBlockGenerator {
             }
 
             let prev_addr = self.next_addr;
-            self.next_addr = prev_addr + inst.size;
+            self.next_addr = prev_addr + inst_size;
             if prev_addr / 64 != self.next_addr / 64 {
                 let ret = std::mem::take(&mut self.cache_block);
                 return Some(ret);

@@ -348,7 +348,7 @@ pub fn build_trace_report(
                 instr_i.disasm
             )
         } else {
-            instr_i.disasm.clone()
+            instr_i.disasm.to_string()
         };
         table_data
             .last_mut()
@@ -616,9 +616,9 @@ mod tests {
     #[test]
     fn trace_report_links_round_zero_instr_to_uops_info() {
         let mut instr = no_uop_instr(None);
-        instr.mnemonic = "ADD".to_string();
-        instr.disasm = "add qword ptr [rax], rbx".to_string();
-        instr.instr_str = "ADD (M64, R64)".to_string();
+        instr.mnemonic = "ADD".into();
+        instr.disasm = "add qword ptr [rax], rbx".into();
+        instr.instr_str = "ADD (M64, R64)".into();
         let frontend = trace_frontend_with(vec![instr]);
 
         let report = build_trace_report(&frontend, 0, 4);

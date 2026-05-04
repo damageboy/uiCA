@@ -26,6 +26,20 @@ use crate::micro_arch::MicroArchConfig;
 
 use super::uop_storage::UopStorage;
 
+fn ports_eq(possible_ports: &[String], expected: &[&str]) -> bool {
+    possible_ports.len() == expected.len()
+        && possible_ports
+            .iter()
+            .zip(expected.iter())
+            .all(|(actual, expected)| actual == expected)
+}
+
+fn sorted_port_key(possible_ports: &[String]) -> String {
+    let mut ports: Vec<&str> = possible_ports.iter().map(String::as_str).collect();
+    ports.sort_unstable();
+    ports.join(",")
+}
+
 pub struct Scheduler {
     pub arch: MicroArchConfig,
     pub all_ports: Vec<String>,
@@ -125,7 +139,7 @@ impl Scheduler {
         self.port_usage_at_start_of_cycle
             .insert(clock, self.port_usage.clone());
 
-        let mut port_combinations: HashMap<Vec<String>, usize> = HashMap::new();
+        let mut port_combinations: HashMap<String, usize> = HashMap::new();
 
         // Collect all unfused uop indices first
         let mut all_unfused_uop_idxs = Vec::new();
@@ -145,53 +159,40 @@ impl Scheduler {
 
         // Now process each uop
         for (issue_slot, uop_idx) in all_unfused_uop_idxs {
-            // Get uop properties (immutable borrow)
-            let (
-                possible_ports,
-                eliminated,
-                is_first,
-                is_load_ser,
-                is_store_ser,
-                _is_load,
-                _is_store_addr,
-                _is_store_data,
-            ) = {
-                if let Some(uop) = storage.get_uop(uop_idx) {
-                    (
-                        uop.prop.possible_ports.clone(),
-                        uop.eliminated,
-                        uop.prop.is_first_uop_of_instr,
-                        uop.prop.is_load_serializing,
-                        uop.prop.is_store_serializing,
-                        uop.prop.is_load_uop,
-                        uop.prop.is_store_address_uop,
-                        uop.prop.is_store_data_uop,
-                    )
-                } else {
+            // Borrow uop properties only for port selection; drop the borrow
+            // before mutating storage below.
+            let (port, is_first, is_load_ser, is_store_ser) = {
+                let Some(uop) = storage.get_uop(uop_idx) else {
+                    continue;
+                };
+                let possible_ports = &uop.prop.possible_ports;
+                if possible_ports.is_empty() || uop.eliminated {
                     continue;
                 }
-            };
 
-            if possible_ports.is_empty() || eliminated {
-                continue;
-            }
+                let port = if possible_ports.len() == 1 {
+                    possible_ports[0].clone()
+                } else if self.arch.simple_port_assignment {
+                    possible_ports[0].clone()
+                } else if self.all_ports.len() == 10 {
+                    self.select_port_10port_style(
+                        clock,
+                        issue_slot,
+                        possible_ports,
+                        &mut port_combinations,
+                    )
+                } else if self.all_ports.len() == 8 {
+                    self.select_port_hsw_style(clock, issue_slot, possible_ports)
+                } else {
+                    self.select_port_python_style(clock, issue_slot, possible_ports)
+                };
 
-            // Select port
-            let port = if possible_ports.len() == 1 {
-                possible_ports[0].clone()
-            } else if self.arch.simple_port_assignment {
-                possible_ports[0].clone()
-            } else if self.all_ports.len() == 10 {
-                self.select_port_10port_style(
-                    clock,
-                    issue_slot,
-                    &possible_ports,
-                    &mut port_combinations,
+                (
+                    port,
+                    uop.prop.is_first_uop_of_instr,
+                    uop.prop.is_load_serializing,
+                    uop.prop.is_store_serializing,
                 )
-            } else if self.all_ports.len() == 8 {
-                self.select_port_hsw_style(clock, issue_slot, &possible_ports)
-            } else {
-                self.select_port_python_style(clock, issue_slot, &possible_ports)
             };
 
             // Now update the uop (mutable borrow)
@@ -242,7 +243,7 @@ impl Scheduler {
             .unwrap();
 
         // P23 alternation
-        if possible_ports == &["2".to_string(), "3".to_string()] {
+        if ports_eq(possible_ports, &["2", "3"]) {
             let port = self.next_p23_port.clone();
             self.next_p23_port = if self.next_p23_port == "2" {
                 "3".to_string()
@@ -279,7 +280,7 @@ impl Scheduler {
         clock: u32,
         issue_slot: usize,
         possible_ports: &[String],
-        port_combinations: &mut HashMap<Vec<String>, usize>,
+        port_combinations: &mut HashMap<String, usize>,
     ) -> String {
         // Get port usage from previous cycle (clock-1), fall back to current cycle
         let usage = if clock > 0 {
@@ -314,15 +315,12 @@ impl Scheduler {
             .collect();
 
         // Track port combinations in current cycle
-        let mut pc_key = possible_ports.to_vec();
-        pc_key.sort();
+        let pc_key = sorted_port_key(possible_ports);
         let n_pc = *port_combinations.get(&pc_key).unwrap_or(&0);
         port_combinations.insert(pc_key, n_pc + 1);
 
         // Special case: p23 alternation
-        if possible_ports == ["2".to_string(), "3".to_string()]
-            || possible_ports == ["3".to_string(), "2".to_string()]
-        {
+        if ports_eq(possible_ports, &["2", "3"]) || ports_eq(possible_ports, &["3", "2"]) {
             let port = self.next_p23_port.clone();
             self.next_p23_port = if self.next_p23_port == "2" {
                 "3".to_string()
@@ -333,9 +331,7 @@ impl Scheduler {
         }
 
         // Special case: p49 alternation
-        if possible_ports == ["4".to_string(), "9".to_string()]
-            || possible_ports == ["9".to_string(), "4".to_string()]
-        {
+        if ports_eq(possible_ports, &["4", "9"]) || ports_eq(possible_ports, &["9", "4"]) {
             let port = self.next_p49_port.clone();
             self.next_p49_port = if self.next_p49_port == "4" {
                 "9".to_string()
@@ -346,9 +342,7 @@ impl Scheduler {
         }
 
         // Special case: p78 alternation
-        if possible_ports == ["7".to_string(), "8".to_string()]
-            || possible_ports == ["8".to_string(), "7".to_string()]
-        {
+        if ports_eq(possible_ports, &["7", "8"]) || ports_eq(possible_ports, &["8", "7"]) {
             let port = self.next_p78_port.clone();
             self.next_p78_port = if self.next_p78_port == "7" {
                 "8".to_string()
@@ -428,7 +422,7 @@ impl Scheduler {
         }
         applicable.sort_by_key(|(p, &u)| (u, p.parse::<i32>().unwrap_or(0)));
         let min_port = applicable[0].0.clone();
-        if possible_ports == ["2".to_string(), "3".to_string()] {
+        if ports_eq(possible_ports, &["2", "3"]) {
             let port = self.next_p23_port.clone();
             self.next_p23_port = if self.next_p23_port == "2" {
                 "3".to_string()
@@ -445,7 +439,7 @@ impl Scheduler {
             return min_port;
         }
 
-        if possible_ports == ["0".to_string(), "1".to_string(), "5".to_string()] {
+        if ports_eq(possible_ports, &["0", "1", "5"]) {
             let table = match min_port.as_str() {
                 "0" => ["0", "5", "1", "0"],
                 "1" => ["1", "5", "0", "1"],
@@ -814,7 +808,13 @@ impl Scheduler {
 
         // Blocked resources
         if is_first && !instr_str.is_empty() {
-            if self.blocked_resources.get(&instr_str).copied().unwrap_or(0) > 0 {
+            if self
+                .blocked_resources
+                .get(instr_str.as_ref())
+                .copied()
+                .unwrap_or(0)
+                > 0
+            {
                 return false;
             }
         }
@@ -843,7 +843,7 @@ impl Scheduler {
         // Block resource if needed
         if is_first {
             if let Some(tp) = instr_tp {
-                self.blocked_resources.insert(instr_str, tp);
+                self.blocked_resources.insert(instr_str.to_string(), tp);
             }
         }
 

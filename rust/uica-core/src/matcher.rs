@@ -28,6 +28,35 @@ pub struct NormalizedInstr {
     pub agen: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct NormalizedInstrRef<'a> {
+    pub mnemonic: &'a str,
+    pub decoded_iform: &'a str,
+    pub iform_signature: &'a str,
+    pub max_op_size_bytes: u8,
+    pub immediate: Option<i64>,
+    pub uses_high8_reg: bool,
+    pub explicit_reg_operands: &'a [String],
+    pub xml_attrs: &'a BTreeMap<String, String>,
+    pub agen: Option<&'a str>,
+}
+
+impl NormalizedInstr {
+    pub fn as_ref(&self) -> NormalizedInstrRef<'_> {
+        NormalizedInstrRef {
+            mnemonic: &self.mnemonic,
+            decoded_iform: &self.decoded_iform,
+            iform_signature: &self.iform_signature,
+            max_op_size_bytes: self.max_op_size_bytes,
+            immediate: self.immediate,
+            uses_high8_reg: self.uses_high8_reg,
+            explicit_reg_operands: &self.explicit_reg_operands,
+            xml_attrs: &self.xml_attrs,
+            agen: self.agen.as_deref(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CandidateRecord {
     pub iform: String,
@@ -54,8 +83,15 @@ pub fn match_instruction_record<'a>(
     instruction: &NormalizedInstr,
     candidates: &'a [InstructionRecord],
 ) -> Option<&'a InstructionRecord> {
-    let normalized_mnemonic = normalize_mnemonic(&instruction.mnemonic);
-    let raw_mnemonic = raw_mnemonic(&instruction.mnemonic);
+    match_instruction_record_ref(instruction.as_ref(), candidates)
+}
+
+pub fn match_instruction_record_ref<'a>(
+    instruction: NormalizedInstrRef<'_>,
+    candidates: &'a [InstructionRecord],
+) -> Option<&'a InstructionRecord> {
+    let normalized_mnemonic = normalize_mnemonic(instruction.mnemonic);
+    let raw_mnemonic = raw_mnemonic(instruction.mnemonic);
     let sig = instruction.iform_signature.trim();
 
     let max_size = instruction.max_op_size_bytes;
@@ -65,7 +101,7 @@ pub fn match_instruction_record<'a>(
             .iter()
             .filter(|candidate| candidate.iform == decoded_iform)
             .collect();
-        let exact_matches = filter_xml_attr_matches(exact_matches, &instruction.xml_attrs);
+        let exact_matches = filter_xml_attr_matches(exact_matches, instruction.xml_attrs);
         if exact_matches.is_empty() {
             return None;
         }
@@ -74,8 +110,8 @@ pub fn match_instruction_record<'a>(
             max_size,
             instruction.immediate,
             instruction.uses_high8_reg,
-            &instruction.explicit_reg_operands,
-            instruction.agen.as_deref(),
+            instruction.explicit_reg_operands,
+            instruction.agen,
         );
     }
 
@@ -90,15 +126,15 @@ pub fn match_instruction_record<'a>(
                         && iform_matches_signature(&candidate.iform, &raw_mnemonic, sig))
             })
             .collect();
-        let sig_matches = filter_xml_attr_matches(sig_matches, &instruction.xml_attrs);
+        let sig_matches = filter_xml_attr_matches(sig_matches, instruction.xml_attrs);
         if !sig_matches.is_empty() {
             return best_record_match(
                 sig_matches,
                 max_size,
                 instruction.immediate,
                 instruction.uses_high8_reg,
-                &instruction.explicit_reg_operands,
-                instruction.agen.as_deref(),
+                instruction.explicit_reg_operands,
+                instruction.agen,
             );
         }
         // Python parity: `getInstructions()` indexes uops.info data by exact
@@ -114,29 +150,29 @@ pub fn match_instruction_record<'a>(
         .iter()
         .filter(|c| normalize_mnemonic(&c.string) == normalized_mnemonic)
         .collect();
-    let string_matches = filter_xml_attr_matches(string_matches, &instruction.xml_attrs);
+    let string_matches = filter_xml_attr_matches(string_matches, instruction.xml_attrs);
     if !string_matches.is_empty() {
         return best_record_match(
             string_matches,
             max_size,
             instruction.immediate,
             instruction.uses_high8_reg,
-            &instruction.explicit_reg_operands,
-            instruction.agen.as_deref(),
+            instruction.explicit_reg_operands,
+            instruction.agen,
         );
     }
     let iform_matches: Vec<&InstructionRecord> = candidates
         .iter()
         .filter(|candidate| normalize_iform_prefix(&candidate.iform) == normalized_mnemonic)
         .collect();
-    let iform_matches = filter_xml_attr_matches(iform_matches, &instruction.xml_attrs);
+    let iform_matches = filter_xml_attr_matches(iform_matches, instruction.xml_attrs);
     best_record_match(
         iform_matches,
         max_size,
         instruction.immediate,
         instruction.uses_high8_reg,
-        &instruction.explicit_reg_operands,
-        instruction.agen.as_deref(),
+        instruction.explicit_reg_operands,
+        instruction.agen,
     )
 }
 

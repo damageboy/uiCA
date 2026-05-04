@@ -14,7 +14,9 @@
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
-use super::types::{FusedUop, InstrInstance, LaminatedUop, OperandKey, Uop, UopProperties};
+use super::types::{
+    shared_slice, FusedUop, InstrInstance, LaminatedUop, OperandKey, Uop, UopProperties,
+};
 use super::uop_storage::UopStorage;
 
 // ---------------------------------------------------------------------------
@@ -135,7 +137,7 @@ fn is_python_excluded_stack_or_ip_reg_operand(
         return false;
     }
 
-    match instr.mnemonic.as_str() {
+    match instr.mnemonic.as_ref() {
         // Python filters operands whose XED reg name contains STACK or IP.
         // For call/ret/enter, uops.info REG ordering follows XED: stack pseudo
         // reg first; IP regs after explicit call target; ENTER keeps RBP at REG1.
@@ -429,20 +431,22 @@ pub fn lookup_uops_mite_ms_indexed(
     arch_name: &str,
     index: &uica_data::DataPackIndex,
 ) -> (u32, u32) {
-    use crate::matcher::{match_instruction_record, NormalizedInstr};
-    let norm = NormalizedInstr {
-        mnemonic: mnemonic.to_string(),
-        decoded_iform: String::new(),
-        iform_signature: iform_signature.to_string(),
+    use crate::matcher::{match_instruction_record_ref, NormalizedInstrRef};
+    let explicit_reg_operands = Vec::new();
+    let xml_attrs = BTreeMap::new();
+    let norm = NormalizedInstrRef {
+        mnemonic,
+        decoded_iform: "",
+        iform_signature,
         max_op_size_bytes,
         immediate: None,
         uses_high8_reg: false,
-        explicit_reg_operands: Vec::new(),
-        xml_attrs: Default::default(),
+        explicit_reg_operands: &explicit_reg_operands,
+        xml_attrs: &xml_attrs,
         agen: None,
     };
-    let candidates = index.candidates_for(&arch_name.to_ascii_uppercase(), mnemonic);
-    match match_instruction_record(&norm, candidates) {
+    let candidates = index.candidates_for(arch_name, mnemonic);
+    match match_instruction_record_ref(norm, candidates) {
         Some(rec) => (record_uops_mite(rec), rec.perf.uops_ms as u32),
         None => (1, 0),
     }
@@ -468,7 +472,7 @@ pub fn expand_instr_instance_to_lam_uops_with_storage(
     if instr.macro_fused_with_prev_instr {
         return Ok(vec![]);
     }
-    use crate::matcher::{match_instruction_record, NormalizedInstr};
+    use crate::matcher::{match_instruction_record_ref, NormalizedInstrRef};
 
     // Use pre-built index if provided (avoids O(n) rebuild per call).
     let owned_index;
@@ -478,19 +482,19 @@ pub fn expand_instr_instance_to_lam_uops_with_storage(
         owned_index = uica_data::DataPackIndex::new(pack.clone());
         &owned_index
     };
-    let norm = NormalizedInstr {
-        mnemonic: instr.mnemonic.clone(),
-        decoded_iform: instr.decoded_iform.clone(),
-        iform_signature: instr.iform_signature.clone(),
+    let norm = NormalizedInstrRef {
+        mnemonic: &instr.mnemonic,
+        decoded_iform: &instr.decoded_iform,
+        iform_signature: &instr.iform_signature,
         max_op_size_bytes: instr.max_op_size_bytes,
         immediate: instr.immediate,
         uses_high8_reg: instr.uses_high8_reg,
-        explicit_reg_operands: instr.explicit_reg_operands.clone(),
-        xml_attrs: instr.xml_attrs.clone(),
-        agen: instr.agen.clone(),
+        explicit_reg_operands: &instr.explicit_reg_operands,
+        xml_attrs: &instr.xml_attrs,
+        agen: instr.agen.as_deref(),
     };
-    let candidates = index.candidates_for(&arch_name.to_ascii_uppercase(), &instr.mnemonic);
-    let record = match match_instruction_record(&norm, candidates) {
+    let candidates = index.candidates_for(arch_name, &instr.mnemonic);
+    let record = match match_instruction_record_ref(norm, candidates) {
         Some(rec) => rec,
         None => {
             // Python parity: `getInstructions()` creates `UnknownInstr` for
@@ -1423,7 +1427,7 @@ fn emit_lam_uops(
     // strip one address occurrence before resolving REGn placeholders; load
     // and store-address uops add memAddrOperands separately below.
     let mut decoded_reg_inputs = decoded_inputs.clone();
-    for mem_addr in &instr.mem_addrs {
+    for mem_addr in instr.mem_addrs.iter() {
         if mem_addr.is_implicit_stack_operand {
             continue;
         }
@@ -1692,7 +1696,7 @@ fn emit_lam_uops(
             .collect();
 
         let prop = UopProperties {
-            possible_ports,
+            possible_ports: shared_slice(possible_ports),
             div_cycles: plan.latencies.get("div_cycles").copied().unwrap_or(0),
             is_load_uop: plan.is_load,
             is_store_address_uop: plan.is_store_address,
@@ -1701,13 +1705,13 @@ fn emit_lam_uops(
             is_last_uop_of_instr: is_last,
             is_reg_merge_uop: false,
             is_serializing_instr: instr.is_serializing_instr,
-            input_reg_operands: inputs,
-            output_reg_operands: outputs,
+            input_reg_operands: shared_slice(inputs),
+            output_reg_operands: shared_slice(outputs),
             may_be_eliminated: instr.may_be_eliminated,
             latencies,
-            input_operands,
-            instr_input_operands,
-            output_operands,
+            input_operands: shared_slice(input_operands),
+            instr_input_operands: shared_slice(instr_input_operands),
+            output_operands: shared_slice(output_operands),
             latencies_by_operand,
             instr_tp: instr.instr_tp,
             instr_str: instr.instr_str.clone(),
@@ -1992,7 +1996,7 @@ mod tests {
             "mulx".to_string(),
             "mulx rax, rbx, rcx".to_string(),
         );
-        instr.iform_signature = "VGPR64q_VGPR64q_VGPR64q".to_string();
+        instr.iform_signature = "VGPR64q_VGPR64q_VGPR64q".into();
         instr.max_op_size_bytes = 8;
         instr.uops_mite = 1;
         instr.retire_slots = 1;
@@ -2137,9 +2141,11 @@ mod tests {
             "sub".to_string(),
             "sub rcx, rdx".to_string(),
         );
-        instr.input_regs = vec!["RCX".to_string(), "RDX".to_string()];
-        instr.output_regs = vec!["RCX".to_string()];
-        instr.explicit_reg_operands = vec!["RCX".to_string(), "RDX".to_string()];
+        instr.input_regs =
+            super::super::types::shared_slice(vec!["RCX".to_string(), "RDX".to_string()]);
+        instr.output_regs = super::super::types::shared_slice(vec!["RCX".to_string()]);
+        instr.explicit_reg_operands =
+            super::super::types::shared_slice(vec!["RCX".to_string(), "RDX".to_string()]);
 
         let plans = compute_uop_plans_inner(&record, "HSW", Some(&instr));
 
@@ -2213,9 +2219,10 @@ mod tests {
             "pcmpgtb".to_string(),
             "pcmpgtb xmm0, xmm0".to_string(),
         );
-        instr.input_regs = vec!["XMM0".to_string()];
-        instr.output_regs = vec!["XMM0".to_string()];
-        instr.explicit_reg_operands = vec!["XMM0".to_string(), "XMM0".to_string()];
+        instr.input_regs = super::super::types::shared_slice(vec!["XMM0".to_string()]);
+        instr.output_regs = super::super::types::shared_slice(vec!["XMM0".to_string()]);
+        instr.explicit_reg_operands =
+            super::super::types::shared_slice(vec!["XMM0".to_string(), "XMM0".to_string()]);
 
         let plans = compute_uop_plans_inner(&record, "HSW", Some(&instr));
 
@@ -2234,13 +2241,13 @@ mod tests {
             "lea".to_string(),
             "lea ecx, [rdx+rdx]".to_string(),
         );
-        instr.mem_addrs.push(super::super::types::MemAddr {
+        instr.mem_addrs = super::super::types::shared_slice(vec![super::super::types::MemAddr {
             base: Some("RDX".to_string()),
             index: Some("RDX".to_string()),
             scale: 1,
             disp: 0,
             is_implicit_stack_operand: false,
-        });
+        }]);
 
         let plans = vec![super::UopPlan {
             ports: vec!["1".to_string()],
@@ -2273,11 +2280,12 @@ mod tests {
 
         let uop = storage.get_uop(0).expect("LEA uop");
         assert_eq!(
-            uop.prop.input_operands,
-            vec![
+            uop.prop.input_operands.as_ref(),
+            [
                 super::super::types::OperandKey::Reg("RDX".to_string()),
                 super::super::types::OperandKey::Reg("RDX".to_string()),
             ]
+            .as_slice()
         );
     }
 
@@ -2292,15 +2300,15 @@ mod tests {
             "mov".to_string(),
             "mov rcx, [rbx+8]".to_string(),
         );
-        instr.input_regs = vec!["RBX".to_string()];
-        instr.output_regs = vec!["RCX".to_string()];
-        instr.mem_addrs.push(super::super::types::MemAddr {
+        instr.input_regs = super::super::types::shared_slice(vec!["RBX".to_string()]);
+        instr.output_regs = super::super::types::shared_slice(vec!["RCX".to_string()]);
+        instr.mem_addrs = super::super::types::shared_slice(vec![super::super::types::MemAddr {
             base: Some("RBX".to_string()),
             index: None,
             scale: 1,
             disp: 8,
             is_implicit_stack_operand: false,
-        });
+        }]);
 
         let plans = vec![super::UopPlan {
             ports: vec!["2".to_string(), "3".to_string()],
@@ -2333,8 +2341,8 @@ mod tests {
 
         let uop = storage.get_uop(0).expect("MOV load uop");
         assert_eq!(
-            uop.prop.input_operands,
-            vec![super::super::types::OperandKey::Reg("RBX".to_string())]
+            uop.prop.input_operands.as_ref(),
+            [super::super::types::OperandKey::Reg("RBX".to_string())].as_slice()
         );
         assert!(
             uop.prop.instr_input_operands.is_empty(),
@@ -2415,11 +2423,15 @@ mod tests {
             "kandw".to_string(),
             "kandw k2, k1, k1".to_string(),
         );
-        instr.iform_signature = "MASKmskw_MASKmskw_MASKmskw_AVX512".to_string();
+        instr.iform_signature = "MASKmskw_MASKmskw_MASKmskw_AVX512".into();
         instr.max_op_size_bytes = 8;
-        instr.input_regs = vec!["K1".to_string()];
-        instr.output_regs = vec!["K2".to_string()];
-        instr.explicit_reg_operands = vec!["K2".to_string(), "K1".to_string(), "K1".to_string()];
+        instr.input_regs = super::super::types::shared_slice(vec!["K1".to_string()]);
+        instr.output_regs = super::super::types::shared_slice(vec!["K2".to_string()]);
+        instr.explicit_reg_operands = super::super::types::shared_slice(vec![
+            "K2".to_string(),
+            "K1".to_string(),
+            "K1".to_string(),
+        ]);
         instr.uops_mite = 1;
         instr.retire_slots = 1;
 
@@ -2441,11 +2453,12 @@ mod tests {
 
         let uop = storage.get_uop(0).expect("uop should exist");
         assert_eq!(
-            uop.prop.input_operands,
-            vec![
+            uop.prop.input_operands.as_ref(),
+            [
                 super::super::types::OperandKey::Reg("K1".to_string()),
                 super::super::types::OperandKey::Reg("K1".to_string()),
             ]
+            .as_slice()
         );
     }
 

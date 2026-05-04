@@ -481,7 +481,7 @@ impl Renamer {
                 };
 
                 let mut renamed_inputs = Vec::new();
-                for input in &input_ops {
+                for input in input_ops.iter() {
                     let renamed = if let Some(op) = pseudo_dict.get(input) {
                         op.clone()
                     } else if let Some(key) = self.rename_dict_key(input) {
@@ -674,7 +674,7 @@ impl Renamer {
             return false;
         };
         if !matches!(
-            base_uop.prop.instr_str.as_str(),
+            base_uop.prop.instr_str.as_ref(),
             "MOV (R64, M64)"
                 | "MOV (RAX, M64)"
                 | "MOV (R32, M32)"

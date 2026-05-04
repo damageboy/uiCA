@@ -16,6 +16,11 @@ pub fn share<T>(value: T) -> Shared<T> {
     Rc::new(RefCell::new(value))
 }
 
+#[inline]
+pub fn shared_slice<T>(values: Vec<T>) -> Rc<[T]> {
+    Rc::from(values.into_boxed_slice())
+}
+
 /// Source of a laminated uop inside the front-end pipeline.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UopSource {
@@ -98,7 +103,7 @@ fn parse_pseudo_id(name: &str) -> Option<u64> {
 /// are modelled; fillers will be expanded as the port progresses.
 #[derive(Clone, Debug, Default)]
 pub struct UopProperties {
-    pub possible_ports: Vec<String>,
+    pub possible_ports: Rc<[String]>,
     pub div_cycles: u32,
     pub is_load_uop: bool,
     pub is_store_address_uop: bool,
@@ -108,19 +113,19 @@ pub struct UopProperties {
     pub is_reg_merge_uop: bool,
     pub is_serializing_instr: bool,
     // Legacy string fields retained while consumers migrate to OperandKey.
-    pub input_reg_operands: Vec<String>,
-    pub output_reg_operands: Vec<String>,
+    pub input_reg_operands: Rc<[String]>,
+    pub output_reg_operands: Rc<[String]>,
     pub may_be_eliminated: bool,
     pub latencies: BTreeMap<String, u32>,
-    pub input_operands: Vec<OperandKey>,
+    pub input_operands: Rc<[OperandKey]>,
     /// Python parity: `Instr.inputRegOperands`, excluding memory address
     /// operands. Used for AbstractValueGenerator, not rename dependencies.
-    pub instr_input_operands: Vec<OperandKey>,
-    pub output_operands: Vec<OperandKey>,
+    pub instr_input_operands: Rc<[OperandKey]>,
+    pub output_operands: Rc<[OperandKey]>,
     pub latencies_by_operand: BTreeMap<OperandKey, u32>,
     // Instruction reference for trace/model output.
     pub instr_tp: Option<u32>,
-    pub instr_str: String,
+    pub instr_str: Rc<str>,
     pub immediate: Option<i64>,
     pub is_load_serializing: bool,
     pub is_store_serializing: bool,
@@ -240,45 +245,112 @@ impl RenamedOperand {
     }
 }
 
+/// Immutable decoded instruction data shared by runtime instances.
+/// Initial scaffold keeps duplicated fields on `InstrInstance`; later phases
+/// will migrate hot paths to read through `template_id`.
+#[derive(Debug, Clone)]
+pub struct InstrTemplate {
+    pub instr_id: u32,
+    pub size: u32,
+    pub pos_nominal_opcode: u32,
+    pub mnemonic: Rc<str>,
+    pub disasm: Rc<str>,
+    pub opcode_hex: Rc<str>,
+    pub input_regs: Rc<[String]>,
+    pub output_regs: Rc<[String]>,
+    pub reads_flags: bool,
+    pub writes_flags: bool,
+    pub has_memory_read: bool,
+    pub has_memory_write: bool,
+    pub mem_addrs: Rc<[MemAddr]>,
+    pub immediate: Option<i64>,
+    pub decoded_iform: Rc<str>,
+    pub iform_signature: Rc<str>,
+    pub max_op_size_bytes: u8,
+    pub uses_high8_reg: bool,
+    pub explicit_reg_operands: Rc<[String]>,
+    pub agen: Option<Rc<str>>,
+    pub xml_attrs: Rc<BTreeMap<String, String>>,
+    pub is_branch_instr: bool,
+    pub is_serializing_instr: bool,
+    pub is_load_serializing: bool,
+    pub is_store_serializing: bool,
+    pub implicit_rsp_change: i32,
+}
+
+impl InstrTemplate {
+    pub fn from_instance(inst: &InstrInstance) -> Self {
+        Self {
+            instr_id: inst.instr_id,
+            size: inst.size,
+            pos_nominal_opcode: inst.pos_nominal_opcode,
+            mnemonic: inst.mnemonic.clone(),
+            disasm: inst.disasm.clone(),
+            opcode_hex: inst.opcode_hex.clone(),
+            input_regs: inst.input_regs.clone(),
+            output_regs: inst.output_regs.clone(),
+            reads_flags: inst.reads_flags,
+            writes_flags: inst.writes_flags,
+            has_memory_read: inst.has_memory_read,
+            has_memory_write: inst.has_memory_write,
+            mem_addrs: inst.mem_addrs.clone(),
+            immediate: inst.immediate,
+            decoded_iform: inst.decoded_iform.clone(),
+            iform_signature: inst.iform_signature.clone(),
+            max_op_size_bytes: inst.max_op_size_bytes,
+            uses_high8_reg: inst.uses_high8_reg,
+            explicit_reg_operands: inst.explicit_reg_operands.clone(),
+            agen: inst.agen.clone(),
+            xml_attrs: inst.xml_attrs.clone(),
+            is_branch_instr: inst.is_branch_instr,
+            is_serializing_instr: inst.is_serializing_instr,
+            is_load_serializing: inst.is_load_serializing,
+            is_store_serializing: inst.is_store_serializing,
+            implicit_rsp_change: inst.implicit_rsp_change,
+        }
+    }
+}
+
 /// Runtime instance of an instruction (one per loop iteration).
 /// Mirrors `InstrInstance` in `uiCA.py`.
 #[derive(Debug, Clone)]
 pub struct InstrInstance {
     pub idx: u64,
     pub instr_id: u32,
+    pub template_id: usize,
     pub rnd: u32,
 
     // Physical properties (from Instr)
     pub address: u32,
     pub size: u32,
     pub pos_nominal_opcode: u32,
-    pub mnemonic: String,
-    pub disasm: String,
-    pub opcode_hex: String,
+    pub mnemonic: Rc<str>,
+    pub disasm: Rc<str>,
+    pub opcode_hex: Rc<str>,
 
     // Operand info from decoder
-    pub input_regs: Vec<String>,
-    pub output_regs: Vec<String>,
+    pub input_regs: Rc<[String]>,
+    pub output_regs: Rc<[String]>,
     pub reads_flags: bool,
     pub writes_flags: bool,
     pub has_memory_read: bool,
     pub has_memory_write: bool,
-    pub mem_addrs: Vec<MemAddr>,
+    pub mem_addrs: Rc<[MemAddr]>,
     pub immediate: Option<i64>,
     /// Exact XED iform decoded for this instruction.
-    pub decoded_iform: String,
+    pub decoded_iform: Rc<str>,
     /// Iform-style operand signature for DataPack disambiguation.
-    pub iform_signature: String,
+    pub iform_signature: Rc<str>,
     /// Max operand register size bytes (0=unknown); used for record disambiguation.
     pub max_op_size_bytes: u8,
     /// True when explicit operand uses AH/BH/CH/DH; disambiguates R8h/R8l records.
     pub uses_high8_reg: bool,
     /// Explicit register operands in instruction operand order; mirrors XED attrs.
-    pub explicit_reg_operands: Vec<String>,
+    pub explicit_reg_operands: Rc<[String]>,
     /// XED `agen` attribute for LEA addressing forms (e.g. B_IS_D8).
-    pub agen: Option<String>,
+    pub agen: Option<Rc<str>>,
     /// XED/XML match attributes used by Python `xed.matchXMLAttributes()`.
-    pub xml_attrs: BTreeMap<String, String>,
+    pub xml_attrs: Rc<BTreeMap<String, String>>,
 
     // Decoder properties
     pub is_branch_instr: bool,
@@ -290,7 +362,7 @@ pub struct InstrInstance {
     pub macro_fused_with_prev_instr: bool,
     pub macro_fused_with_next_instr: bool,
     pub is_macro_fusible_with_next: bool,
-    pub macro_fusible_with: Vec<String>,
+    pub macro_fusible_with: Rc<[String]>,
     pub is_last_decoded_instr: bool,
 
     // Uop counts
@@ -299,7 +371,7 @@ pub struct InstrInstance {
     pub div_cycles: u32,
     pub retire_slots: u32,
     pub instr_tp: Option<u32>,
-    pub instr_str: String,
+    pub instr_str: Rc<str>,
     pub implicit_rsp_change: i32,
     pub may_be_eliminated: bool,
     pub is_serializing_instr: bool,
@@ -336,28 +408,29 @@ impl InstrInstance {
         Self {
             idx,
             instr_id,
+            template_id: instr_id as usize,
             rnd,
             address,
             size,
             pos_nominal_opcode: 0,
-            mnemonic,
-            disasm,
-            opcode_hex: String::new(),
-            input_regs: Vec::new(),
-            output_regs: Vec::new(),
+            mnemonic: mnemonic.into(),
+            disasm: disasm.into(),
+            opcode_hex: Rc::from(""),
+            input_regs: shared_slice(Vec::new()),
+            output_regs: shared_slice(Vec::new()),
             reads_flags: false,
             writes_flags: false,
             has_memory_read: false,
             has_memory_write: false,
-            mem_addrs: Vec::new(),
+            mem_addrs: shared_slice(Vec::new()),
             immediate: None,
-            decoded_iform: String::new(),
-            iform_signature: String::new(),
+            decoded_iform: Rc::from(""),
+            iform_signature: Rc::from(""),
             max_op_size_bytes: 0,
             uses_high8_reg: false,
-            explicit_reg_operands: Vec::new(),
+            explicit_reg_operands: shared_slice(Vec::new()),
             agen: None,
-            xml_attrs: BTreeMap::new(),
+            xml_attrs: Rc::new(BTreeMap::new()),
             is_branch_instr: false,
             complex_decoder: false,
             n_available_simple_decoders: 4,
@@ -365,14 +438,14 @@ impl InstrInstance {
             macro_fused_with_prev_instr: false,
             macro_fused_with_next_instr: false,
             is_macro_fusible_with_next: false,
-            macro_fusible_with: Vec::new(),
+            macro_fusible_with: shared_slice(Vec::new()),
             is_last_decoded_instr: false,
             uops_mite: 1, // default to 1 uop
             uops_ms: 0,
             div_cycles: 0,
             retire_slots: 1,
             instr_tp: None,
-            instr_str: String::new(),
+            instr_str: Rc::from(""),
             implicit_rsp_change: 0,
             may_be_eliminated: false,
             is_serializing_instr: false,
@@ -417,7 +490,7 @@ pub fn recompute_macro_fusion_and_is_last(instances: &mut [InstrInstance]) {
             && instances[i - 1]
                 .macro_fusible_with
                 .iter()
-                .any(|instr_str| instr_str == &branch.instr_str)
+                .any(|instr_str| instr_str.as_str() == branch.instr_str.as_ref())
         {
             instances[i].macro_fused_with_prev_instr = true;
             instances[i - 1].macro_fused_with_next_instr = true;
@@ -443,6 +516,10 @@ pub fn recompute_macro_fusion_and_is_last(instances: &mut [InstrInstance]) {
 ///
 /// This function mirrors the logic in `getInstructions` from instructions.py,
 /// focusing only on the fields needed for PreDecoder and Decoder.
+pub fn build_instruction_templates(instances: &[InstrInstance]) -> Vec<InstrTemplate> {
+    instances.iter().map(InstrTemplate::from_instance).collect()
+}
+
 pub fn build_instruction_instances(
     decoded: &[uica_decoder::DecodedInstruction],
     alignment_offset: u32,
@@ -465,44 +542,46 @@ pub fn build_instruction_instances(
             dec.mnemonic.clone(),
             dec.disasm.clone(),
         );
-        inst.opcode_hex = dec
-            .bytes
-            .iter()
-            .map(|b| format!("{b:02X}"))
-            .collect::<String>();
+        inst.opcode_hex = Rc::from(
+            dec.bytes
+                .iter()
+                .map(|b| format!("{b:02X}"))
+                .collect::<String>(),
+        );
         inst.pos_nominal_opcode = dec.pos_nominal_opcode;
         inst.lcp_stall = dec.has_66_prefix && dec.immediate_width_bits == 16;
 
         // Copy decoder-derived operand info
-        inst.input_regs = dec.input_regs.clone();
-        inst.output_regs = dec.output_regs.clone();
+        inst.input_regs = shared_slice(dec.input_regs.clone());
+        inst.output_regs = shared_slice(dec.output_regs.clone());
         inst.reads_flags = dec.reads_flags;
         inst.writes_flags = dec.writes_flags;
         inst.has_memory_read = dec.has_memory_read;
         inst.has_memory_write = dec.has_memory_write;
-        inst.mem_addrs = dec
-            .mem_addrs
-            .iter()
-            .map(|m| MemAddr {
-                base: m.base.clone(),
-                index: m.index.clone(),
-                scale: m.scale,
-                disp: m.disp,
-                is_implicit_stack_operand: m.is_implicit_stack_operand,
-            })
-            .collect();
+        inst.mem_addrs = shared_slice(
+            dec.mem_addrs
+                .iter()
+                .map(|m| MemAddr {
+                    base: m.base.clone(),
+                    index: m.index.clone(),
+                    scale: m.scale,
+                    disp: m.disp,
+                    is_implicit_stack_operand: m.is_implicit_stack_operand,
+                })
+                .collect(),
+        );
         // Python parity: `getInstructions()` computes `implicitRSPChange`
         // from decoded XED STACKPUSH/STACKPOP operands before applying XML
         // performance rows. Preserve decoded stack-pointer effects here.
         inst.implicit_rsp_change = dec.implicit_rsp_change;
         inst.immediate = dec.immediate;
-        inst.decoded_iform = dec.iform.clone();
-        inst.iform_signature = dec.iform_signature.clone();
+        inst.decoded_iform = Rc::from(dec.iform.clone());
+        inst.iform_signature = Rc::from(dec.iform_signature.clone());
         inst.max_op_size_bytes = dec.max_op_size_bytes;
         inst.uses_high8_reg = dec.uses_high8_reg;
-        inst.explicit_reg_operands = dec.explicit_reg_operands.clone();
-        inst.agen = dec.agen.clone();
-        inst.xml_attrs = dec.xml_attrs.clone();
+        inst.explicit_reg_operands = shared_slice(dec.explicit_reg_operands.clone());
+        inst.agen = dec.agen.as_ref().map(|agen| Rc::from(agen.as_str()));
+        inst.xml_attrs = Rc::new(dec.xml_attrs.clone());
 
         // Detect conditional branches for decoder and macro-fusion handling.
         inst.is_branch_instr = is_conditional_branch(&dec.mnemonic);
@@ -579,24 +658,38 @@ fn is_store_serializing(mnemonic: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_instruction_instances, recompute_macro_fusion_and_is_last};
+    use super::{build_instruction_instances, recompute_macro_fusion_and_is_last, shared_slice};
 
     #[test]
     fn macro_fusion_uses_uipack_branch_strings() {
         let decoded = uica_decoder::decode_raw(&[0x48, 0x3b, 0x07, 0x70, 0x02]).unwrap();
         let mut instances = build_instruction_instances(&decoded, 0);
-        instances[0].instr_str = "CMP (R64, M64)".to_string();
-        instances[0].macro_fusible_with = vec!["JZ (Rel8)".to_string()];
+        instances[0].instr_str = "CMP (R64, M64)".into();
+        instances[0].macro_fusible_with = shared_slice(vec!["JZ (Rel8)".to_string()]);
         instances[0].is_macro_fusible_with_next = true;
-        instances[1].instr_str = "JO (Rel8)".to_string();
+        instances[1].instr_str = "JO (Rel8)".into();
         recompute_macro_fusion_and_is_last(&mut instances);
         assert!(!instances[0].macro_fused_with_next_instr);
         assert!(!instances[1].macro_fused_with_prev_instr);
 
-        instances[1].instr_str = "JZ (Rel8)".to_string();
+        instances[1].instr_str = "JZ (Rel8)".into();
         recompute_macro_fusion_and_is_last(&mut instances);
         assert!(instances[0].macro_fused_with_next_instr);
         assert!(instances[1].macro_fused_with_prev_instr);
+    }
+
+    #[test]
+    fn build_instruction_instances_assigns_template_ids() {
+        let decoded = uica_decoder::decode_raw(&[0x48, 0x01, 0xd8, 0x48, 0xff, 0xc0]).unwrap();
+        let instances = build_instruction_instances(&decoded, 0);
+        let templates = super::build_instruction_templates(&instances);
+
+        assert_eq!(instances.len(), 2);
+        assert_eq!(templates.len(), 2);
+        assert_eq!(instances[0].template_id, 0);
+        assert_eq!(instances[1].template_id, 1);
+        assert_eq!(templates[0].mnemonic, instances[0].mnemonic);
+        assert_eq!(templates[1].decoded_iform, instances[1].decoded_iform);
     }
 
     #[test]

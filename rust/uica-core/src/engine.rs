@@ -15,7 +15,7 @@ use crate::analytical::{
     AnalyticalInstruction, AnalyticalLatencyInstruction, AnalyticalMemOperand,
     InstructionPortUsage,
 };
-use crate::matcher::{match_instruction_record, NormalizedInstr};
+use crate::matcher::{match_instruction_record_ref, NormalizedInstrRef};
 use crate::micro_arch::{get_micro_arch, MicroArchConfig};
 
 #[derive(Clone, Debug, Default)]
@@ -92,20 +92,20 @@ fn engine_with_pack_internal(
     let mut loop_facts = Vec::with_capacity(decoded.len());
 
     for decoded_instr in &decoded {
-        let norm = NormalizedInstr {
+        let norm = NormalizedInstrRef {
             // Python parity: `getInstructions()` matches uops.info XML attrs,
             // including operand width. Use decoder width here like FrontEnd
             // metadata matching, rather than falling back to width-agnostic
             // records that can carry different port data (e.g. R16 vs R64 MOV).
             max_op_size_bytes: decoded_instr.max_op_size_bytes,
             immediate: decoded_instr.immediate,
-            mnemonic: decoded_instr.mnemonic.clone(),
-            decoded_iform: decoded_instr.iform.clone(),
-            iform_signature: decoded_instr.iform_signature.clone(),
+            mnemonic: &decoded_instr.mnemonic,
+            decoded_iform: &decoded_instr.iform,
+            iform_signature: &decoded_instr.iform_signature,
             uses_high8_reg: decoded_instr.uses_high8_reg,
-            explicit_reg_operands: decoded_instr.explicit_reg_operands.clone(),
-            xml_attrs: decoded_instr.xml_attrs.clone(),
-            agen: decoded_instr.agen.clone(),
+            explicit_reg_operands: &decoded_instr.explicit_reg_operands,
+            xml_attrs: &decoded_instr.xml_attrs,
+            agen: decoded_instr.agen.as_deref(),
         };
 
         let mut fact = LoopInstrFacts {
@@ -163,7 +163,7 @@ fn engine_with_pack_internal(
         };
 
         let candidates = index.candidates_for(&result.invocation.arch, &decoded_instr.mnemonic);
-        if let Some(record) = match_instruction_record(&norm, candidates) {
+        if let Some(record) = match_instruction_record_ref(norm, candidates) {
             let uses_sr_fallback_for_analytics =
                 crate::sim::uop_expand::record_movzx_special_case_with_input_regs(
                     record,
@@ -2248,9 +2248,9 @@ fn build_instructions_json(frontend: &crate::sim::FrontEnd) -> Vec<serde_json::V
         let entry = by_id.entry(inst.instr_id).or_insert_with(|| {
             let mut map = serde_json::Map::new();
             map.insert("instrID".to_string(), json!(inst.instr_id));
-            map.insert("asm".to_string(), json!(inst.disasm.clone()));
-            map.insert("opcode".to_string(), json!(inst.opcode_hex.clone()));
-            map.insert("url".to_string(), json!(instr_url(&inst.disasm)));
+            map.insert("asm".to_string(), json!(inst.disasm.as_ref()));
+            map.insert("opcode".to_string(), json!(inst.opcode_hex.as_ref()));
+            map.insert("url".to_string(), json!(instr_url(inst.disasm.as_ref())));
             map
         });
         if inst.macro_fused_with_next_instr && !entry.contains_key("macroFusedWithNextInstr") {

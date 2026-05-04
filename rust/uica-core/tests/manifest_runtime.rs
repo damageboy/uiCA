@@ -241,7 +241,7 @@ fn dsb_multi_slot_instruction_expands_real_laminated_uops_once() {
     let multi_slot = frontend
         .all_generated_instr_instances
         .iter()
-        .find(|inst| inst.mnemonic == "shl" && inst.laminated_uops.len() > 1)
+        .find(|inst| inst.mnemonic.as_ref() == "shl" && inst.laminated_uops.len() > 1)
         .expect("SHL-by-CL should occupy multiple DSB slots");
     let multi_slot_idx = multi_slot.idx;
     let multi_slot_lams = multi_slot.laminated_uops.clone();
@@ -297,8 +297,11 @@ fn stack_pointer_changes_disable_lsd_like_python_getinstructions() {
         0,
     );
     assert_eq!(enter[0].implicit_rsp_change, -8);
-    assert_eq!(enter[0].input_regs, vec!["RBP".to_string()]);
-    assert_eq!(enter[0].output_regs, vec!["RBP".to_string()]);
+    assert_eq!(enter[0].input_regs.as_ref(), ["RBP".to_string()].as_slice());
+    assert_eq!(
+        enter[0].output_regs.as_ref(),
+        ["RBP".to_string()].as_slice()
+    );
 
     let mut storage = uica_core::sim::uop_storage::UopStorage::new();
     let mut uop_idx = 0;
@@ -329,7 +332,10 @@ fn stack_pointer_changes_disable_lsd_like_python_getinstructions() {
         &uica_decoder::decode_raw(&[0x54]).unwrap(),
         0,
     );
-    assert_eq!(push_rsp[0].input_regs, vec!["RSP".to_string()]);
+    assert_eq!(
+        push_rsp[0].input_regs.as_ref(),
+        ["RSP".to_string()].as_slice()
+    );
     assert!(push_rsp[0].output_regs.is_empty());
 
     let pop_rsp = uica_core::sim::types::build_instruction_instances(
@@ -337,7 +343,10 @@ fn stack_pointer_changes_disable_lsd_like_python_getinstructions() {
         0,
     );
     assert!(pop_rsp[0].input_regs.is_empty());
-    assert_eq!(pop_rsp[0].output_regs, vec!["RSP".to_string()]);
+    assert_eq!(
+        pop_rsp[0].output_regs.as_ref(),
+        ["RSP".to_string()].as_slice()
+    );
 
     let pushf = uica_core::sim::types::build_instruction_instances(
         &uica_decoder::decode_raw(&[0x9c]).unwrap(),

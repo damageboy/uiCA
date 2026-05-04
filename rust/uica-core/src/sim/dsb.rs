@@ -50,15 +50,15 @@ impl Dsb {
         }
 
         let mut ret_list: Vec<(InstrInstance, Option<u64>)> = Vec::new();
-        let mut dsb_block = self.dsb_block_queue[0].clone();
-        let new_dsb_block_started = dsb_block.front().is_some_and(|e| e.slot == 0);
+        let new_dsb_block_started = self.dsb_block_queue[0].front().is_some_and(|e| e.slot == 0);
         let mut second_dsb_block_loaded = false;
+        let mut need_load_after_empty = false;
         let mut remaining_slots = self.arch.dsb_width as usize;
         let delay_in_prev_cycle = self.delay_in_prev_cycle;
         self.delay_in_prev_cycle = false;
 
         while remaining_slots > 0 {
-            if dsb_block.is_empty() {
+            if need_load_after_empty {
                 if !second_dsb_block_loaded
                     && !self.dsb_block_queue.is_empty()
                     && self.dsb_block_queue[0]
@@ -66,10 +66,9 @@ impl Dsb {
                         .is_none_or(|e| e.ms_lam_idxs.is_empty())
                 {
                     second_dsb_block_loaded = true;
-                    dsb_block = self.dsb_block_queue[0].clone();
                     if let Some(prev) = ret_list.last() {
                         let prev_instr_i = &prev.0;
-                        if let Some(first) = dsb_block.front() {
+                        if let Some(first) = self.dsb_block_queue[0].front() {
                             let next_addr = prev_instr_i.address + prev_instr_i.size;
                             if next_addr != first.instr_i.address
                                 && !prev_instr_i.is_last_decoded_instr
@@ -78,19 +77,33 @@ impl Dsb {
                             }
                         }
                     }
+                    need_load_after_empty = false;
                 } else {
                     return ret_list;
                 }
             }
 
-            let entry = dsb_block.front().unwrap().clone();
-
-            if entry.requires_extra_entry && remaining_slots < 2 {
+            if self.dsb_block_queue.is_empty() {
                 return ret_list;
             }
 
+            if self.dsb_block_queue[0]
+                .front()
+                .is_some_and(|entry| entry.requires_extra_entry)
+                && remaining_slots < 2
+            {
+                return ret_list;
+            }
+
+            let entry = self.dsb_block_queue[0]
+                .pop_front()
+                .expect("non-empty DSB block");
+            let entry_slot = entry.slot;
+            let entry_instr_addr = entry.instr_i.address;
+            let entry_is_last_decoded_instr = entry.instr_i.is_last_decoded_instr;
+
             if let Some(lam_idx) = entry.lam_idx {
-                ret_list.push((entry.instr_i.clone(), Some(lam_idx)));
+                ret_list.push((entry.instr_i, Some(lam_idx)));
                 if entry.requires_extra_entry {
                     remaining_slots = 0;
                     self.delay_in_prev_cycle = true;
@@ -100,15 +113,13 @@ impl Dsb {
             }
 
             if !entry.ms_lam_idxs.is_empty() {
-                ms.add_lam_idxs(entry.ms_lam_idxs.clone(), "DSB");
+                ms.add_lam_idxs(entry.ms_lam_idxs, "DSB");
                 remaining_slots = 0;
             }
 
-            dsb_block.pop_front();
-            self.dsb_block_queue[0].pop_front();
-
-            if dsb_block.is_empty() {
+            if self.dsb_block_queue[0].is_empty() {
                 self.dsb_block_queue.pop_front();
+                need_load_after_empty = remaining_slots > 0;
                 if remaining_slots > 0
                     && !self.dsb_block_queue.is_empty()
                     && self.arch.dsb_width == 6
@@ -117,14 +128,15 @@ impl Dsb {
                         let next_instr_addr = next_first.instr_i.address;
                         let next_instr_in_same_memory_block = next_instr_addr
                             / self.arch.dsb_block_size
-                            == entry.instr_i.address / self.arch.dsb_block_size;
+                            == entry_instr_addr / self.arch.dsb_block_size;
 
                         if self.arch.dsb_block_size == 32
                             && next_instr_in_same_memory_block
-                            && entry.instr_i.is_last_decoded_instr
+                            && entry_is_last_decoded_instr
                             && !delay_in_prev_cycle
                         {
                             remaining_slots = 0;
+                            need_load_after_empty = false;
                         } else if !next_instr_in_same_memory_block {
                             if new_dsb_block_started {
                                 remaining_slots = match ret_list.len() {
@@ -133,8 +145,8 @@ impl Dsb {
                                     5 => 1,
                                     _ => remaining_slots,
                                 };
-                            } else if entry.instr_i.is_last_decoded_instr {
-                                if ret_list.len() == 1 || (ret_list.len() == 2 && entry.slot >= 4) {
+                            } else if entry_is_last_decoded_instr {
+                                if ret_list.len() == 1 || (ret_list.len() == 2 && entry_slot >= 4) {
                                     remaining_slots = 4;
                                 } else {
                                     remaining_slots = remaining_slots.min(2);
@@ -142,6 +154,10 @@ impl Dsb {
                             }
                         }
                     }
+                }
+
+                if need_load_after_empty && self.dsb_block_queue.is_empty() {
+                    return ret_list;
                 }
             }
         }

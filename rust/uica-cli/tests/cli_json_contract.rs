@@ -35,7 +35,7 @@ fn raw_cli_accepts_run_config_flags_and_writes_v1_json() {
         .expect("cli should run");
 
     assert!(status.status.success());
-    assert_eq!(String::from_utf8(status.stdout).unwrap(), "1\n");
+    assert_eq!(String::from_utf8(status.stdout).unwrap(), "0.25\n");
 
     let value: Value =
         serde_json::from_slice(&fs::read(&output).expect("json output should be written"))
@@ -51,9 +51,41 @@ fn raw_cli_accepts_run_config_flags_and_writes_v1_json() {
     assert_eq!(value["invocation"]["noMicroFusion"], true);
     assert_eq!(value["invocation"]["noMacroFusion"], true);
     assert_eq!(value["invocation"]["simpleFrontEnd"], true);
-    assert_eq!(value["summary"]["throughput_cycles_per_iteration"], 1.0);
-    assert_eq!(value["summary"]["iterations_simulated"], 20);
-    assert_eq!(value["summary"]["cycles_simulated"], 600);
+    assert_eq!(value["summary"]["throughput_cycles_per_iteration"], 0.25);
+    assert_eq!(value["summary"]["iterations_simulated"], 2400);
+    assert_eq!(value["summary"]["cycles_simulated"], 601);
+}
+
+#[test]
+fn raw_cli_writes_trace_from_non_repo_cwd_without_datapack_env() {
+    let temp = tempfile::tempdir().expect("tempdir should be created");
+    let raw = temp.path().join("loop.bin");
+    let trace = temp.path().join("trace.html");
+    std::fs::write(&raw, [0x48, 0x01, 0xd8]).expect("raw input should be written");
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_uica-cli"))
+        .current_dir(temp.path())
+        .env_remove("UICA_RUST_DATAPACK")
+        .arg("loop.bin")
+        .arg("--raw")
+        .arg("--arch")
+        .arg("SKL")
+        .arg("--min-cycles")
+        .arg("8")
+        .arg("--min-iterations")
+        .arg("1")
+        .arg("--trace")
+        .arg(&trace)
+        .output()
+        .expect("cli should run");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let trace_html = std::fs::read_to_string(&trace).expect("trace report should be written");
+    assert!(trace_html.contains("Execution Trace"));
 }
 
 #[test]

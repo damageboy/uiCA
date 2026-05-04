@@ -1681,8 +1681,9 @@ fn load_default_runtime(arch: &str, verify_uipack: bool) -> Option<MappedUiPackR
         }
     }
 
-    let generated_dir = PathBuf::from("rust/uica-data/generated");
-    load_runtime_source(&generated_dir, arch, verify_uipack)
+    default_generated_dirs()
+        .into_iter()
+        .find_map(|generated_dir| load_runtime_source(&generated_dir, arch, verify_uipack))
 }
 
 fn load_default_runtime_verified(arch: &str) -> Result<MappedUiPackRuntime, String> {
@@ -1690,8 +1691,20 @@ fn load_default_runtime_verified(arch: &str) -> Result<MappedUiPackRuntime, Stri
         return load_runtime_source_verified(Path::new(&path), arch);
     }
 
-    let generated_dir = PathBuf::from("rust/uica-data/generated");
-    load_runtime_source_verified(&generated_dir, arch)
+    for generated_dir in default_generated_dirs() {
+        if let Ok(runtime) = load_runtime_source_verified(&generated_dir, arch) {
+            return Ok(runtime);
+        }
+    }
+
+    Err(format!("uipack data not found for {arch}"))
+}
+
+fn default_generated_dirs() -> Vec<PathBuf> {
+    vec![
+        PathBuf::from("rust/uica-data/generated"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../uica-data/generated"),
+    ]
 }
 
 fn load_runtime_source(

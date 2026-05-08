@@ -1,0 +1,72 @@
+name: pages
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: |
+          if ! command -v wasm-pack >/dev/null 2>&1; then
+            cargo install wasm-pack --locked
+          fi
+
+      - name: Build Pages artifact
+        run: |
+          ./scripts/build-web.sh
+          test -f dist/CNAME
+          test "$(cat dist/CNAME)" = "uica.houmus.org"
+          test -f dist/index.html
+          test -f dist/test-pure-wasm.html
+          test -f dist/pkg/uica_wasm.js
+          test -f dist/pkg/uica_wasm_bg.wasm
+          test -f dist/data/manifest.json
+          test -f dist/data/arch/SKL.uipack
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          manifest = json.loads(Path('dist/data/manifest.json').read_text())
+          missing = []
+          for arch, entry in manifest['architectures'].items():
+              path = Path('dist/data') / entry['path']
+              if not path.exists():
+                  missing.append((arch, str(path)))
+          if missing:
+              raise SystemExit(f'missing UIPack files: {missing}')
+          PY
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

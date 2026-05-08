@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>uiCA pure wasm test</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="panel">
+        <h1>uiCA pure wasm test</h1>
+        <p class="subtitle">
+          Rust-only wasm target: no XED, hardcoded decoded instruction stream.
+        </p>
+
+        <div class="sample-box">
+          <strong>Sample stream</strong>
+          <p>
+            <code>add rax, rbx</code> as decoded IR. No raw x86 decoding happens
+            in this target.
+          </p>
+        </div>
+
+        <label for="arch-select">Microarchitecture</label>
+        <select id="arch-select"></select>
+        <p id="cache-status" class="subtitle">UIPack cache not loaded yet.</p>
+
+        <div class="actions">
+          <button id="analyze-button" type="button" disabled>Analyze</button>
+          <span id="status">Loading wasm…</span>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Result</h2>
+        <pre id="output">Waiting for wasm…</pre>
+      </section>
+    </main>
+
+    <script type="module" src="./pure-wasm.js"></script>
+  </body>
+</html>

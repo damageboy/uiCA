@@ -1,35 +1,20 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>uiCA wasm demo</title>
-  <link rel="stylesheet" href="./style.css">
-</head>
-<body>
-  <main class="page">
-    <section class="panel">
-      <h1>uiCA wasm demo</h1>
-      <p class="subtitle">Analyze hex bytes with Rust wasm stub.</p>
-
-      <label for="hex-input">Hex bytes</label>
-      <textarea id="hex-input" rows="6" spellcheck="false">90 90</textarea>
-
-      <label for="arch-input">Architecture</label>
-      <input id="arch-input" type="text" value="SKL">
-
-      <div class="actions">
-        <button id="analyze-button" type="button" disabled>Analyze</button>
-        <span id="status">Loading wasm…</span>
-      </div>
-    </section>
-
-    <section class="panel">
-      <h2>Result</h2>
-      <pre id="output">Waiting for wasm…</pre>
-    </section>
-  </main>
-
-  <script type="module" src="./main.js"></script>
-</body>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>uiCA</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="panel">
+        <h1>uiCA</h1>
+        <p class="subtitle">
+          Main site landing page placeholder. Pure Rust wasm smoke test lives at
+          <a href="./test-pure-wasm.html">test-pure-wasm.html</a>.
+        </p>
+      </section>
+    </main>
+  </body>
 </html>

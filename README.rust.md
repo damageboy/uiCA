@@ -32,8 +32,10 @@ input obj/raw
       -> uica-model::UicaResult (JSON)
 
 wasm decoded-IR input
-  -> uica-wasm::analyze_decoded_json
-      -> uica-core::engine_with_decoded
+  -> test-pure-wasm.html fetches shared data/manifest.json + data/arch/*.uipack
+      -> browser Cache API stores selected UIPack
+      -> uica-wasm::analyze_decoded_json_with_uipack
+      -> uica-core::engine_with_decoded_uipack_runtime
       -> JSON string
 ```
 
@@ -84,14 +86,20 @@ cargo test --workspace
 ./scripts/build-web.sh
 ```
 
-Rust-only wasm builds do not depend on XED. `analyze_decoded_json` accepts caller-supplied decoded IR; `analyze_hex` validates hex then returns an explicit XED-required error until the planned Emscripten/XED target lands.
+Rust-only wasm (`uica-wasm`) targets `wasm32-unknown-unknown` through `wasm-pack` and intentionally excludes XED. The test page is `test-pure-wasm.html` under the static site (for production: `https://uica.houmus.org/test-pure-wasm.html`). It accepts decoded IR JSON plus caller-supplied UIPack bytes through `analyze_decoded_json_with_uipack`. The page loads shared `data/manifest.json` and `data/arch/*.uipack` resources and caches `.uipack` responses with the browser Cache API. Future wasm implementations, including Emscripten/XED, should reuse the same manifest and UIPack URLs. Raw x86 byte decoding belongs to the future Emscripten/XED wasm target.
+
+GitHub Pages deployment uses `.github/workflows/pages.yml` on pushes to `master`. The build artifact includes `CNAME` with `uica.houmus.org`. DNS for the subdomain should point `uica.houmus.org` at the repository owner's GitHub Pages host with a CNAME record (for this fork, typically `damageboy.github.io`). After DNS resolves, configure the Pages custom domain in the GitHub repository settings and enable HTTPS.
 
 Outputs in `dist/`:
 
 - `dist/index.html`
+- `dist/test-pure-wasm.html`
 - `dist/main.js`
+- `dist/pure-wasm.js`
 - `dist/style.css`
 - `dist/pkg/*` (wasm-pack output)
+- `dist/data/manifest.json`
+- `dist/data/arch/*.uipack`
 
 ## 3) Verification flow (Python oracle -> Rust candidate)
 
@@ -199,7 +207,8 @@ Native Rust binary:
 
 Wasm API for Rust-only consumers:
 
-- `analyze_decoded_json(decoded_json, arch) -> Result<String, String>`
+- `analyze_decoded_json_with_uipack(decoded_json, arch, uipack_bytes) -> Result<String, String>`
+- `analyze_decoded_json(decoded_json, arch) -> Result<String, String>` keeps the no-pack compatibility path
 - `analyze_hex(hex, arch) -> Result<String, String>` validates hex then returns an XED-required error in this target
 
 ## 5) Mapping: Python modules -> Rust crates

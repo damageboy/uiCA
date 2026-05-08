@@ -585,6 +585,7 @@ version = "0.1.0"
 dependencies = [
  "serde_json",
  "uica-core",
+ "uica-data",
  "uica-decode-ir",
  "uica-model",
  "wasm-bindgen",

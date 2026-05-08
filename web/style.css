@@ -44,6 +44,7 @@ label {
 
 textarea,
 input,
+select,
 button,
 pre {
 	width: 100%;
@@ -56,8 +57,20 @@ pre {
 
 textarea,
 input,
+select,
 pre {
 	padding: 12px;
+}
+
+.sample-box {
+	border: 1px solid #3c4d60;
+	border-radius: 10px;
+	background: #0a0f14;
+	padding: 12px;
+}
+
+code {
+	color: #9ec1ff;
 }
 
 button {

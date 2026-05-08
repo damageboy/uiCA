@@ -2,6 +2,7 @@
 use wasm_bindgen::prelude::*;
 
 use uica_core::engine;
+use uica_data::MappedUiPackRuntime;
 use uica_decode_ir::DecodedInstruction;
 use uica_model::Invocation;
 
@@ -19,12 +20,40 @@ pub fn analyze_decoded_json(decoded_json: &str, arch: &str) -> Result<String, St
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+pub fn analyze_decoded_json_with_uipack(
+    decoded_json: &str,
+    arch: &str,
+    uipack_bytes: &[u8],
+) -> Result<String, String> {
+    let decoded: Vec<DecodedInstruction> =
+        serde_json::from_str(decoded_json).map_err(|err| err.to_string())?;
+    let invocation = Invocation {
+        arch: arch.to_string(),
+        ..Invocation::default()
+    };
+    let runtime = MappedUiPackRuntime::from_bytes_verified(uipack_bytes.to_vec())
+        .map_err(|err| err.to_string())?;
+    let pack_arch = runtime
+        .view()
+        .map_err(|err| err.to_string())?
+        .arch()
+        .to_string();
+    if !pack_arch.eq_ignore_ascii_case(arch) {
+        return Err(format!(
+            "UIPack architecture {pack_arch} does not match requested architecture {}",
+            arch.trim().to_ascii_uppercase()
+        ));
+    }
+    let output =
+        engine::engine_output_with_decoded_uipack_runtime(&decoded, &invocation, &runtime, false)?;
+
+    serde_json::to_string(&output.result).map_err(|err| err.to_string())
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub fn analyze_hex(hex_bytes: &str, _arch: &str) -> Result<String, String> {
     let _code = decode_hex(hex_bytes)?;
-    Err(
-        "raw x86 byte analysis requires an XED-enabled wasm build; use analyze_decoded_json"
-            .to_string(),
-    )
+    Err("raw x86 byte analysis requires an XED-enabled wasm build; use analyze_decoded_json_with_uipack for pre-decoded IR".to_string())
 }
 
 fn decode_hex(input: &str) -> Result<Vec<u8>, String> {

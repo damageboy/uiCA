@@ -529,6 +529,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "uica-data",
+ "uica-decode-ir",
  "uica-decoder",
  "uica-model",
 ]
@@ -551,6 +552,13 @@ dependencies = [
  "serde_json",
  "tempfile",
  "uica-data",
+]
+
+[[package]]
+name = "uica-decode-ir"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -577,6 +585,7 @@ version = "0.1.0"
 dependencies = [
  "serde_json",
  "uica-core",
+ "uica-decode-ir",
  "uica-model",
  "wasm-bindgen",
 ]
@@ -586,6 +595,7 @@ name = "uica-xed"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "uica-decode-ir",
  "uica-xed-sys",
 ]
 

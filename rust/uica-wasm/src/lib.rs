@@ -2,17 +2,29 @@
 use wasm_bindgen::prelude::*;
 
 use uica_core::engine;
+use uica_decode_ir::DecodedInstruction;
 use uica_model::Invocation;
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
-pub fn analyze_hex(hex_bytes: &str, arch: &str) -> Result<String, String> {
-    let code = decode_hex(hex_bytes)?;
+pub fn analyze_decoded_json(decoded_json: &str, arch: &str) -> Result<String, String> {
+    let decoded: Vec<DecodedInstruction> =
+        serde_json::from_str(decoded_json).map_err(|err| err.to_string())?;
     let invocation = Invocation {
         arch: arch.to_string(),
         ..Invocation::default()
     };
 
-    serde_json::to_string(&engine(&code, &invocation)).map_err(|err| err.to_string())
+    serde_json::to_string(&engine::engine_with_decoded(&decoded, &invocation))
+        .map_err(|err| err.to_string())
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+pub fn analyze_hex(hex_bytes: &str, _arch: &str) -> Result<String, String> {
+    let _code = decode_hex(hex_bytes)?;
+    Err(
+        "raw x86 byte analysis requires an XED-enabled wasm build; use analyze_decoded_json"
+            .to_string(),
+    )
 }
 
 fn decode_hex(input: &str) -> Result<Vec<u8>, String> {

@@ -521,7 +521,7 @@ pub fn build_instruction_templates(instances: &[InstrInstance]) -> Vec<InstrTemp
 }
 
 pub fn build_instruction_instances(
-    decoded: &[uica_decoder::DecodedInstruction],
+    decoded: &[uica_decode_ir::DecodedInstruction],
     alignment_offset: u32,
 ) -> Vec<InstrInstance> {
     let mut instances: Vec<InstrInstance> = Vec::new();

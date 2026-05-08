@@ -5,4 +5,5 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1"
+uica-decode-ir = { path = "../uica-decode-ir" }
 uica-xed-sys = { path = "../uica-xed-sys" }

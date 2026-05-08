@@ -7,6 +7,8 @@ use uica_data::{
     load_manifest_runtime, load_manifest_runtime_verified, record_view_to_instruction_record,
     DataPack, DataPackIndex, MappedUiPackRuntime, DATAPACK_MANIFEST_FILE_NAME,
 };
+use uica_decode_ir::{DecodedInstruction, DecodedMemAddr};
+#[cfg(feature = "xed-decoder")]
 use uica_decoder::decode_raw;
 use uica_model::{Invocation, Summary, UicaResult};
 
@@ -25,8 +27,8 @@ pub struct EngineOutput {
     pub reports: Option<uica_model::ReportBundle>,
 }
 
-pub fn engine_output(
-    code: &[u8],
+pub fn engine_output_with_decoded(
+    decoded: &[DecodedInstruction],
     invocation: &Invocation,
     include_reports: bool,
     verify_uipack: bool,
@@ -39,27 +41,55 @@ pub fn engine_output(
                 return Err(format!("uipack data not found for {}", invocation.arch));
             }
             return Ok(EngineOutput {
-                result: fallback_result(code, invocation),
+                result: fallback_result_from_decoded(decoded, invocation),
                 reports: None,
             });
         };
         runtime
     };
-    engine_output_with_uipack_runtime(code, invocation, &runtime, include_reports)
+    engine_output_with_decoded_uipack_runtime(decoded, invocation, &runtime, include_reports)
 }
 
-pub fn engine(code: &[u8], invocation: &Invocation) -> UicaResult {
+pub fn engine_with_decoded(decoded: &[DecodedInstruction], invocation: &Invocation) -> UicaResult {
     if let Some(runtime) = load_default_runtime(&invocation.arch, false) {
-        return engine_output_with_uipack_runtime(code, invocation, &runtime, false)
+        return engine_output_with_decoded_uipack_runtime(decoded, invocation, &runtime, false)
             .map(|output| output.result)
-            .unwrap_or_else(|_| fallback_result(code, invocation));
+            .unwrap_or_else(|_| fallback_result_from_decoded(decoded, invocation));
     }
 
-    fallback_result(code, invocation)
+    fallback_result_from_decoded(decoded, invocation)
 }
 
-fn engine_with_pack_internal(
+#[cfg(feature = "xed-decoder")]
+pub fn engine_output(
     code: &[u8],
+    invocation: &Invocation,
+    include_reports: bool,
+    verify_uipack: bool,
+) -> Result<EngineOutput, String> {
+    let decoded = match decode_raw(code) {
+        Ok(decoded) => decoded,
+        Err(_) => {
+            return Ok(EngineOutput {
+                result: fallback_result_from_decoded(&[], invocation),
+                reports: None,
+            })
+        }
+    };
+    engine_output_with_decoded(&decoded, invocation, include_reports, verify_uipack)
+}
+
+#[cfg(feature = "xed-decoder")]
+pub fn engine(code: &[u8], invocation: &Invocation) -> UicaResult {
+    let decoded = match decode_raw(code) {
+        Ok(decoded) => decoded,
+        Err(_) => return fallback_result_from_decoded(&[], invocation),
+    };
+    engine_with_decoded(&decoded, invocation)
+}
+
+fn engine_with_decoded_pack_internal(
+    decoded: &[DecodedInstruction],
     invocation: &Invocation,
     pack: &DataPack,
     include_reports: bool,
@@ -85,22 +115,12 @@ fn engine_with_pack_internal(
         }
     };
 
-    let decoded = match decode_raw(code) {
-        Ok(decoded) => decoded,
-        Err(_) => {
-            return Ok(EngineOutput {
-                result: fallback_result(code, &normalized_invocation),
-                reports: None,
-            })
-        }
-    };
-
     let index = DataPackIndex::new(pack);
 
     let mut total_retire_slots = 0;
     let mut loop_facts = Vec::with_capacity(decoded.len());
 
-    for decoded_instr in &decoded {
+    for decoded_instr in decoded {
         let norm = NormalizedInstrRef {
             // Python parity: `getInstructions()` matches uops.info XML attrs,
             // including operand width. Use decoder width here like FrontEnd
@@ -305,7 +325,7 @@ fn engine_with_pack_internal(
         loop_facts.push(fact);
     }
 
-    apply_python_high8_latency_adjustments(&mut loop_facts, &decoded, &arch);
+    apply_python_high8_latency_adjustments(&mut loop_facts, decoded, &arch);
 
     let issue_limit = round2(compute_issue_limit(
         total_retire_slots,
@@ -377,7 +397,7 @@ fn engine_with_pack_internal(
     let mut lsd_active = false;
     let mut lsd_unroll_count = 1u32;
     if let Ok((frontend, uops_for_round, final_clock)) =
-        run_simulation_for_cycles(code, &normalized_invocation, pack, &index)
+        run_simulation_for_cycles(decoded, &normalized_invocation, pack, &index)
     {
         lsd_active = frontend.uop_source.as_deref() == Some("LSD");
         lsd_unroll_count = frontend.lsd_unroll_count;
@@ -392,7 +412,7 @@ fn engine_with_pack_internal(
         }
         refresh_summary_limits_from_python_bottlenecks(
             &mut result.summary,
-            &decoded,
+            decoded,
             &loop_facts,
             &arch,
             &frontend,
@@ -419,7 +439,7 @@ fn engine_with_pack_internal(
         }
     } else {
         result.cycles = Vec::new();
-        result.instructions = build_instructions_json_from_decode(code);
+        result.instructions = build_instructions_json_from_decoded(decoded);
     }
 
     let all_ports: Vec<String> = pack.all_ports.clone();
@@ -441,53 +461,102 @@ fn engine_with_pack_internal(
     Ok(EngineOutput { result, reports })
 }
 
-pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -> UicaResult {
-    engine_with_pack_internal(code, invocation, pack, false)
+pub fn engine_with_decoded_pack(
+    decoded: &[DecodedInstruction],
+    invocation: &Invocation,
+    pack: &DataPack,
+) -> UicaResult {
+    engine_with_decoded_pack_internal(decoded, invocation, pack, false)
         .map(|output| output.result)
-        .unwrap_or_else(|_| fallback_result(code, invocation))
+        .unwrap_or_else(|_| fallback_result_from_decoded(decoded, invocation))
 }
 
+pub fn engine_output_with_decoded_pack(
+    decoded: &[DecodedInstruction],
+    invocation: &Invocation,
+    pack: &DataPack,
+    include_reports: bool,
+) -> Result<EngineOutput, String> {
+    engine_with_decoded_pack_internal(decoded, invocation, pack, include_reports)
+}
+
+pub fn engine_output_with_decoded_uipack_runtime(
+    decoded: &[DecodedInstruction],
+    invocation: &Invocation,
+    runtime: &MappedUiPackRuntime,
+    include_reports: bool,
+) -> Result<EngineOutput, String> {
+    let pack = materialize_runtime_pack_for_decoded(decoded, runtime)?;
+    engine_with_decoded_pack_internal(decoded, invocation, &pack, include_reports)
+}
+
+#[cfg(feature = "xed-decoder")]
+pub fn engine_with_pack(code: &[u8], invocation: &Invocation, pack: &DataPack) -> UicaResult {
+    let decoded = match decode_raw(code) {
+        Ok(decoded) => decoded,
+        Err(_) => return fallback_result_from_decoded(&[], invocation),
+    };
+    engine_with_decoded_pack(&decoded, invocation, pack)
+}
+
+#[cfg(feature = "xed-decoder")]
 pub fn engine_output_with_pack(
     code: &[u8],
     invocation: &Invocation,
     pack: &DataPack,
     include_reports: bool,
 ) -> Result<EngineOutput, String> {
-    engine_with_pack_internal(code, invocation, pack, include_reports)
+    let decoded = match decode_raw(code) {
+        Ok(decoded) => decoded,
+        Err(_) => {
+            return Ok(EngineOutput {
+                result: fallback_result_from_decoded(&[], invocation),
+                reports: None,
+            })
+        }
+    };
+    engine_output_with_decoded_pack(&decoded, invocation, pack, include_reports)
 }
 
+#[cfg(feature = "xed-decoder")]
 pub fn engine_output_with_uipack_runtime(
     code: &[u8],
     invocation: &Invocation,
     runtime: &MappedUiPackRuntime,
     include_reports: bool,
 ) -> Result<EngineOutput, String> {
-    let pack = materialize_runtime_pack_for_code(code, runtime)?;
-    engine_with_pack_internal(code, invocation, &pack, include_reports)
+    let decoded = match decode_raw(code) {
+        Ok(decoded) => decoded,
+        Err(_) => {
+            return Ok(EngineOutput {
+                result: fallback_result_from_decoded(&[], invocation),
+                reports: None,
+            })
+        }
+    };
+    engine_output_with_decoded_uipack_runtime(&decoded, invocation, runtime, include_reports)
 }
 
-fn materialize_runtime_pack_for_code(
-    code: &[u8],
+fn materialize_runtime_pack_for_decoded(
+    decoded: &[DecodedInstruction],
     runtime: &MappedUiPackRuntime,
 ) -> Result<DataPack, String> {
     let view = runtime.view().map_err(|err| err.to_string())?;
     let mut selected = BTreeSet::new();
     let mut instructions = Vec::new();
 
-    if let Ok(decoded) = decode_raw(code) {
-        for decoded_instr in &decoded {
-            for &record_index in runtime
-                .index()
-                .record_indices_for_mnemonic(&decoded_instr.mnemonic)
-            {
-                if selected.insert(record_index) {
-                    instructions.push(
-                        record_view_to_instruction_record(
-                            view.record(record_index).map_err(|err| err.to_string())?,
-                        )
-                        .map_err(|err| err.to_string())?,
-                    );
-                }
+    for decoded_instr in decoded {
+        for &record_index in runtime
+            .index()
+            .record_indices_for_mnemonic(&decoded_instr.mnemonic)
+        {
+            if selected.insert(record_index) {
+                instructions.push(
+                    record_view_to_instruction_record(
+                        view.record(record_index).map_err(|err| err.to_string())?,
+                    )
+                    .map_err(|err| err.to_string())?,
+                );
             }
         }
     }
@@ -591,7 +660,7 @@ fn align_frontend_limits_with_simulated_sources(
 
 fn refresh_summary_limits_from_python_bottlenecks(
     summary: &mut Summary,
-    decoded: &[uica_decoder::DecodedInstruction],
+    decoded: &[DecodedInstruction],
     facts: &[LoopInstrFacts],
     arch: &MicroArchConfig,
     frontend: &crate::sim::FrontEnd,
@@ -775,7 +844,7 @@ fn compute_python_runtime_port_usage_limit(
 
 fn apply_python_high8_latency_adjustments(
     facts: &mut [LoopInstrFacts],
-    decoded: &[uica_decoder::DecodedInstruction],
+    decoded: &[DecodedInstruction],
     arch: &MicroArchConfig,
 ) {
     if !arch.high8_renamed_separately {
@@ -819,7 +888,7 @@ fn apply_python_high8_latency_adjustments(
 
 fn process_python_high8_clean_outputs(
     fact: &LoopInstrFacts,
-    instr: &uica_decoder::DecodedInstruction,
+    instr: &DecodedInstruction,
     high8_reg_clean: &mut BTreeMap<String, bool>,
 ) {
     for reg in &instr.input_regs {
@@ -858,7 +927,7 @@ fn process_python_high8_clean_outputs(
 }
 
 fn compute_predecode_limit(
-    decoded: &[uica_decoder::DecodedInstruction],
+    decoded: &[DecodedInstruction],
     facts: &[LoopInstrFacts],
     loop_mode: bool,
     alignment_offset: u32,
@@ -1002,7 +1071,7 @@ fn compute_loop_model(
     })
 }
 
-fn mem_key(decoded: &uica_decoder::DecodedInstruction) -> String {
+fn mem_key(decoded: &DecodedInstruction) -> String {
     if let Some(mem) = decoded.mem_addrs.first() {
         format!(
             "MEM:{}:{}:{}:{}",
@@ -1039,7 +1108,7 @@ struct MappedInputOperand {
     is_implicit_stack_operand: bool,
 }
 
-fn mapped_mem_key(mem_addr: &uica_decoder::DecodedMemAddr) -> String {
+fn mapped_mem_key(mem_addr: &DecodedMemAddr) -> String {
     format!(
         "MEM:{}:{}:{}:{}",
         mem_addr
@@ -1076,7 +1145,7 @@ fn push_input(
 
 fn mapped_record_operands(
     record: &uica_data::InstructionRecord,
-    decoded: &uica_decoder::DecodedInstruction,
+    decoded: &DecodedInstruction,
 ) -> (
     BTreeMap<String, Vec<MappedInputOperand>>,
     BTreeMap<String, Vec<String>>,
@@ -1340,7 +1409,7 @@ fn flatten_operand_map(map: &BTreeMap<String, Vec<String>>) -> Vec<String> {
 
 fn map_record_latencies_to_decoded(
     record: &uica_data::InstructionRecord,
-    decoded: &uica_decoder::DecodedInstruction,
+    decoded: &DecodedInstruction,
     arch_name: &str,
     use_same_reg_latencies: bool,
 ) -> BTreeMap<(String, String), i32> {
@@ -1378,7 +1447,7 @@ fn map_record_latencies_to_decoded(
 
 fn map_record_mem_addr_latency_pairs(
     record: &uica_data::InstructionRecord,
-    decoded: &uica_decoder::DecodedInstruction,
+    decoded: &DecodedInstruction,
     _arch_name: &str,
     _use_same_reg_latencies: bool,
 ) -> std::collections::BTreeSet<(String, String)> {
@@ -1555,7 +1624,7 @@ fn is_conditional_jump(mnemonic: &str) -> bool {
     mnemonic.starts_with('j') && mnemonic != "jmp"
 }
 
-fn is_decoded_zero_idiom(decoded: &uica_decoder::DecodedInstruction) -> bool {
+fn is_decoded_zero_idiom(decoded: &DecodedInstruction) -> bool {
     matches!(
         decoded.mnemonic.to_ascii_lowercase().as_str(),
         "xor" | "sub" | "pxor" | "vxorps" | "vxorpd" | "vpxor"
@@ -1631,21 +1700,19 @@ fn canonical_signature(mnemonics: &[&str]) -> String {
         .join(",")
 }
 
-fn fallback_result(code: &[u8], invocation: &Invocation) -> UicaResult {
+fn fallback_result_from_decoded(
+    decoded: &[DecodedInstruction],
+    invocation: &Invocation,
+) -> UicaResult {
     let normalized_invocation = Invocation {
         arch: invocation.arch.to_ascii_uppercase(),
         ..invocation.clone()
     };
-    let mode = if decode_raw(code)
-        .unwrap_or_default()
-        .iter()
-        .any(|instr| instr.mnemonic.starts_with('j'))
-    {
+    let mode = if decoded.iter().any(|instr| instr.mnemonic.starts_with('j')) {
         "loop".to_string()
     } else {
         "unroll".to_string()
     };
-    let _decoded = decode_raw(code).unwrap_or_default();
     let summary = Summary {
         throughput_cycles_per_iteration: Some(1.0),
         iterations_simulated: normalized_invocation.min_iterations,
@@ -1774,20 +1841,22 @@ fn runtime_manifest_path(path: &Path) -> Option<PathBuf> {
 }
 
 /// Trace-mode engine: runs FrontEnd simulation and emits Q events.
+#[cfg(feature = "xed-decoder")]
 pub fn engine_trace(
     code: &[u8],
     invocation: &Invocation,
     verify_uipack: bool,
 ) -> Result<crate::sim::TraceWriter, String> {
+    let decoded = decode_raw(code).map_err(|err| format!("decode error: {err}"))?;
     let runtime = if verify_uipack {
         load_default_runtime_verified(&invocation.arch)?
     } else {
         load_default_runtime(&invocation.arch, false)
             .ok_or_else(|| format!("uipack data not found for {}", invocation.arch))?
     };
-    let pack = materialize_runtime_pack_for_code(code, &runtime)?;
+    let pack = materialize_runtime_pack_for_decoded(&decoded, &runtime)?;
     let index = DataPackIndex::new(&pack);
-    let (frontend, _, max_cycle) = run_simulation_for_cycles(code, invocation, &pack, &index)?;
+    let (frontend, _, max_cycle) = run_simulation_for_cycles(&decoded, invocation, &pack, &index)?;
 
     // Emit trace events from simulator state, mirroring Python's generateEventTrace.
     emit_trace_from_frontend(&frontend, max_cycle)
@@ -1807,6 +1876,7 @@ fn python_lam_uop_order(instr_i: &crate::sim::types::InstrInstance) -> Vec<u64> 
         .collect()
 }
 
+#[cfg(feature = "xed-decoder")]
 fn emit_trace_from_frontend(
     frontend: &crate::sim::FrontEnd,
     max_cycle: u32,
@@ -2214,7 +2284,7 @@ struct UopsForRound {
 /// Run the simulator and return the frontend, Python-style uopsForRound, and
 /// final clock for cycles JSON extraction.
 fn run_simulation_for_cycles<'a>(
-    code: &[u8],
+    decoded: &[DecodedInstruction],
     invocation: &Invocation,
     pack: &'a DataPack,
     pack_index: &'a DataPackIndex<'a>,
@@ -2225,9 +2295,7 @@ fn run_simulation_for_cycles<'a>(
     let arch = get_micro_arch(&invocation.arch)
         .ok_or_else(|| format!("unknown architecture: {}", invocation.arch))?;
 
-    let decoded = decode_raw(code).map_err(|e| format!("decode error: {e}"))?;
-
-    let base_instances = build_instruction_instances(&decoded, invocation.alignment_offset);
+    let base_instances = build_instruction_instances(decoded, invocation.alignment_offset);
 
     let min_cycles = invocation.min_cycles;
     let min_iterations = invocation.min_iterations;
@@ -2364,12 +2432,9 @@ fn build_instructions_json(frontend: &crate::sim::FrontEnd) -> Vec<serde_json::V
     by_id.into_values().map(serde_json::Value::Object).collect()
 }
 
-fn build_instructions_json_from_decode(code: &[u8]) -> Vec<serde_json::Value> {
+fn build_instructions_json_from_decoded(decoded: &[DecodedInstruction]) -> Vec<serde_json::Value> {
     use serde_json::json;
     let mut out = Vec::new();
-    let Ok(decoded) = decode_raw(code) else {
-        return out;
-    };
     for (idx, dec) in decoded.iter().enumerate() {
         let mut map = serde_json::Map::new();
         map.insert("instrID".to_string(), json!(idx));
@@ -2588,7 +2653,7 @@ fn last_retired_fused_for_round(
     Some((fused.retired?, fused.retire_idx?))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "xed-decoder"))]
 mod tests {
     use super::*;
     use tempfile::tempdir;

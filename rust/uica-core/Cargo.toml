@@ -3,12 +3,36 @@ name = "uica-core"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["xed-decoder"]
+xed-decoder = ["dep:uica-decoder"]
+
 [dependencies]
 serde_json = "1"
 uica-model = { path = "../uica-model" }
 uica-data = { path = "../uica-data" }
-uica-decoder = { path = "../uica-decoder" }
+uica-decode-ir = { path = "../uica-decode-ir" }
+uica-decoder = { path = "../uica-decoder", optional = true }
 
 [dev-dependencies]
 hex = "0.4"
 tempfile = "3"
+uica-decoder = { path = "../uica-decoder" }
+
+# keep dev dependencies explicit because production core can build without XED
+# through `--no-default-features`.
+
+[[test]]
+name = "engine_summary"
+path = "tests/engine_summary.rs"
+required-features = ["xed-decoder"]
+
+[[test]]
+name = "manifest_runtime"
+path = "tests/manifest_runtime.rs"
+required-features = ["xed-decoder"]
+
+[[test]]
+name = "uipack_runtime_engine"
+path = "tests/uipack_runtime_engine.rs"
+required-features = ["xed-decoder"]

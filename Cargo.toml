@@ -5,6 +5,7 @@ members = [
   "rust/uica-data-gen",
   "rust/uica-xed-sys",
   "rust/uica-xed",
+  "rust/uica-decode-ir",
   "rust/uica-decoder",
   "rust/uica-core",
   "rust/uica-cli",

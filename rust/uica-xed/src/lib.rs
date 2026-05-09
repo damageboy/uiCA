@@ -1,12 +1,13 @@
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
 use std::os::raw::c_char;
 
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
 use std::collections::BTreeMap;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
 use anyhow::bail;
 use anyhow::Result;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
 use uica_xed_sys::{
     uica_xed_decode_one, uica_xed_inst_t, UICA_XED_ACCESS_COND_READ, UICA_XED_ACCESS_COND_WRITE,
     UICA_XED_ACCESS_READ, UICA_XED_ACCESS_READ_COND_WRITE, UICA_XED_ACCESS_READ_WRITE,
@@ -16,12 +17,12 @@ use uica_xed_sys::{
 pub use uica_decode_ir::{DecodedInstruction, DecodedMemAddr};
 pub use uica_xed_sys as sys;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
 pub fn decode_raw(_bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
     anyhow::bail!("Intel XED decoder is not available for wasm32 target")
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
 pub fn decode_raw(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
     let mut offset = 0usize;
     let mut instructions = Vec::new();
@@ -107,7 +108,7 @@ pub fn decode_raw(bytes: &[u8]) -> Result<Vec<DecodedInstruction>> {
     Ok(instructions)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
 fn decoded_xml_attrs(raw: &uica_xed_inst_t) -> BTreeMap<String, String> {
     let mut attrs = BTreeMap::new();
     attrs.insert("bcast".to_string(), raw.bcast.to_string());
@@ -123,7 +124,7 @@ fn decoded_xml_attrs(raw: &uica_xed_inst_t) -> BTreeMap<String, String> {
     attrs
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
 fn decoded_regs(raw: &uica_xed_inst_t, disasm: &str) -> (Vec<String>, Vec<String>) {
     let mut input_regs = Vec::new();
     let mut output_regs = Vec::new();
@@ -155,7 +156,7 @@ fn decoded_regs(raw: &uica_xed_inst_t, disasm: &str) -> (Vec<String>, Vec<String
     (input_regs, output_regs)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
 fn decoded_mem_addrs(raw: &uica_xed_inst_t) -> (bool, bool, Vec<DecodedMemAddr>) {
     let mut has_memory_read = false;
     let mut has_memory_write = false;
@@ -196,7 +197,7 @@ fn decoded_mem_addrs(raw: &uica_xed_inst_t) -> (bool, bool, Vec<DecodedMemAddr>)
     (has_memory_read, has_memory_write, mem_addrs)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
 fn decoded_explicit_regs(raw: &uica_xed_inst_t, disasm: &str) -> Vec<String> {
     let mut regs = Vec::new();
     for reg in raw
@@ -212,14 +213,14 @@ fn decoded_explicit_regs(raw: &uica_xed_inst_t, disasm: &str) -> Vec<String> {
     regs
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
 fn is_default_k0_mask(name: &str, disasm: &str) -> bool {
     // Python parity: `instructions.py` ignores XED's implicit K0 mask unless
     // the assembly text explicitly contains `k0`.
     name == "K0" && !disasm.to_ascii_lowercase().contains("k0")
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
 fn is_metadata_reg_name(name: &str) -> bool {
     matches!(
         name,
@@ -227,7 +228,7 @@ fn is_metadata_reg_name(name: &str) -> bool {
     )
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
 fn access_reads_register(access: u8) -> bool {
     matches!(
         access,
@@ -239,7 +240,7 @@ fn access_reads_register(access: u8) -> bool {
     )
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
 fn access_writes_register(access: u8) -> bool {
     matches!(
         access,
@@ -250,7 +251,7 @@ fn access_writes_register(access: u8) -> bool {
     )
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
 fn access_reads_memory(access: u8) -> bool {
     matches!(
         access,
@@ -261,7 +262,7 @@ fn access_reads_memory(access: u8) -> bool {
     )
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
 fn access_writes_memory(access: u8) -> bool {
     matches!(
         access,
@@ -272,14 +273,14 @@ fn access_writes_memory(access: u8) -> bool {
     )
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
 fn push_unique(regs: &mut Vec<String>, reg: String) {
     if !regs.iter().any(|existing| existing == &reg) {
         regs.push(reg);
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
 fn empty_to_none(value: String) -> Option<String> {
     if value.is_empty() {
         None
@@ -288,14 +289,14 @@ fn empty_to_none(value: String) -> Option<String> {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
 fn cbuf_to_string(buf: &[c_char]) -> String {
     let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
     let bytes: Vec<u8> = buf[..end].iter().map(|b| b.to_ne_bytes()[0]).collect();
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
 fn normalize_mnemonic(mnemonic: &str) -> String {
     match mnemonic {
         "call_far" | "call_near" => "call".to_string(),
@@ -306,7 +307,7 @@ fn normalize_mnemonic(mnemonic: &str) -> String {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
 fn normalize_disasm(disasm: &str) -> String {
     let normalized = disasm
         .replace(',', ", ")
@@ -319,7 +320,7 @@ fn normalize_disasm(disasm: &str) -> String {
         .unwrap_or(normalized)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
 fn nonempty(value: String) -> Option<String> {
     if value.is_empty() {
         None
@@ -328,7 +329,7 @@ fn nonempty(value: String) -> Option<String> {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
 fn iform_to_signature(iform: &str) -> String {
     let mut parts: Vec<&str> = iform.split('_').skip(1).collect();
     if parts

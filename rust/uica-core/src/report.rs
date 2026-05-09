@@ -673,6 +673,30 @@ mod tests {
     }
 
     #[test]
+    fn trace_renderer_uses_first_party_dual_range_slider() {
+        let report = TraceReport {
+            table_data: vec![vec![TraceInstructionRow {
+                display: "add rax, rbx".to_string(),
+                uops: Vec::new(),
+            }]],
+        };
+
+        let html = render_trace_html(&report).expect("trace html should render");
+
+        assert!(html.contains("id=\"firstItRange\" type=\"range\""));
+        assert!(html.contains("id=\"lastItRange\" type=\"range\""));
+        assert!(html.contains("class=\"range-track\""));
+        assert!(html.contains("function syncRangeControls"));
+        assert!(html.contains("min-width: 1280px;"));
+        assert!(html.contains("--range-input-top: 9px;"));
+        assert!(html.contains("width: min(900px, 100%);"));
+        assert!(!html.contains("https://ajax.googleapis.com"));
+        assert!(!html.contains("cdnjs.cloudflare.com"));
+        assert!(!html.contains("noUiSlider"));
+        assert!(!html.contains("wNumb"));
+    }
+
+    #[test]
     fn trace_report_data_contains_python_event_letters() {
         let mut report = TraceReport::default();
         report.table_data.push(vec![TraceInstructionRow {

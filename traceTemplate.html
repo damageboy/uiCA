@@ -3,14 +3,10 @@
 <head>
 <meta charset="utf-8"/><title>Execution Trace</title>
 
-<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/noUiSlider/14.7.0/nouislider.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/wnumb/1.2.0/wNumb.min.js"></script>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/noUiSlider/14.7.0/nouislider.min.css"/>
-
 <style>
 body {
     font-family: Arial, sans-serif;
+    min-width: 1280px;
 }
 
 table, td, th {
@@ -60,6 +56,88 @@ code {
 .cycleHeader:nth-child(even)::before {
     background-color: white;
 }
+
+.range-control {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.range-slider {
+    --range-track-top: 16px;
+    --range-track-height: 4px;
+    --range-thumb-size: 18px;
+    --range-input-top: 9px;
+    position: relative;
+    width: min(900px, 100%);
+    height: 36px;
+    flex-grow: 1;
+}
+
+.range-track {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: var(--range-track-top);
+    height: var(--range-track-height);
+    border-radius: 999px;
+    background: #d0d0d0;
+}
+
+.range-selected {
+    position: absolute;
+    top: var(--range-track-top);
+    height: var(--range-track-height);
+    border-radius: 999px;
+    background: #3a7afe;
+}
+
+.range-slider input[type="range"] {
+    position: absolute;
+    left: 0;
+    top: var(--range-input-top);
+    width: 100%;
+    height: var(--range-thumb-size);
+    margin: 0;
+    pointer-events: none;
+    appearance: none;
+    background: transparent;
+}
+
+.range-slider input[type="range"]::-webkit-slider-thumb {
+    pointer-events: auto;
+    appearance: none;
+    width: var(--range-thumb-size);
+    height: var(--range-thumb-size);
+    border-radius: 50%;
+    border: 2px solid #1f4fbf;
+    background: white;
+    cursor: pointer;
+}
+
+.range-slider input[type="range"]::-moz-range-thumb {
+    pointer-events: auto;
+    width: var(--range-thumb-size);
+    height: var(--range-thumb-size);
+    border-radius: 50%;
+    border: 2px solid #1f4fbf;
+    background: white;
+    cursor: pointer;
+}
+
+.range-slider input[type="range"]::-webkit-slider-runnable-track {
+    appearance: none;
+    background: transparent;
+}
+
+.range-slider input[type="range"]::-moz-range-track {
+    background: transparent;
+}
+
+.iteration-input {
+    max-width: 80px;
+}
 </style>
 
 <script>
@@ -75,10 +153,42 @@ var eventToColor = {
     "R": "ForestGreen",
 }
 
+function clampIteration(value, maxIt) {
+    if (!Number.isFinite(value)) return 0
+    return Math.floor(Math.min(maxIt, Math.max(0, value)))
+}
+
+function syncRangeControls(firstIt, lastIt) {
+    var maxIt = Math.max(0, tableData.length - 1)
+    firstIt = clampIteration(firstIt, maxIt)
+    lastIt = clampIteration(lastIt, maxIt)
+    if (lastIt < firstIt) lastIt = firstIt
+
+    for (let id of ['firstIt', 'firstItRange']) {
+        document.getElementById(id).value = String(firstIt)
+    }
+    for (let id of ['lastIt', 'lastItRange']) {
+        document.getElementById(id).value = String(lastIt)
+    }
+
+    var selected = document.getElementById('rangeSelected')
+    var denom = maxIt == 0 ? 1 : maxIt
+    selected.style.left = `${(firstIt / denom) * 100}%`
+    selected.style.width = `${((lastIt - firstIt) / denom) * 100}%`
+
+    return [firstIt, lastIt]
+}
+
 function createTable() {
-    var slider = document.getElementById('slider')
-    var firstIt = Number(slider.noUiSlider.get()[0])
-    var lastIt = Number(slider.noUiSlider.get()[1])
+    if (tableData.length == 0) {
+        syncRangeControls(0, 0)
+        document.getElementById('traceTable').innerHTML = ''
+        return
+    }
+
+    var firstInput = document.getElementById('firstIt')
+    var lastInput = document.getElementById('lastIt')
+    var [firstIt, lastIt] = syncRangeControls(Number(firstInput.value), Number(lastInput.value))
 
     var minCycle = Number.MAX_VALUE
     var maxCycle = 0
@@ -150,7 +260,7 @@ function createTable() {
         }
     }
 
-    $("#traceTable").html(tableHtml)
+    document.getElementById('traceTable').innerHTML = tableHtml
 }
 
 function createLegend() {
@@ -160,28 +270,32 @@ function createLegend() {
         legendHtml += `<tr><td style="background-color:${eventToColor[ev]}">${ev}</td>`
         legendHtml += `<td style="padding-left: 10px; text-align:left; border: 0">${expl}</td></tr>`
     }
-    $("#legendTable").html(legendHtml)
+    document.getElementById('legendTable').innerHTML = legendHtml
 }
 
-$(document).ready(function() {
+document.addEventListener('DOMContentLoaded', function() {
     createLegend()
 
-    var slider = document.getElementById('slider')
-    noUiSlider.create(slider, {
-        start: [0, Math.min(50, tableData.length-1)],
-        connect: true,
-        range: {
-            'min': 0,
-            'max': tableData.length-1
-        },
-        tooltips: true,
-        format: wNumb({
-            decimals: 0
-        }),
-    });
-    slider.noUiSlider.on('change', function (values, handle) {
+    var maxIt = Math.max(0, tableData.length - 1)
+    for (let id of ['firstIt', 'lastIt', 'firstItRange', 'lastItRange']) {
+        var control = document.getElementById(id)
+        control.min = 0
+        control.max = maxIt
+        control.step = 1
+    }
+
+    syncRangeControls(0, Math.min(50, maxIt))
+
+    document.getElementById('firstIt').addEventListener('change', createTable)
+    document.getElementById('lastIt').addEventListener('change', createTable)
+    document.getElementById('firstItRange').addEventListener('input', function(ev) {
+        syncRangeControls(Number(ev.target.value), Number(document.getElementById('lastIt').value))
         createTable()
-    });
+    })
+    document.getElementById('lastItRange').addEventListener('input', function(ev) {
+        syncRangeControls(Number(document.getElementById('firstIt').value), Number(ev.target.value))
+        createTable()
+    })
 
     createTable()
 });
@@ -193,9 +307,17 @@ $(document).ready(function() {
 <table id="legendTable" style="border: 0; border-collapse:separate;"></table>
 
 <p>
-    <div style="display: flex">
-        <div style="padding-right: 30px">Show iterations from/to:</div>
-        <div id="slider" style="max-width: 400px;flex-grow: 1;"></div>
+    <div class="range-control">
+        <label for="firstIt">Show iterations from:</label>
+        <input id="firstIt" class="iteration-input" type="number" step="1"/>
+        <label for="lastIt">to:</label>
+        <input id="lastIt" class="iteration-input" type="number" step="1"/>
+        <div class="range-slider" aria-label="Iteration range slider">
+            <div class="range-track"></div>
+            <div id="rangeSelected" class="range-selected"></div>
+            <input id="firstItRange" type="range" aria-label="First iteration"/>
+            <input id="lastItRange" type="range" aria-label="Last iteration"/>
+        </div>
     </div>
 </p>
 

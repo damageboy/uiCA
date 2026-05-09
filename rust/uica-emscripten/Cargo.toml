@@ -1,0 +1,19 @@
+[package]
+name = "uica-emscripten"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "uica_emscripten"
+crate-type = ["rlib"]
+
+[[bin]]
+name = "uica_emscripten"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uica-core = { path = "../uica-core" }
+uica-data = { path = "../uica-data" }
+uica-model = { path = "../uica-model" }

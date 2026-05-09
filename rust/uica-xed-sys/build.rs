@@ -18,6 +18,8 @@ fn main() {
     let mbuild_dir = repo_root.join("mbuild");
 
     println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_ARCH");
+    println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_OS");
+    println!("cargo:rerun-if-env-changed=UICA_EMSCRIPTEN_XED_DIR");
     println!("cargo:rerun-if-env-changed=PYTHON");
     println!("cargo:rerun-if-env-changed=CC");
     println!("cargo:rerun-if-env-changed=CFLAGS");
@@ -53,7 +55,12 @@ fn main() {
         manifest_dir.join("src/uica_xed_shim.h").display()
     );
 
-    if target_is_wasm32() {
+    if target_is_wasm32() && !target_is_emscripten() {
+        return;
+    }
+
+    if target_is_emscripten() {
+        link_emscripten_xed(&manifest_dir);
         return;
     }
 
@@ -101,6 +108,37 @@ fn main() {
 
 fn target_is_wasm32() -> bool {
     env::var("CARGO_CFG_TARGET_ARCH").is_ok_and(|target_arch| target_arch == "wasm32")
+}
+
+fn target_is_emscripten() -> bool {
+    env::var("CARGO_CFG_TARGET_OS").is_ok_and(|target_os| target_os == "emscripten")
+}
+
+fn link_emscripten_xed(manifest_dir: &Path) {
+    let xed_dir = PathBuf::from(env::var("UICA_EMSCRIPTEN_XED_DIR").unwrap_or_else(|_| {
+        panic!(
+            "UICA_EMSCRIPTEN_XED_DIR must point at the install dir produced by scripts/build-xed-emscripten.sh"
+        )
+    }));
+    let include_dir = xed_dir.join("include");
+    let lib_dir = xed_dir.join("lib");
+    let header = include_dir.join("xed/xed-interface.h");
+    let lib = lib_dir.join("libxed.a");
+    if !header.exists() {
+        panic!("missing Emscripten XED header: {}", header.display());
+    }
+    if !lib.exists() {
+        panic!("missing Emscripten XED static library: {}", lib.display());
+    }
+
+    cc::Build::new()
+        .std("c11")
+        .file(manifest_dir.join("src/uica_xed_shim.c"))
+        .include(&include_dir)
+        .compile("uica_xed_shim");
+
+    println!("cargo:rustc-link-search=native={}", lib_dir.display());
+    println!("cargo:rustc-link-lib=static=xed");
 }
 
 fn target_is_windows() -> bool {

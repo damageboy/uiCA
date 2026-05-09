@@ -17,12 +17,18 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown
+          targets: wasm32-unknown-unknown,wasm32-unknown-emscripten
+
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: "3.1.74"
+          actions-cache-folder: emsdk-cache
 
       - name: Install runtime prerequisites
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential wget binutils
+          python3 -m pip install --upgrade pip setuptools wheel
 
       - name: Run Rust parity contract tests
         run: |
@@ -34,6 +40,7 @@ jobs:
       - name: Build uiCA runtime artifacts
         run: |
           bash ./setup.sh
+          git submodule update --init XED-to-XML mbuild
 
       - name: Run Rust workspace tests
         run: |
@@ -70,5 +77,9 @@ jobs:
       - name: Build web bundle
         run: |
           ./scripts/build-web.sh
+          ./scripts/smoke-emscripten-exports.sh dist/emscripten
           test -f dist/index.html
           test -f dist/pkg/uica_wasm.js
+          test -f dist/pkg/uica_wasm_bg.wasm
+          test -f dist/emscripten/uica_emscripten.js
+          test -f dist/emscripten/uica_emscripten.wasm

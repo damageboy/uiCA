@@ -21,9 +21,42 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown
+          targets: wasm32-unknown-unknown,wasm32-unknown-emscripten
+
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: "3.1.74"
+          actions-cache-folder: emsdk-cache
+
+      - name: Install setup prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential wget binutils
+          python3 -m pip install --upgrade pip setuptools wheel
+
+      - name: Build uiCA runtime artifacts
+        run: |
+          bash ./setup.sh
+          test -f rust/uica-data/generated/manifest.json
+          test -f rust/uica-data/generated/arch/SKL.uipack
+          git submodule update --init XED-to-XML mbuild
+
+      - name: Verify generated UIPacks are not committed inputs
+        run: |
+          if git ls-files --error-unmatch rust/uica-data/generated/manifest.json >/dev/null 2>&1; then
+            echo "rust/uica-data/generated/manifest.json must not be committed" >&2
+            exit 1
+          fi
+          if git ls-files --error-unmatch rust/uica-data/generated/arch/SKL.uipack >/dev/null 2>&1; then
+            echo "rust/uica-data/generated/arch/*.uipack must not be committed" >&2
+            exit 1
+          fi
 
       - name: Install wasm-pack
         run: |
@@ -34,12 +67,16 @@ jobs:
       - name: Build Pages artifact
         run: |
           ./scripts/build-web.sh
+          ./scripts/smoke-emscripten-exports.sh dist/emscripten
           test -f dist/CNAME
           test "$(cat dist/CNAME)" = "uica.houmus.org"
           test -f dist/index.html
           test -f dist/test-pure-wasm.html
           test -f dist/pkg/uica_wasm.js
           test -f dist/pkg/uica_wasm_bg.wasm
+          test -f dist/emscripten/uica_emscripten.js
+          test -f dist/emscripten/uica_emscripten.wasm
+          test -f dist/uipack-cache.js
           test -f dist/data/manifest.json
           test -f dist/data/arch/SKL.uipack
           python3 - <<'PY'

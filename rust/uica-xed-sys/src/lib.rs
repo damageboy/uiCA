@@ -137,7 +137,7 @@ impl Default for uica_xed_inst_t {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
 extern "C" {
     pub fn uica_xed_init();
     pub fn uica_xed_decode_one(
@@ -148,10 +148,10 @@ extern "C" {
     ) -> c_int;
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
 pub unsafe fn uica_xed_init() {}
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
 pub unsafe fn uica_xed_decode_one(
     _bytes: *const u8,
     _len: u32,

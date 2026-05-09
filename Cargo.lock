@@ -572,6 +572,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "uica-emscripten"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "uica-core",
+ "uica-data",
+ "uica-model",
+]
+
+[[package]]
 name = "uica-model"
 version = "0.1.0"
 dependencies = [

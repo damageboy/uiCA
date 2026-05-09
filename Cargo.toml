@@ -10,5 +10,6 @@ members = [
   "rust/uica-core",
   "rust/uica-cli",
   "rust/uica-wasm",
+  "rust/uica-emscripten",
 ]
 resolver = "2"

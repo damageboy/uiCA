@@ -42,11 +42,39 @@ mkdir -p "$INSTALL_DIR" "$BUILD_DIR" "$TOOLWRAP_DIR"
 
 cat >"$TOOLWRAP_DIR/clang" <<'EOF'
 #!/usr/bin/env bash
-exec emcc "$@"
+set -euo pipefail
+args=()
+for arg in "$@"; do
+	case "$arg" in
+	-m32|-m64)
+		# mbuild derives these from host CPU. With Emscripten they select
+		# wasm32/wasm64 object format, so strip them and keep Rust's
+		# wasm32-unknown-emscripten link target consistent.
+		;;
+	*)
+		args+=("$arg")
+		;;
+	esac
+done
+exec emcc "${args[@]}"
 EOF
 cat >"$TOOLWRAP_DIR/clang++" <<'EOF'
 #!/usr/bin/env bash
-exec em++ "$@"
+set -euo pipefail
+args=()
+for arg in "$@"; do
+	case "$arg" in
+	-m32|-m64)
+		# mbuild derives these from host CPU. With Emscripten they select
+		# wasm32/wasm64 object format, so strip them and keep Rust's
+		# wasm32-unknown-emscripten link target consistent.
+		;;
+	*)
+		args+=("$arg")
+		;;
+	esac
+done
+exec em++ "${args[@]}"
 EOF
 cat >"$TOOLWRAP_DIR/ar" <<'EOF'
 #!/usr/bin/env bash

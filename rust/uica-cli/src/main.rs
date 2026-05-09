@@ -135,7 +135,8 @@ fn run() -> Result<()> {
             .with_context(|| format!("failed to write event trace {}", path.display()))?;
     }
 
-    let wants_reports = args.trace.is_some() || args.graph.is_some();
+    let wants_default_text = wants_default_text(&args);
+    let wants_reports = args.trace.is_some() || args.graph.is_some() || wants_default_text;
     let output = if wants_reports {
         uica_core::engine::engine_output(&bytes, &invocation, true, args.verify_uipack)
             .map_err(|e| anyhow!("report engine failed: {e}"))?
@@ -183,6 +184,17 @@ fn run() -> Result<()> {
             .with_context(|| format!("failed to write json output {}", path.display()))?;
     }
 
+    if wants_default_text {
+        let reports = output
+            .reports
+            .as_ref()
+            .ok_or_else(|| anyhow!("report engine did not produce regular text data"))?;
+        print!(
+            "{}",
+            uica_core::report::render_regular_text(&reports.regular)
+        );
+    }
+
     if args.tp_only {
         let throughput = result
             .summary
@@ -192,6 +204,14 @@ fn run() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn wants_default_text(args: &Cli) -> bool {
+    !args.tp_only
+        && args.json.is_none()
+        && args.trace.is_none()
+        && args.graph.is_none()
+        && args.event_trace.is_none()
 }
 
 fn format_throughput(value: f64) -> String {
@@ -204,7 +224,7 @@ fn format_throughput(value: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_throughput, Cli};
+    use super::{format_throughput, wants_default_text, Cli};
     use clap::Parser;
     use std::path::PathBuf;
 
@@ -325,6 +345,52 @@ mod tests {
         let input_err = Cli::try_parse_from(["uica-cli", "loop.bin", "--arch-list"])
             .expect_err("arch list should conflict with input");
         assert_eq!(input_err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn default_text_is_suppressed_by_output_modes() {
+        let default_cli = Cli::try_parse_from(["uica-cli", "snippet.o", "--arch", "SKL"])
+            .expect("minimal invocation should parse");
+        assert!(wants_default_text(&default_cli));
+
+        for args in [
+            vec![
+                "uica-cli",
+                "snippet.o",
+                "--arch",
+                "SKL",
+                "--json",
+                "out.json",
+            ],
+            vec![
+                "uica-cli",
+                "snippet.o",
+                "--arch",
+                "SKL",
+                "--trace",
+                "trace.html",
+            ],
+            vec![
+                "uica-cli",
+                "snippet.o",
+                "--arch",
+                "SKL",
+                "--graph",
+                "graph.html",
+            ],
+            vec![
+                "uica-cli",
+                "snippet.o",
+                "--arch",
+                "SKL",
+                "--event-trace",
+                "events.trace",
+            ],
+            vec!["uica-cli", "snippet.o", "--arch", "SKL", "--tp-only"],
+        ] {
+            let cli = Cli::try_parse_from(args).expect("output mode invocation should parse");
+            assert!(!wants_default_text(&cli));
+        }
     }
 
     #[test]

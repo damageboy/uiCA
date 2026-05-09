@@ -10,7 +10,11 @@ use uica_data::{
 use uica_decode_ir::{DecodedInstruction, DecodedMemAddr};
 #[cfg(feature = "xed-decoder")]
 use uica_decoder::decode_raw;
-use uica_model::{Invocation, Summary, UicaResult};
+use uica_model::{
+    Invocation, RegularColumn, RegularColumnKind, RegularLimitLine, RegularNote,
+    RegularOutputMetrics, RegularOutputReport, RegularOutputRow, RegularRowKind, Summary,
+    UicaResult,
+};
 
 use crate::analytical::{
     compute_final_prediction, compute_frontend_limits, compute_issue_limit,
@@ -435,7 +439,18 @@ fn engine_with_decoded_pack_internal(
                 &normalized_invocation.arch,
                 final_clock,
             );
-            reports = Some(uica_model::ReportBundle { trace, graph });
+            let regular = build_regular_report(
+                &frontend,
+                &uops_for_round,
+                &result.summary,
+                &normalized_invocation.arch,
+                &pack.all_ports,
+            );
+            reports = Some(uica_model::ReportBundle {
+                trace,
+                graph,
+                regular,
+            });
         }
     } else {
         result.cycles = Vec::new();
@@ -2520,6 +2535,372 @@ fn python_relevant_round_window(
     Some((first_relevant_round, last_relevant_round))
 }
 
+fn build_regular_report(
+    frontend: &crate::sim::FrontEnd,
+    uops_for_round: &[UopsForRound],
+    summary: &Summary,
+    arch_name: &str,
+    all_ports: &[String],
+) -> RegularOutputReport {
+    let mut report = RegularOutputReport {
+        arch: arch_name.to_string(),
+        throughput_cycles_per_iteration: summary.throughput_cycles_per_iteration,
+        bottlenecks: summary.bottlenecks_predicted.clone(),
+        limits: summary.limits.clone(),
+        limit_lines: build_regular_limit_lines(summary),
+        notes: Vec::new(),
+        ..RegularOutputReport::default()
+    };
+
+    let Some((first_round, last_round)) = python_relevant_round_window(frontend, uops_for_round)
+    else {
+        report.columns = regular_columns(all_ports, false, false);
+        return report;
+    };
+
+    let mut instr_ids: Vec<u32> = frontend
+        .all_generated_instr_instances
+        .iter()
+        .filter(|inst| inst.rnd == 0)
+        .map(|inst| inst.instr_id)
+        .collect();
+    instr_ids.sort_unstable();
+    instr_ids.dedup();
+
+    let mut any_div = false;
+    let mut any_notes = false;
+
+    for instr_id in instr_ids {
+        let instances: Vec<&crate::sim::types::InstrInstance> = frontend
+            .all_generated_instr_instances
+            .iter()
+            .filter(|inst| {
+                inst.instr_id == instr_id && inst.rnd >= first_round && inst.rnd <= last_round
+            })
+            .collect();
+        let Some(first_instance) = instances.first().copied() else {
+            continue;
+        };
+
+        if instances.iter().any(|inst| !inst.reg_merge_uops.is_empty()) {
+            let mut row = regular_synthetic_row(
+                RegularRowKind::RegisterMerge,
+                instr_id,
+                "<Register Merge Uop>",
+            );
+            accumulate_regular_row(
+                frontend,
+                &instances,
+                RegularUopSource::RegisterMerge,
+                &mut row.metrics,
+            );
+            any_div |= row.metrics.div > 0.0;
+            report.totals.add_assign(&row.metrics);
+            report.rows.push(row);
+        }
+
+        if instances
+            .iter()
+            .any(|inst| !inst.stack_sync_uops.is_empty())
+        {
+            let mut row =
+                regular_synthetic_row(RegularRowKind::StackSync, instr_id, "<Stack Sync Uop>");
+            accumulate_regular_row(
+                frontend,
+                &instances,
+                RegularUopSource::StackSync,
+                &mut row.metrics,
+            );
+            any_div |= row.metrics.div > 0.0;
+            report.totals.add_assign(&row.metrics);
+            report.rows.push(row);
+        }
+
+        let mut row = RegularOutputRow {
+            row_id: format!("instr-{instr_id}"),
+            kind: RegularRowKind::Instruction,
+            instr_id: Some(instr_id),
+            asm: first_instance.disasm.to_string(),
+            opcode: Some(first_instance.opcode_hex.to_string()),
+            url: regular_instr_url(first_instance),
+            notes: Vec::new(),
+            metrics: RegularOutputMetrics::default(),
+        };
+
+        if first_instance.macro_fused_with_prev_instr {
+            row.notes.push("M".to_string());
+        } else {
+            accumulate_regular_row(
+                frontend,
+                &instances,
+                RegularUopSource::Instruction,
+                &mut row.metrics,
+            );
+            any_div |= row.metrics.div > 0.0;
+            report.totals.add_assign(&row.metrics);
+        }
+        if first_instance.cannot_be_in_dsb_due_to_jcc_erratum {
+            row.notes.push("J".to_string());
+        }
+        if first_instance.instr_str.is_empty() {
+            row.notes.push("X".to_string());
+        }
+        any_notes |= !row.notes.is_empty();
+        report.rows.push(row);
+    }
+
+    if any_notes {
+        report.notes = regular_note_legend(&report.rows);
+    }
+    report.columns = regular_columns(all_ports, any_div, any_notes);
+    report
+}
+
+#[derive(Clone, Copy)]
+enum RegularUopSource {
+    Instruction,
+    RegisterMerge,
+    StackSync,
+}
+
+fn regular_synthetic_row(kind: RegularRowKind, instr_id: u32, asm: &str) -> RegularOutputRow {
+    let key = match kind {
+        RegularRowKind::Instruction => "instr",
+        RegularRowKind::RegisterMerge => "reg-merge",
+        RegularRowKind::StackSync => "stack-sync",
+    };
+    RegularOutputRow {
+        row_id: format!("{key}-{instr_id}"),
+        kind,
+        instr_id: Some(instr_id),
+        asm: asm.to_string(),
+        opcode: None,
+        url: None,
+        notes: Vec::new(),
+        metrics: RegularOutputMetrics::default(),
+    }
+}
+
+fn regular_instr_url(inst: &crate::sim::types::InstrInstance) -> Option<String> {
+    if inst.instr_str.is_empty() {
+        None
+    } else {
+        Some(instr_url(inst.instr_str.as_ref()))
+    }
+}
+
+fn accumulate_regular_row(
+    frontend: &crate::sim::FrontEnd,
+    instances: &[&crate::sim::types::InstrInstance],
+    source: RegularUopSource,
+    metrics: &mut RegularOutputMetrics,
+) {
+    if instances.is_empty() {
+        return;
+    }
+    for inst in instances {
+        let lam_idxs: &[u64] = match source {
+            RegularUopSource::Instruction => &inst.laminated_uops,
+            RegularUopSource::RegisterMerge => &inst.reg_merge_uops,
+            RegularUopSource::StackSync => &inst.stack_sync_uops,
+        };
+        accumulate_laminated_uops(frontend, lam_idxs, metrics);
+    }
+    metrics.scale(1.0 / instances.len() as f64);
+}
+
+fn accumulate_laminated_uops(
+    frontend: &crate::sim::FrontEnd,
+    lam_idxs: &[u64],
+    metrics: &mut RegularOutputMetrics,
+) {
+    for &lam_idx in lam_idxs {
+        let Some(lam) = frontend.uop_storage.get_laminated_uop(lam_idx) else {
+            continue;
+        };
+        match lam.uop_source {
+            Some(crate::sim::types::UopSource::Mite) => metrics.mite += 1.0,
+            Some(crate::sim::types::UopSource::Ms) => metrics.ms += 1.0,
+            Some(crate::sim::types::UopSource::Dsb) => metrics.dsb += 1.0,
+            Some(crate::sim::types::UopSource::Lsd) => metrics.lsd += 1.0,
+            Some(crate::sim::types::UopSource::Se) | None => {}
+        }
+        for &fused_idx in &lam.fused_uop_idxs {
+            let Some(fused) = frontend.uop_storage.get_fused_uop(fused_idx) else {
+                continue;
+            };
+            metrics.issued += 1.0;
+            for &uop_idx in &fused.unfused_uop_idxs {
+                let Some(uop) = frontend.uop_storage.get_uop(uop_idx) else {
+                    continue;
+                };
+                if let Some(port) = &uop.actual_port {
+                    metrics.executed += 1.0;
+                    *metrics.ports.entry(port.clone()).or_insert(0.0) += 1.0;
+                }
+                metrics.div += f64::from(uop.prop.div_cycles);
+            }
+        }
+    }
+}
+
+trait RegularMetricsExt {
+    fn scale(&mut self, factor: f64);
+    fn add_assign(&mut self, other: &RegularOutputMetrics);
+}
+
+impl RegularMetricsExt for RegularOutputMetrics {
+    fn scale(&mut self, factor: f64) {
+        self.mite *= factor;
+        self.ms *= factor;
+        self.dsb *= factor;
+        self.lsd *= factor;
+        self.issued *= factor;
+        self.executed *= factor;
+        self.div *= factor;
+        for value in self.ports.values_mut() {
+            *value *= factor;
+        }
+    }
+
+    fn add_assign(&mut self, other: &RegularOutputMetrics) {
+        self.mite += other.mite;
+        self.ms += other.ms;
+        self.dsb += other.dsb;
+        self.lsd += other.lsd;
+        self.issued += other.issued;
+        self.executed += other.executed;
+        self.div += other.div;
+        for (port, value) in &other.ports {
+            *self.ports.entry(port.clone()).or_insert(0.0) += value;
+        }
+    }
+}
+
+fn regular_columns(
+    all_ports: &[String],
+    include_div: bool,
+    include_notes: bool,
+) -> Vec<RegularColumn> {
+    let mut columns = vec![
+        RegularColumn {
+            key: "mite".to_string(),
+            label: "MITE".to_string(),
+            kind: RegularColumnKind::Frontend,
+        },
+        RegularColumn {
+            key: "ms".to_string(),
+            label: "MS".to_string(),
+            kind: RegularColumnKind::Frontend,
+        },
+        RegularColumn {
+            key: "dsb".to_string(),
+            label: "DSB".to_string(),
+            kind: RegularColumnKind::Frontend,
+        },
+        RegularColumn {
+            key: "lsd".to_string(),
+            label: "LSD".to_string(),
+            kind: RegularColumnKind::Frontend,
+        },
+        RegularColumn {
+            key: "issued".to_string(),
+            label: "Issued".to_string(),
+            kind: RegularColumnKind::Issue,
+        },
+        RegularColumn {
+            key: "executed".to_string(),
+            label: "Exec.".to_string(),
+            kind: RegularColumnKind::Execute,
+        },
+    ];
+    for port in all_ports {
+        columns.push(RegularColumn {
+            key: format!("port_{port}"),
+            label: format!("Port {port}"),
+            kind: RegularColumnKind::Port,
+        });
+    }
+    if include_div {
+        columns.push(RegularColumn {
+            key: "div".to_string(),
+            label: "Div".to_string(),
+            kind: RegularColumnKind::Divider,
+        });
+    }
+    if include_notes {
+        columns.push(RegularColumn {
+            key: "notes".to_string(),
+            label: "Notes".to_string(),
+            kind: RegularColumnKind::Notes,
+        });
+    }
+    columns
+}
+
+fn regular_note_legend(rows: &[RegularOutputRow]) -> Vec<RegularNote> {
+    let mut notes = Vec::new();
+    if rows
+        .iter()
+        .any(|row| row.notes.iter().any(|note| note == "J"))
+    {
+        notes.push(RegularNote {
+            key: "J".to_string(),
+            label: "Block not in DSB due to JCC erratum".to_string(),
+            url: Some("https://www.intel.com/content/www/us/en/developer/articles/technical/software-security-guidance/technical-documentation/jcc-erratum.html".to_string()),
+        });
+    }
+    if rows
+        .iter()
+        .any(|row| row.notes.iter().any(|note| note == "M"))
+    {
+        notes.push(RegularNote {
+            key: "M".to_string(),
+            label: "Macro-fused with previous instruction".to_string(),
+            url: None,
+        });
+    }
+    if rows
+        .iter()
+        .any(|row| row.notes.iter().any(|note| note == "X"))
+    {
+        notes.push(RegularNote {
+            key: "X".to_string(),
+            label: "Instruction not supported".to_string(),
+            url: None,
+        });
+    }
+    notes
+}
+
+fn build_regular_limit_lines(summary: &Summary) -> Vec<RegularLimitLine> {
+    let throughput = summary.throughput_cycles_per_iteration.unwrap_or(f64::NAN);
+    let labels = [
+        ("predecoder", "Predecoder"),
+        ("decoder", "Decoder"),
+        ("dsb", "DSB"),
+        ("lsd", "LSD"),
+        ("issue", "Issue"),
+        ("ports", "Ports"),
+        ("dependencies", "Dependencies"),
+    ];
+    labels
+        .into_iter()
+        .filter_map(|(key, label)| {
+            let value = summary.limits.get(key).and_then(|value| *value)?;
+            if value <= 0.0 {
+                return None;
+            }
+            Some(RegularLimitLine {
+                key: key.to_string(),
+                label: label.to_string(),
+                throughput: value,
+                is_bottleneck: value == throughput,
+            })
+        })
+        .collect()
+}
+
 fn append_python_runtime_bottlenecks(
     summary: &mut Summary,
     frontend: &crate::sim::FrontEnd,
@@ -2740,6 +3121,185 @@ mod tests {
             .series
             .iter()
             .any(|series| series.name == "IQ"));
+    }
+
+    fn assert_close(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() < 0.01,
+            "expected {expected}, got {actual}"
+        );
+    }
+
+    #[test]
+    fn regular_report_collects_simple_add_row() {
+        let bytes = [0x48, 0x01, 0xd8];
+        let invocation = uica_model::Invocation {
+            arch: "SKL".to_string(),
+            min_iterations: 10,
+            min_cycles: 80,
+            ..uica_model::Invocation::default()
+        };
+
+        let output = crate::engine::engine_output(&bytes, &invocation, true, false)
+            .expect("engine output should succeed");
+        let regular = &output.reports.expect("reports should exist").regular;
+
+        assert_eq!(regular.schema_version, "uica-regular-report-v1");
+        assert_eq!(regular.arch, "SKL");
+        assert_eq!(regular.rows.len(), 1);
+        assert_eq!(regular.rows[0].asm, "add rax, rbx");
+        assert_eq!(regular.rows[0].notes, Vec::<String>::new());
+        assert_eq!(
+            regular.rows[0]
+                .url
+                .as_deref()
+                .expect("matched instruction should link to uops.info"),
+            "https://www.uops.info/html-instr/ADD_01_R64_R64.html"
+        );
+
+        let column_keys: Vec<&str> = regular
+            .columns
+            .iter()
+            .map(|column| column.key.as_str())
+            .collect();
+        assert_eq!(
+            column_keys,
+            vec![
+                "mite", "ms", "dsb", "lsd", "issued", "executed", "port_0", "port_1", "port_2",
+                "port_3", "port_4", "port_5", "port_6", "port_7",
+            ]
+        );
+
+        let row_metrics = &regular.rows[0].metrics;
+        assert_close(row_metrics.issued, 1.0);
+        assert_close(row_metrics.executed, 1.0);
+        assert_close(
+            row_metrics.mite + row_metrics.ms + row_metrics.dsb + row_metrics.lsd,
+            1.0,
+        );
+        assert_close(row_metrics.ports.values().sum(), 1.0);
+        assert_close(regular.totals.issued, row_metrics.issued);
+        assert_close(regular.totals.executed, row_metrics.executed);
+        assert_close(
+            regular.totals.ports.values().sum(),
+            row_metrics.ports.values().sum(),
+        );
+    }
+
+    #[test]
+    fn regular_report_marks_macro_fused_loop_branch() {
+        let bytes = [
+            0x48, 0x01, 0xd8, 0x48, 0x01, 0xc3, 0x49, 0xff, 0xcf, 0x75, 0xf4,
+        ];
+        let invocation = uica_model::Invocation {
+            arch: "SKL".to_string(),
+            min_iterations: 10,
+            min_cycles: 80,
+            ..uica_model::Invocation::default()
+        };
+
+        let output = crate::engine::engine_output(&bytes, &invocation, true, false)
+            .expect("engine output should succeed");
+        let regular = &output.reports.expect("reports should exist").regular;
+
+        let branch = regular
+            .rows
+            .iter()
+            .find(|row| row.notes.iter().any(|note| note == "M"))
+            .expect("macro-fused branch row should exist");
+        assert!(
+            branch.asm.starts_with('j'),
+            "unexpected branch asm: {}",
+            branch.asm
+        );
+        assert_eq!(branch.notes, vec!["M".to_string()]);
+        assert_close(branch.metrics.issued, 0.0);
+        assert_close(branch.metrics.executed, 0.0);
+        assert!(regular
+            .notes
+            .iter()
+            .any(|note| note.key == "M" && note.label == "Macro-fused with previous instruction"));
+        assert!(regular
+            .columns
+            .iter()
+            .any(|column| column.key == "notes" && column.label == "Notes"));
+    }
+
+    #[test]
+    fn regular_report_averages_sparse_stack_sync_over_full_window() {
+        let bytes = [0x58];
+        let invocation = uica_model::Invocation {
+            arch: "SKL".to_string(),
+            min_iterations: 10,
+            min_cycles: 80,
+            ..uica_model::Invocation::default()
+        };
+
+        let output = crate::engine::engine_output(&bytes, &invocation, true, false)
+            .expect("engine output should succeed");
+        let regular = &output.reports.expect("reports should exist").regular;
+
+        let stack_sync = regular
+            .rows
+            .iter()
+            .find(|row| row.kind == RegularRowKind::StackSync)
+            .expect("stack sync row should exist");
+        assert!(
+            stack_sync.metrics.issued > 0.0 && stack_sync.metrics.issued < 1.0,
+            "stack sync issued should be averaged across full window, got {}",
+            stack_sync.metrics.issued
+        );
+        assert_close(stack_sync.metrics.issued, stack_sync.metrics.executed);
+
+        let instr = regular
+            .rows
+            .iter()
+            .find(|row| row.kind == RegularRowKind::Instruction)
+            .expect("instruction row should exist");
+        assert_close(
+            regular.totals.issued,
+            stack_sync.metrics.issued + instr.metrics.issued,
+        );
+        assert_close(
+            regular.totals.executed,
+            stack_sync.metrics.executed + instr.metrics.executed,
+        );
+    }
+
+    #[test]
+    fn regular_report_marks_unknown_instruction_with_x_note() {
+        let bytes = [0x0f, 0x0b];
+        let invocation = uica_model::Invocation {
+            arch: "SKL".to_string(),
+            min_iterations: 10,
+            min_cycles: 80,
+            ..uica_model::Invocation::default()
+        };
+
+        let output = crate::engine::engine_output(&bytes, &invocation, true, false)
+            .expect("engine output should succeed");
+        let regular = &output.reports.expect("reports should exist").regular;
+
+        let row = regular
+            .rows
+            .iter()
+            .find(|row| row.asm == "ud2")
+            .expect("UD2 row should exist");
+        assert_eq!(row.notes, vec!["X".to_string()]);
+        assert!(row.url.is_none());
+        assert!(regular
+            .notes
+            .iter()
+            .any(|note| note.key == "X" && note.label == "Instruction not supported"));
+        assert!(regular
+            .columns
+            .iter()
+            .any(|column| column.key == "notes" && column.label == "Notes"));
+        assert!(regular.limit_lines.iter().all(|line| line.throughput > 0.0));
+        assert!(!regular
+            .limit_lines
+            .iter()
+            .any(|line| line.key == "ports" || line.key == "dependencies"));
     }
 
     #[test]

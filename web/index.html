@@ -164,6 +164,16 @@ add rax, rbx</textarea
               Trace
             </button>
             <button
+              id="analysis-tab"
+              class="tab"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              aria-controls="analysis-panel"
+            >
+              Analysis
+            </button>
+            <button
               id="json-tab"
               class="tab"
               type="button"
@@ -186,6 +196,20 @@ add rax, rbx</textarea
             title="uiCA execution trace"
             sandbox="allow-scripts"
           ></iframe>
+        </div>
+        <div
+          id="analysis-panel"
+          class="tab-panel"
+          role="tabpanel"
+          aria-labelledby="analysis-tab"
+          hidden
+        >
+          <iframe
+            id="analysis-frame"
+            title="uiCA analysis output"
+            sandbox="allow-popups"
+          ></iframe>
+          <pre id="analysis-text" hidden></pre>
         </div>
         <div
           id="json-panel"

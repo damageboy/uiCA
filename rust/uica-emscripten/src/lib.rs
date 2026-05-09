@@ -24,6 +24,8 @@ struct WebRunResult {
     engine: &'static str,
     result: uica_model::UicaResult,
     trace_html: String,
+    regular_text: String,
+    regular_html: String,
 }
 
 pub fn run_request_json(request_json: &str, uipack_bytes: &[u8]) -> String {
@@ -65,11 +67,15 @@ fn run_request_json_inner(request_json: &str, uipack_bytes: &[u8]) -> Result<Str
         .as_ref()
         .ok_or_else(|| "report engine did not produce trace data".to_string())?;
     let trace_html = uica_core::report::render_trace_html(&reports.trace)?;
+    let regular_text = uica_core::report::render_regular_text(&reports.regular);
+    let regular_html = uica_core::report::render_regular_html(&reports.regular)?;
     let response = WebRunResult {
         schema_version: "uica-web-result-v1",
         engine: "rust-emscripten-xed",
         result: output.result,
         trace_html,
+        regular_text,
+        regular_html,
     };
     serde_json::to_string(&response).map_err(|err| err.to_string())
 }

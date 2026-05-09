@@ -56,4 +56,13 @@ fn run_returns_web_envelope_with_trace_html() {
     let trace_html = value["trace_html"].as_str().unwrap();
     assert!(trace_html.contains("Execution Trace"));
     assert!(trace_html.contains("var tableData = ["));
+    assert!(value["regular_text"]
+        .as_str()
+        .unwrap()
+        .contains("Throughput"));
+    assert!(value["regular_text"]
+        .as_str()
+        .unwrap()
+        .contains("add rax, rbx"));
+    assert!(value["regular_html"].as_str().unwrap().contains("<table"));
 }

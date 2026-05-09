@@ -97,6 +97,111 @@ impl Default for UicaResult {
 pub struct ReportBundle {
     pub trace: TraceReport,
     pub graph: GraphReport,
+    pub regular: RegularOutputReport,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RegularOutputReport {
+    pub schema_version: String,
+    pub arch: String,
+    pub throughput_cycles_per_iteration: Option<f64>,
+    pub bottlenecks: Vec<String>,
+    pub limits: BTreeMap<String, Option<f64>>,
+    pub limit_lines: Vec<RegularLimitLine>,
+    pub columns: Vec<RegularColumn>,
+    pub rows: Vec<RegularOutputRow>,
+    pub totals: RegularOutputMetrics,
+    pub notes: Vec<RegularNote>,
+}
+
+impl Default for RegularOutputReport {
+    fn default() -> Self {
+        Self {
+            schema_version: "uica-regular-report-v1".to_string(),
+            arch: String::new(),
+            throughput_cycles_per_iteration: None,
+            bottlenecks: Vec::new(),
+            limits: BTreeMap::new(),
+            limit_lines: Vec::new(),
+            columns: Vec::new(),
+            rows: Vec::new(),
+            totals: RegularOutputMetrics::default(),
+            notes: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RegularLimitLine {
+    pub key: String,
+    pub label: String,
+    pub throughput: f64,
+    pub is_bottleneck: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegularColumnKind {
+    #[default]
+    Frontend,
+    Issue,
+    Execute,
+    Port,
+    Divider,
+    Notes,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RegularColumn {
+    pub key: String,
+    pub label: String,
+    pub kind: RegularColumnKind,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegularRowKind {
+    #[default]
+    Instruction,
+    RegisterMerge,
+    StackSync,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RegularOutputRow {
+    pub row_id: String,
+    pub kind: RegularRowKind,
+    pub instr_id: Option<u32>,
+    pub asm: String,
+    pub opcode: Option<String>,
+    pub url: Option<String>,
+    pub notes: Vec<String>,
+    pub metrics: RegularOutputMetrics,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RegularOutputMetrics {
+    pub mite: f64,
+    pub ms: f64,
+    pub dsb: f64,
+    pub lsd: f64,
+    pub issued: f64,
+    pub executed: f64,
+    pub div: f64,
+    pub ports: BTreeMap<String, f64>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RegularNote {
+    pub key: String,
+    pub label: String,
+    pub url: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -199,11 +304,62 @@ mod report_tests {
                 }],
                 interpolation_toggle: true,
             },
+            ..ReportBundle::default()
         };
 
         let json = serde_json::to_value(&bundle).unwrap();
         assert_eq!(json["graph"]["series"][0]["name"], "IQ");
         assert_eq!(json["graph"]["series"][0]["lineShape"], "hv");
         assert_eq!(json["graph"]["interpolationToggle"], true);
+    }
+
+    #[test]
+    fn regular_report_serializes_structured_rows() {
+        use super::{
+            RegularColumn, RegularColumnKind, RegularNote, RegularOutputMetrics,
+            RegularOutputReport, RegularOutputRow, RegularRowKind,
+        };
+
+        let metrics = RegularOutputMetrics {
+            dsb: 1.0,
+            issued: 1.0,
+            executed: 1.0,
+            ports: BTreeMap::from([("0".to_string(), 0.5)]),
+            ..RegularOutputMetrics::default()
+        };
+
+        let report = RegularOutputReport {
+            arch: "SKL".to_string(),
+            throughput_cycles_per_iteration: Some(2.0),
+            bottlenecks: vec!["Dependencies".to_string()],
+            columns: vec![RegularColumn {
+                key: "port_0".to_string(),
+                label: "Port 0".to_string(),
+                kind: RegularColumnKind::Port,
+            }],
+            rows: vec![RegularOutputRow {
+                row_id: "instr-0".to_string(),
+                kind: RegularRowKind::Instruction,
+                instr_id: Some(0),
+                asm: "add rax, rbx".to_string(),
+                opcode: Some("4801D8".to_string()),
+                url: Some("https://www.uops.info/html-instr/ADD_R64_R64.html".to_string()),
+                notes: Vec::new(),
+                metrics,
+            }],
+            notes: vec![RegularNote {
+                key: "M".to_string(),
+                label: "Macro-fused with previous instruction".to_string(),
+                url: None,
+            }],
+            ..RegularOutputReport::default()
+        };
+
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(json["schema_version"], "uica-regular-report-v1");
+        assert_eq!(json["arch"], "SKL");
+        assert_eq!(json["rows"][0]["kind"], "instruction");
+        assert_eq!(json["rows"][0]["metrics"]["ports"]["0"], 0.5);
+        assert_eq!(json["columns"][0]["kind"], "port");
     }
 }

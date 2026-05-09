@@ -19,10 +19,14 @@ const assembledPreview = document.getElementById("assembled-preview");
 const archSelect = document.getElementById("arch-select");
 const cacheStatus = document.getElementById("cache-status");
 const traceTab = document.getElementById("trace-tab");
+const analysisTab = document.getElementById("analysis-tab");
 const jsonTab = document.getElementById("json-tab");
 const tracePanel = document.getElementById("trace-panel");
+const analysisPanel = document.getElementById("analysis-panel");
 const jsonPanel = document.getElementById("json-panel");
 const traceFrame = document.getElementById("trace-frame");
+const analysisFrame = document.getElementById("analysis-frame");
+const analysisText = document.getElementById("analysis-text");
 const themeToggle = document.getElementById("theme-toggle");
 
 const THEME_STORAGE_KEY = "uica-theme";
@@ -69,21 +73,69 @@ async function boot() {
 	} catch (error) {
 		status.textContent = "Wasm load failed";
 		traceFrame.srcdoc = "";
+		clearAnalysis();
 		output.textContent = String(error);
 		selectTab("json");
 	}
 }
 
+const outputTabs = [
+	["trace", traceTab, tracePanel],
+	["analysis", analysisTab, analysisPanel],
+	["json", jsonTab, jsonPanel],
+];
+
 function selectTab(name) {
-	const traceActive = name === "trace";
-	traceTab.classList.toggle("active", traceActive);
-	jsonTab.classList.toggle("active", !traceActive);
-	traceTab.setAttribute("aria-selected", String(traceActive));
-	jsonTab.setAttribute("aria-selected", String(!traceActive));
-	tracePanel.hidden = !traceActive;
-	jsonPanel.hidden = traceActive;
-	tracePanel.classList.toggle("active", traceActive);
-	jsonPanel.classList.toggle("active", !traceActive);
+	for (const [tabName, tab, panel] of outputTabs) {
+		const active = name === tabName;
+		tab.classList.toggle("active", active);
+		tab.setAttribute("aria-selected", String(active));
+		tab.tabIndex = active ? 0 : -1;
+		panel.hidden = !active;
+		panel.classList.toggle("active", active);
+	}
+}
+
+function handleOutputTabKeydown(event, name) {
+	const currentIndex = outputTabs.findIndex(([tabName]) => tabName === name);
+	let targetIndex = currentIndex;
+	if (event.key === "ArrowLeft") {
+		targetIndex = (currentIndex + outputTabs.length - 1) % outputTabs.length;
+	} else if (event.key === "ArrowRight") {
+		targetIndex = (currentIndex + 1) % outputTabs.length;
+	} else if (event.key === "Home") {
+		targetIndex = 0;
+	} else if (event.key === "End") {
+		targetIndex = outputTabs.length - 1;
+	} else {
+		return;
+	}
+	event.preventDefault();
+	const [targetName, targetTab] = outputTabs[targetIndex];
+	selectTab(targetName);
+	targetTab.focus();
+}
+
+function clearAnalysis() {
+	analysisFrame.srcdoc = "";
+	analysisFrame.hidden = true;
+	analysisText.textContent = "";
+	analysisText.hidden = true;
+}
+
+function renderAnalysis(result) {
+	const html = result.regular_html || "";
+	const text = result.regular_text || "";
+	if (html) {
+		analysisFrame.hidden = false;
+		analysisText.hidden = true;
+		analysisFrame.srcdoc = html;
+		return;
+	}
+	analysisFrame.srcdoc = "";
+	analysisFrame.hidden = true;
+	analysisText.hidden = false;
+	analysisText.textContent = text || "No analysis output available.";
 }
 
 function setInputMode(mode) {
@@ -173,6 +225,9 @@ async function runAnalyze() {
 	button.disabled = true;
 	asmMode.disabled = true;
 	hexMode.disabled = true;
+	traceFrame.srcdoc = "";
+	output.textContent = "";
+	clearAnalysis();
 	status.textContent = "Loading UIPack...";
 	try {
 		const arch = archSelect.value;
@@ -198,11 +253,13 @@ async function runAnalyze() {
 		const result = parsed.result ?? parsed;
 		const tp = result.summary.throughput_cycles_per_iteration;
 		traceFrame.srcdoc = parsed.trace_html ?? "<p>No trace generated.</p>";
+		renderAnalysis(parsed);
 		output.textContent = JSON.stringify(result, null, 2);
 		status.textContent = `Analysis complete: ${tp} cycles/iteration`;
 		selectTab("trace");
 	} catch (error) {
 		traceFrame.srcdoc = "";
+		clearAnalysis();
 		output.textContent = error instanceof Error ? error.message : String(error);
 		status.textContent = "Analysis failed";
 		selectTab("json");
@@ -217,7 +274,17 @@ button.addEventListener("click", () => {
 	void runAnalyze();
 });
 traceTab.addEventListener("click", () => selectTab("trace"));
+analysisTab.addEventListener("click", () => selectTab("analysis"));
 jsonTab.addEventListener("click", () => selectTab("json"));
+traceTab.addEventListener("keydown", (event) =>
+	handleOutputTabKeydown(event, "trace"),
+);
+analysisTab.addEventListener("keydown", (event) =>
+	handleOutputTabKeydown(event, "analysis"),
+);
+jsonTab.addEventListener("keydown", (event) =>
+	handleOutputTabKeydown(event, "json"),
+);
 asmMode.addEventListener("click", () => setInputMode("asm"));
 hexMode.addEventListener("click", () => setInputMode("hex"));
 asmMode.addEventListener("keydown", (event) =>
@@ -226,6 +293,7 @@ asmMode.addEventListener("keydown", (event) =>
 hexMode.addEventListener("keydown", (event) =>
 	handleInputModeKeydown(event, "hex"),
 );
+selectTab("trace");
 setInputMode("asm");
 themeToggle.addEventListener("click", () => applyTheme(nextTheme()));
 

@@ -282,3 +282,20 @@ pre {
 	border-radius: 10px;
 	background: var(--trace-bg);
 }
+
+#analysis-frame {
+	width: 100%;
+	min-height: 900px;
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	background: var(--trace-bg);
+}
+
+#analysis-text {
+	white-space: pre;
+	overflow: auto;
+	padding: 1rem;
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	background: var(--panel-bg);
+}

@@ -1,6 +1,9 @@
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use uica_model::{GraphReport, GraphSeries, TraceInstructionRow, TraceReport, TraceUopRow};
+use uica_model::{
+    GraphReport, GraphSeries, RegularColumnKind, RegularOutputMetrics, RegularOutputReport,
+    RegularOutputRow, TraceInstructionRow, TraceReport, TraceUopRow,
+};
 
 const TRACE_TEMPLATE: &str = include_str!("../../../traceTemplate.html");
 
@@ -72,6 +75,295 @@ const config = {config};
 </html>
 "#
     ))
+}
+
+pub fn render_regular_text(report: &RegularOutputReport) -> String {
+    let mut out = String::new();
+    if let Some(throughput) = report.throughput_cycles_per_iteration {
+        out.push_str(&format!(
+            "Throughput (in cycles per iteration): {throughput:.2}\n"
+        ));
+    }
+    out.push_str(&bottleneck_line(&report.bottlenecks));
+    out.push('\n');
+
+    if !report.limit_lines.is_empty() {
+        out.push_str(
+            "\nThe following throughputs could be achieved if the given property were the only bottleneck:\n\n",
+        );
+        for limit in &report.limit_lines {
+            out.push_str(&format!("  - {}: {:.2}\n", limit.label, limit.throughput));
+        }
+    }
+
+    if !report.notes.is_empty() {
+        out.push('\n');
+        for note in &report.notes {
+            out.push_str(&format!("{} - {}\n", note.key, note.label));
+        }
+    }
+
+    out.push('\n');
+    out.push_str(&render_regular_table(report));
+    out
+}
+
+pub fn render_regular_html(report: &RegularOutputReport) -> Result<String, String> {
+    let mut html = String::new();
+    html.push_str(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>uiCA Analysis</title>",
+    );
+    html.push_str("<style>body{font-family:system-ui,sans-serif;margin:1rem;color:#111;background:#fff}table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}th,td{border:1px solid #ccd;padding:.35rem .5rem;text-align:right}th:last-child,td:last-child{text-align:left}.notes{text-align:center}.summary{margin-bottom:1rem}@media(prefers-color-scheme:dark){body{color:#eee;background:#111}th,td{border-color:#445}}</style>");
+    html.push_str("</head><body>");
+    html.push_str("<section class=\"summary\">");
+    if let Some(tp) = report.throughput_cycles_per_iteration {
+        html.push_str(&format!(
+            "<p><strong>Throughput:</strong> {:.2} cycles/iteration</p>",
+            tp
+        ));
+    }
+    html.push_str(&format!(
+        "<p><strong>{}</strong></p>",
+        escape_html(&bottleneck_line(&report.bottlenecks))
+    ));
+    html.push_str("</section>");
+
+    if !report.limit_lines.is_empty() {
+        html.push_str("<section class=\"limits\"><p>The following throughputs could be achieved if the given property were the only bottleneck:</p><ul>");
+        for limit in &report.limit_lines {
+            html.push_str(&format!(
+                "<li>{}: {:.2}</li>",
+                escape_html(&limit.label),
+                limit.throughput
+            ));
+        }
+        html.push_str("</ul></section>");
+    }
+
+    if !report.notes.is_empty() {
+        html.push_str("<section class=\"notes\"><ul>");
+        for note in &report.notes {
+            html.push_str(&format!(
+                "<li><strong>{}</strong> - {}</li>",
+                escape_html(&note.key),
+                escape_html(&note.label)
+            ));
+        }
+        html.push_str("</ul></section>");
+    }
+
+    html.push_str("<table class=\"regular-output\"><thead><tr>");
+    for column in &report.columns {
+        html.push_str(&format!(
+            "<th scope=\"col\">{}</th>",
+            escape_html(&column.label)
+        ));
+    }
+    html.push_str("<th scope=\"col\">Instruction</th></tr></thead><tbody>");
+    for row in &report.rows {
+        html.push_str(&format!(
+            "<tr class=\"regular-row regular-row-{}\"",
+            row_kind_class(&row.kind)
+        ));
+        if let Some(instr_id) = row.instr_id {
+            html.push_str(&format!(" data-instr-id=\"{}\"", instr_id));
+        }
+        html.push('>');
+        html.push_str(&regular_html_row_cells(row, report));
+        html.push_str("<th scope=\"row\">");
+        if let Some(url) = &row.url {
+            html.push_str(&format!(
+                "<a href=\"{}\" target=\"_blank\" rel=\"noreferrer\">{}</a>",
+                escape_html(url),
+                escape_html(&row.asm)
+            ));
+        } else {
+            html.push_str(&escape_html(&row.asm));
+        }
+        html.push_str("</th></tr>");
+    }
+    html.push_str("</tbody><tfoot><tr>");
+    html.push_str(&regular_html_metric_cells(&report.totals, None, report));
+    html.push_str("<th scope=\"row\">Total</th></tr></tfoot></table></body></html>");
+    Ok(html)
+}
+
+fn regular_html_row_cells(row: &RegularOutputRow, report: &RegularOutputReport) -> String {
+    regular_html_metric_cells(&row.metrics, Some(&row.notes), report)
+}
+
+fn regular_html_metric_cells(
+    metrics: &RegularOutputMetrics,
+    notes: Option<&[String]>,
+    report: &RegularOutputReport,
+) -> String {
+    let mut html = String::new();
+    for column in &report.columns {
+        let cell = match column.kind {
+            RegularColumnKind::Notes => notes.map(|notes| notes.join("")).unwrap_or_default(),
+            _ => regular_metric_cell(metrics, &column.key, &column.kind),
+        };
+        if matches!(column.kind, RegularColumnKind::Port) {
+            let port = column
+                .key
+                .strip_prefix("port_")
+                .unwrap_or(column.key.as_str());
+            html.push_str(&format!(
+                "<td data-port=\"{}\">{}</td>",
+                escape_html(port),
+                escape_html(&cell)
+            ));
+        } else {
+            html.push_str(&format!("<td>{}</td>", escape_html(&cell)));
+        }
+    }
+    html
+}
+
+fn row_kind_class(kind: &uica_model::RegularRowKind) -> &'static str {
+    match kind {
+        uica_model::RegularRowKind::Instruction => "instruction",
+        uica_model::RegularRowKind::RegisterMerge => "register-merge",
+        uica_model::RegularRowKind::StackSync => "stack-sync",
+    }
+}
+
+fn escape_html(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+fn bottleneck_line(bottlenecks: &[String]) -> String {
+    match bottlenecks.len() {
+        0 => "Bottleneck: unknown".to_string(),
+        1 => format!("Bottleneck: {}", bottlenecks[0]),
+        _ => format!("Bottlenecks: {}", bottlenecks.join(", ")),
+    }
+}
+
+fn format_regular_cell(value: f64) -> String {
+    if value.abs() < 0.005 {
+        return String::new();
+    }
+    let mut text = format!("{value:.2}");
+    while text.contains('.') && text.ends_with('0') {
+        text.pop();
+    }
+    if text.ends_with('.') {
+        text.pop();
+    }
+    text
+}
+
+fn render_regular_table(report: &RegularOutputReport) -> String {
+    let mut widths: Vec<usize> = report
+        .columns
+        .iter()
+        .map(|column| column.label.len().max(5))
+        .collect();
+    let mut header_cells: Vec<String> = report
+        .columns
+        .iter()
+        .map(|column| column.label.clone())
+        .collect();
+    header_cells.push(String::new());
+    widths.push("Total".len());
+
+    let mut rendered_rows = Vec::new();
+    for row in &report.rows {
+        let mut cells = regular_row_cells(row, report);
+        cells.push(row.asm.clone());
+        for (idx, cell) in cells.iter().enumerate() {
+            widths[idx] = widths[idx].max(cell.chars().count());
+        }
+        rendered_rows.push(cells);
+    }
+
+    let mut total_cells = regular_metric_cells(&report.totals, report);
+    total_cells.push("Total".to_string());
+    for (idx, cell) in total_cells.iter().enumerate() {
+        widths[idx] = widths[idx].max(cell.chars().count());
+    }
+
+    let mut lines = Vec::new();
+    lines.push(join_regular_table_row(&header_cells, &widths));
+    lines.push(join_regular_separator(&widths));
+    for cells in rendered_rows {
+        lines.push(join_regular_table_row(&cells, &widths));
+    }
+    lines.push(join_regular_separator(&widths));
+    lines.push(join_regular_table_row(&total_cells, &widths));
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+fn regular_row_cells(row: &RegularOutputRow, report: &RegularOutputReport) -> Vec<String> {
+    let mut cells = Vec::new();
+    for column in &report.columns {
+        match column.kind {
+            RegularColumnKind::Notes => cells.push(row.notes.join("")),
+            _ => cells.push(regular_metric_cell(&row.metrics, &column.key, &column.kind)),
+        }
+    }
+    cells
+}
+
+fn regular_metric_cells(
+    metrics: &RegularOutputMetrics,
+    report: &RegularOutputReport,
+) -> Vec<String> {
+    report
+        .columns
+        .iter()
+        .map(|column| match column.kind {
+            RegularColumnKind::Notes => String::new(),
+            _ => regular_metric_cell(metrics, &column.key, &column.kind),
+        })
+        .collect()
+}
+
+fn regular_metric_cell(
+    metrics: &RegularOutputMetrics,
+    key: &str,
+    kind: &RegularColumnKind,
+) -> String {
+    match kind {
+        RegularColumnKind::Frontend => match key {
+            "mite" => format_regular_cell(metrics.mite),
+            "ms" => format_regular_cell(metrics.ms),
+            "dsb" => format_regular_cell(metrics.dsb),
+            "lsd" => format_regular_cell(metrics.lsd),
+            _ => String::new(),
+        },
+        RegularColumnKind::Issue => format_regular_cell(metrics.issued),
+        RegularColumnKind::Execute => format_regular_cell(metrics.executed),
+        RegularColumnKind::Port => {
+            let port = key.strip_prefix("port_").unwrap_or(key);
+            format_regular_cell(*metrics.ports.get(port).unwrap_or(&0.0))
+        }
+        RegularColumnKind::Divider => format_regular_cell(metrics.div),
+        RegularColumnKind::Notes => String::new(),
+    }
+}
+
+fn join_regular_table_row(cells: &[String], widths: &[usize]) -> String {
+    cells
+        .iter()
+        .enumerate()
+        .map(|(idx, cell)| format!(" {:>width$} ", cell, width = widths[idx]))
+        .collect::<Vec<_>>()
+        .join("│")
+}
+
+fn join_regular_separator(widths: &[usize]) -> String {
+    widths
+        .iter()
+        .map(|width| "─".repeat(width + 2))
+        .collect::<Vec<_>>()
+        .join("┼")
 }
 
 fn json_for_script(value: &Value) -> serde_json::Result<String> {
@@ -490,11 +782,145 @@ pub fn extract_trace_table_data_for_test(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_graph_report, build_trace_report, render_graph_html, render_trace_html, uops_info_url,
+        build_graph_report, build_trace_report, format_regular_cell, render_graph_html,
+        render_regular_html, render_regular_text, render_trace_html, uops_info_url,
     };
     use std::collections::BTreeMap;
     use uica_data::{DataPack, DATAPACK_SCHEMA_VERSION};
     use uica_model::{GraphReport, GraphSeries, TraceInstructionRow, TraceReport, TraceUopRow};
+
+    #[test]
+    fn regular_text_formats_blank_zero_and_trimmed_floats() {
+        assert_eq!(format_regular_cell(0.0), "");
+        assert_eq!(format_regular_cell(1.0), "1");
+        assert_eq!(format_regular_cell(0.5), "0.5");
+        assert_eq!(format_regular_cell(0.22), "0.22");
+    }
+
+    #[test]
+    fn regular_text_renders_summary_notes_and_instruction() {
+        use uica_model::{
+            RegularColumn, RegularColumnKind, RegularNote, RegularOutputMetrics,
+            RegularOutputReport, RegularOutputRow, RegularRowKind,
+        };
+
+        let report = RegularOutputReport {
+            arch: "SKL".to_string(),
+            throughput_cycles_per_iteration: Some(2.0),
+            bottlenecks: vec!["Dependencies".to_string()],
+            columns: vec![
+                RegularColumn {
+                    key: "dsb".to_string(),
+                    label: "DSB".to_string(),
+                    kind: RegularColumnKind::Frontend,
+                },
+                RegularColumn {
+                    key: "issued".to_string(),
+                    label: "Issued".to_string(),
+                    kind: RegularColumnKind::Issue,
+                },
+                RegularColumn {
+                    key: "port_0".to_string(),
+                    label: "Port 0".to_string(),
+                    kind: RegularColumnKind::Port,
+                },
+                RegularColumn {
+                    key: "notes".to_string(),
+                    label: "Notes".to_string(),
+                    kind: RegularColumnKind::Notes,
+                },
+            ],
+            rows: vec![RegularOutputRow {
+                row_id: "instr-0".to_string(),
+                kind: RegularRowKind::Instruction,
+                instr_id: Some(0),
+                asm: "add rax, rbx".to_string(),
+                opcode: Some("4801D8".to_string()),
+                url: None,
+                notes: vec!["M".to_string()],
+                metrics: RegularOutputMetrics {
+                    dsb: 1.0,
+                    issued: 1.0,
+                    ports: [("0".to_string(), 0.5)].into_iter().collect(),
+                    ..RegularOutputMetrics::default()
+                },
+            }],
+            notes: vec![RegularNote {
+                key: "M".to_string(),
+                label: "Macro-fused with previous instruction".to_string(),
+                url: None,
+            }],
+            ..RegularOutputReport::default()
+        };
+
+        let text = render_regular_text(&report);
+        assert!(text.contains("Throughput (in cycles per iteration): 2.00"));
+        assert!(text.contains("Bottleneck: Dependencies"));
+        assert!(text.contains("M - Macro-fused with previous instruction"));
+        assert!(text.contains("add rax, rbx"));
+        assert!(text.contains("0.5"));
+    }
+
+    #[test]
+    fn regular_html_escapes_instruction_text() {
+        use uica_model::{
+            RegularColumn, RegularColumnKind, RegularOutputMetrics, RegularOutputReport,
+            RegularOutputRow, RegularRowKind,
+        };
+
+        let report = RegularOutputReport {
+            columns: vec![
+                RegularColumn {
+                    key: "issued".to_string(),
+                    label: "Issued".to_string(),
+                    kind: RegularColumnKind::Issue,
+                },
+                RegularColumn {
+                    key: "port_2&amp;3".to_string(),
+                    label: "Port 2&3".to_string(),
+                    kind: RegularColumnKind::Port,
+                },
+            ],
+            rows: vec![RegularOutputRow {
+                row_id: "instr-0".to_string(),
+                kind: RegularRowKind::Instruction,
+                instr_id: Some(0),
+                asm: "cmp rax, <bad>&\"".to_string(),
+                metrics: RegularOutputMetrics {
+                    ports: [("2&amp;3".to_string(), 0.5)].into_iter().collect(),
+                    ..RegularOutputMetrics::default()
+                },
+                ..RegularOutputRow::default()
+            }],
+            ..RegularOutputReport::default()
+        };
+
+        let html = render_regular_html(&report).unwrap();
+        assert!(html.contains("&lt;bad&gt;&amp;&quot;"));
+        assert!(html.contains("data-port=\"2&amp;amp;3\""));
+        assert!(html.contains("<table"));
+        assert!(!html.contains("<script src="));
+    }
+
+    #[test]
+    fn regular_html_renders_limit_lines() {
+        use uica_model::{RegularLimitLine, RegularOutputReport};
+
+        let report = RegularOutputReport {
+            limit_lines: vec![RegularLimitLine {
+                key: "dsb".to_string(),
+                label: "DSB & Decode".to_string(),
+                throughput: 1.25,
+                is_bottleneck: false,
+            }],
+            ..RegularOutputReport::default()
+        };
+
+        let html = render_regular_html(&report).unwrap();
+        assert!(html.contains("<section class=\"limits\">"));
+        assert!(html.contains("DSB &amp; Decode: 1.25"));
+        assert!(!html.contains("<script src="));
+    }
 
     fn empty_pack() -> DataPack {
         DataPack {

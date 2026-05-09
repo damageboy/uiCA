@@ -224,6 +224,21 @@ button {
 	font-weight: 700;
 }
 
+button[hidden] {
+	display: none;
+}
+
+.secondary-button {
+	border: 1px solid var(--border);
+	background: var(--input-bg);
+	color: var(--text);
+}
+
+.secondary-button:disabled {
+	cursor: wait;
+	opacity: 0.7;
+}
+
 button:disabled {
 	cursor: wait;
 	opacity: 0.7;

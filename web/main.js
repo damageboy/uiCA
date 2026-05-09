@@ -5,8 +5,14 @@ import {
 	populateArchSelect,
 } from "./uipack-cache.js";
 import { assembleNasm } from "./nasm-assemble.js";
+import {
+	buildDeepLink,
+	readDeepLinkParams,
+	shouldAutoAnalyzeDeepLink,
+} from "./deep-link.mjs";
 
 const button = document.getElementById("analyze-button");
+const copyDeepLinkButton = document.getElementById("copy-deep-link-button");
 const status = document.getElementById("status");
 const output = document.getElementById("output");
 const hexInput = document.getElementById("hex-input");
@@ -34,6 +40,7 @@ const THEMES = ["system", "light", "dark"];
 let Module = null;
 let manifest = null;
 let inputMode = "asm";
+let copyFeedbackTimer = 0;
 
 function themeLabel(theme) {
 	return `Switch color scheme (currently ${theme} mode)`;
@@ -60,6 +67,58 @@ function nextTheme() {
 
 applyTheme(localStorage.getItem(THEME_STORAGE_KEY) ?? "system");
 
+function clearCopyFeedbackTimer() {
+	if (copyFeedbackTimer) {
+		clearTimeout(copyFeedbackTimer);
+		copyFeedbackTimer = 0;
+	}
+}
+
+function resetCopyDeepLinkButton() {
+	clearCopyFeedbackTimer();
+	copyDeepLinkButton.hidden = true;
+	copyDeepLinkButton.disabled = false;
+	copyDeepLinkButton.textContent = "Copy deep-link";
+}
+
+function showCopyDeepLinkButton() {
+	clearCopyFeedbackTimer();
+	copyDeepLinkButton.hidden = false;
+	copyDeepLinkButton.disabled = false;
+	copyDeepLinkButton.textContent = "Copy deep-link";
+}
+
+function applyDeepLinkSelection() {
+	const selection = readDeepLinkParams(
+		new URLSearchParams(window.location.search),
+	);
+	let warning = "";
+
+	if (selection.inputMode === "hex") {
+		hexInput.value = selection.hex;
+		setInputMode("hex");
+	} else if (selection.inputMode === "asm") {
+		asmInput.value = selection.asm;
+		setInputMode("asm");
+	}
+
+	if (selection.uarch) {
+		if (manifest.architectures[selection.uarch]) {
+			archSelect.value = selection.uarch;
+		} else {
+			warning = `Unknown uarch ${selection.uarch}; using ${archSelect.value}.`;
+		}
+	}
+
+	return {
+		shouldAnalyze: shouldAutoAnalyzeDeepLink(
+			selection,
+			manifest.architectures,
+		),
+		warning,
+	};
+}
+
 async function boot() {
 	try {
 		Module = await createUica({
@@ -69,9 +128,19 @@ async function boot() {
 		populateArchSelect(archSelect, manifest, "SKL");
 		archSelect.disabled = false;
 		button.disabled = false;
-		status.textContent = "Wasm ready";
+		try {
+			const { shouldAnalyze, warning } = applyDeepLinkSelection();
+			status.textContent = warning || "Wasm ready";
+			if (shouldAnalyze) {
+				await runAnalyze();
+			}
+		} catch (error) {
+			status.textContent = `Deep-link ignored: ${
+				error instanceof Error ? error.message : String(error)
+			}`;
+		}
 	} catch (error) {
-		status.textContent = "Wasm load failed";
+		status.textContent = "Web app load failed";
 		traceFrame.srcdoc = "";
 		clearAnalysis();
 		output.textContent = String(error);
@@ -225,6 +294,7 @@ async function runAnalyze() {
 	button.disabled = true;
 	asmMode.disabled = true;
 	hexMode.disabled = true;
+	resetCopyDeepLinkButton();
 	traceFrame.srcdoc = "";
 	output.textContent = "";
 	clearAnalysis();
@@ -256,6 +326,7 @@ async function runAnalyze() {
 		renderAnalysis(parsed);
 		output.textContent = JSON.stringify(result, null, 2);
 		status.textContent = `Analysis complete: ${tp} cycles/iteration`;
+		showCopyDeepLinkButton();
 		selectTab("trace");
 	} catch (error) {
 		traceFrame.srcdoc = "";
@@ -270,8 +341,40 @@ async function runAnalyze() {
 	}
 }
 
+async function copyDeepLink() {
+	const href = buildDeepLink({
+		baseUrl: window.location.href,
+		inputMode,
+		asmText: asmInput.value,
+		hexText: hexInput.value,
+		uarch: archSelect.value,
+	});
+
+	copyDeepLinkButton.disabled = true;
+	clearCopyFeedbackTimer();
+	try {
+		await navigator.clipboard.writeText(href);
+		copyDeepLinkButton.textContent = "Copied!";
+		status.textContent = "Deep-link copied.";
+		copyFeedbackTimer = setTimeout(() => {
+			copyFeedbackTimer = 0;
+			if (!copyDeepLinkButton.hidden) {
+				copyDeepLinkButton.textContent = "Copy deep-link";
+			}
+		}, 1500);
+	} catch (error) {
+		copyDeepLinkButton.textContent = "Copy deep-link";
+		status.textContent = `Copy failed; deep-link: ${href}`;
+	} finally {
+		copyDeepLinkButton.disabled = false;
+	}
+}
+
 button.addEventListener("click", () => {
 	void runAnalyze();
+});
+copyDeepLinkButton.addEventListener("click", () => {
+	void copyDeepLink();
 });
 traceTab.addEventListener("click", () => selectTab("trace"));
 analysisTab.addEventListener("click", () => selectTab("analysis"));

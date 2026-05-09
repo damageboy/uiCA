@@ -521,6 +521,7 @@ fn engine_trace_uses_manifest_uipack_from_env_path() {
                 min_iterations: 1,
                 ..Invocation::default()
             },
+            false,
         )
         .unwrap();
         let trace_path = temp.path().join("events.trace");
@@ -574,6 +575,7 @@ fn event_trace_emits_executed_events_for_zero_port_uops() {
             arch: "HSW".to_string(),
             ..Invocation::default()
         },
+        false,
     )
     .unwrap();
     trace.finish_to_path(&trace_path).unwrap();
@@ -633,14 +635,9 @@ fn verify_uipack_rejects_bad_checksum_but_default_load_skips_it() {
         let result = uica_core::engine::engine(&[0x48, 0x01, 0xd8], &invocation);
         assert_eq!(result.summary.throughput_cycles_per_iteration, Some(2.0));
 
-        let err = uica_core::engine::engine_output_with_uipack_verification(
-            &[0x48, 0x01, 0xd8],
-            &invocation,
-            false,
-            true,
-        )
-        .unwrap_err()
-        .to_string();
+        let err = uica_core::engine::engine_output(&[0x48, 0x01, 0xd8], &invocation, false, true)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("uipack checksum mismatch"), "{err}");
     }
 

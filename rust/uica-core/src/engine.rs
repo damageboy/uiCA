@@ -29,14 +29,6 @@ pub fn engine_output(
     code: &[u8],
     invocation: &Invocation,
     include_reports: bool,
-) -> Result<EngineOutput, String> {
-    engine_output_with_uipack_verification(code, invocation, include_reports, false)
-}
-
-pub fn engine_output_with_uipack_verification(
-    code: &[u8],
-    invocation: &Invocation,
-    include_reports: bool,
     verify_uipack: bool,
 ) -> Result<EngineOutput, String> {
     let runtime = if verify_uipack {
@@ -1783,13 +1775,6 @@ fn runtime_manifest_path(path: &Path) -> Option<PathBuf> {
 
 /// Trace-mode engine: runs FrontEnd simulation and emits Q events.
 pub fn engine_trace(
-    code: &[u8],
-    invocation: &Invocation,
-) -> Result<crate::sim::TraceWriter, String> {
-    engine_trace_with_uipack_verification(code, invocation, false)
-}
-
-pub fn engine_trace_with_uipack_verification(
     code: &[u8],
     invocation: &Invocation,
     verify_uipack: bool,

@@ -113,12 +113,8 @@ fn run() -> Result<()> {
     };
 
     if let Some(path) = &args.event_trace {
-        let trace = uica_core::engine::engine_trace_with_uipack_verification(
-            &bytes,
-            &invocation,
-            args.verify_uipack,
-        )
-        .map_err(|e| anyhow!("trace engine failed: {e}"))?;
+        let trace = uica_core::engine::engine_trace(&bytes, &invocation, args.verify_uipack)
+            .map_err(|e| anyhow!("trace engine failed: {e}"))?;
         trace
             .finish_to_path(path)
             .with_context(|| format!("failed to write event trace {}", path.display()))?;
@@ -126,33 +122,18 @@ fn run() -> Result<()> {
 
     let wants_reports = args.trace.is_some() || args.graph.is_some();
     let output = if wants_reports {
-        uica_core::engine::engine_output_with_uipack_verification(
-            &bytes,
-            &invocation,
-            true,
-            args.verify_uipack,
-        )
-        .map_err(|e| anyhow!("report engine failed: {e}"))?
+        uica_core::engine::engine_output(&bytes, &invocation, true, args.verify_uipack)
+            .map_err(|e| anyhow!("report engine failed: {e}"))?
     } else {
         uica_core::engine::EngineOutput {
             result: if args.verify_uipack {
-                uica_core::engine::engine_output_with_uipack_verification(
-                    &bytes,
-                    &invocation,
-                    false,
-                    true,
-                )
-                .map_err(|e| anyhow!("uipack verification failed: {e}"))?
-                .result
+                uica_core::engine::engine_output(&bytes, &invocation, false, true)
+                    .map_err(|e| anyhow!("uipack verification failed: {e}"))?
+                    .result
             } else {
-                uica_core::engine::engine_output_with_uipack_verification(
-                    &bytes,
-                    &invocation,
-                    false,
-                    false,
-                )
-                .map_err(|e| anyhow!("engine failed: {e}"))?
-                .result
+                uica_core::engine::engine_output(&bytes, &invocation, false, false)
+                    .map_err(|e| anyhow!("engine failed: {e}"))?
+                    .result
             },
             reports: None,
         }

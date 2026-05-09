@@ -7,6 +7,38 @@ INSTALL_DIR="${UICA_EMSCRIPTEN_XED_DIR:-$OUT_DIR/install}"
 BUILD_DIR="$OUT_DIR/build"
 TOOLWRAP_DIR="$OUT_DIR/toolwrap"
 MBUILD_LOG="$OUT_DIR/xed-mbuild.log"
+CACHE_KEY_FILE="$OUT_DIR/cache-key.txt"
+
+hash_stdin() {
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum | awk '{print $1}'
+	elif command -v shasum >/dev/null 2>&1; then
+		shasum -a 256 | awk '{print $1}'
+	else
+		echo "sha256sum or shasum not found" >&2
+		exit 127
+	fi
+}
+
+hash_file() {
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "$1" | awk '{print $1}'
+	elif command -v shasum >/dev/null 2>&1; then
+		shasum -a 256 "$1" | awk '{print $1}'
+	else
+		echo "sha256sum or shasum not found" >&2
+		exit 127
+	fi
+}
+
+xed_cache_key() {
+	{
+		hash_file "$ROOT_DIR/scripts/build-xed-emscripten.sh"
+		emcc --version | head -n 1
+		git -C "$ROOT_DIR/XED-to-XML" rev-parse HEAD 2>/dev/null || true
+		git -C "$ROOT_DIR/mbuild" rev-parse HEAD 2>/dev/null || true
+	} | hash_stdin
+}
 
 require_tool() {
 	local tool="$1"
@@ -36,6 +68,13 @@ require_file \
 require_file \
 	"$ROOT_DIR/mbuild/mbuild/env.py" \
 	"run: git submodule update --init mbuild"
+
+EXPECTED_CACHE_KEY="$(xed_cache_key)"
+if [[ -f "$INSTALL_DIR/include/xed/xed-interface.h" && -f "$INSTALL_DIR/lib/libxed.a" && -f "$CACHE_KEY_FILE" && "$(cat "$CACHE_KEY_FILE")" == "$EXPECTED_CACHE_KEY" ]]; then
+	printf '%s\n' "$INSTALL_DIR" >"$OUT_DIR/xed-dir.txt"
+	printf 'Reusing cached Emscripten XED build at %s\n' "$INSTALL_DIR"
+	exit 0
+fi
 
 rm -rf "$INSTALL_DIR" "$BUILD_DIR" "$TOOLWRAP_DIR"
 mkdir -p "$INSTALL_DIR" "$BUILD_DIR" "$TOOLWRAP_DIR"
@@ -148,4 +187,5 @@ if [[ ! -f "$INSTALL_DIR/lib/libxed.a" ]]; then
 fi
 
 printf '%s\n' "$INSTALL_DIR" >"$OUT_DIR/xed-dir.txt"
+printf '%s\n' "$EXPECTED_CACHE_KEY" >"$CACHE_KEY_FILE"
 printf 'UICA_EMSCRIPTEN_XED_DIR=%q\n' "$INSTALL_DIR"

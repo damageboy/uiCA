@@ -3,7 +3,36 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>uiCA</title>
+    <title>uiCA - x86-64 Throughput Analyzer</title>
+    <meta
+      name="description"
+      content="Analyze x86-64 assembly and machine code in your browser with uiCA, NASM, Intel XED, and WebAssembly."
+    />
+    <link rel="canonical" href="https://uica.houmus.org/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="uiCA" />
+    <meta property="og:title" content="uiCA - x86-64 Throughput Analyzer" />
+    <meta
+      property="og:description"
+      content="Analyze x86-64 assembly and machine code in your browser with uiCA, NASM, Intel XED, and WebAssembly."
+    />
+    <meta property="og:url" content="https://uica.houmus.org/" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="uiCA - x86-64 Throughput Analyzer" />
+    <meta
+      name="twitter:description"
+      content="Analyze x86-64 assembly and machine code in your browser with uiCA, NASM, Intel XED, and WebAssembly."
+    />
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: light)"
+      content="#f6f8fb"
+    />
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: dark)"
+      content="#0f172a"
+    />
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
@@ -11,9 +40,12 @@
       <section class="panel">
         <div class="header-row">
           <div>
-            <h1>uiCA<sup>1,2</sup></h1>
-            <p class=subtitle><sup>1</sup> - Ported to rust</p>
-            <p class=subtitle><sup>2</sup> - Compiled to WASM with XED through <a href="https://emscripten.org">emscripten</a></p>
+            <h1>(kind of) uiCA<sup>1,2</sup></h1>
+            <p class="subtitle"><sup>1</sup> - Ported to rust</p>
+            <p class="subtitle">
+              <sup>2</sup> - Compiled to WASM with XED through
+              <a href="https://emscripten.org">emscripten</a>
+            </p>
             <p class="subtitle">
               Analyze raw x86-64 bytes with XED + uiCA compiled together through
               Emscripten. Pure wasm smoke test:
@@ -69,8 +101,46 @@
         <label for="arch-select">Microarchitecture</label>
         <select id="arch-select" disabled></select>
 
-        <label for="hex-input">x86-64 bytes (hex)</label>
-        <textarea id="hex-input" rows="6" spellcheck="false">48 01 d8</textarea>
+        <div class="input-mode-row" role="radiogroup" aria-label="Input mode">
+          <span class="input-mode-label">Input mode</span>
+          <button
+            id="asm-mode"
+            class="mode-button active"
+            type="button"
+            role="radio"
+            aria-checked="true"
+          >
+            Assembly
+          </button>
+          <button
+            id="hex-mode"
+            class="mode-button"
+            type="button"
+            role="radio"
+            aria-checked="false"
+          >
+            Hex
+          </button>
+        </div>
+
+        <div id="asm-panel" class="input-panel">
+          <label for="asm-input">x86-64 assembly (NASM syntax)</label>
+          <textarea id="asm-input" rows="8" spellcheck="false">
+add rax, rbx</textarea
+          >
+          <p class="subtitle">
+            Assembled with NASM as 64-bit flat binary before analysis.
+          </p>
+        </div>
+
+        <div id="hex-panel" class="input-panel" hidden>
+          <label for="hex-input">x86-64 bytes (hex)</label>
+          <textarea id="hex-input" rows="6" spellcheck="false">
+48 01 d8</textarea
+          >
+        </div>
+
+        <p id="assembled-preview" class="assembled-preview" hidden></p>
 
         <div class="actions">
           <button id="analyze-button" type="button" disabled>Analyze</button>

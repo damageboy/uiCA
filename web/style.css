@@ -162,6 +162,47 @@ pre {
 	padding: 12px;
 }
 
+.input-mode-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	align-items: center;
+	margin: 20px 0 10px;
+}
+
+.input-mode-label {
+	font-weight: 600;
+	color: var(--muted);
+}
+
+.mode-button {
+	width: auto;
+	padding: 8px 12px;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	background: var(--input-bg);
+	color: var(--text);
+}
+
+.mode-button.active {
+	border-color: var(--button-bg);
+	background: var(--button-bg);
+	color: var(--button-text);
+}
+
+.input-panel[hidden],
+.assembled-preview[hidden] {
+	display: none;
+}
+
+.assembled-preview {
+	margin: 10px 0 0;
+	font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+	font-size: 0.9rem;
+	color: var(--muted);
+	word-break: break-word;
+}
+
 .sample-box {
 	border: 1px solid var(--border);
 	border-radius: 10px;

@@ -34,6 +34,30 @@ jobs:
           version: "3.1.74"
           actions-cache-folder: emsdk-cache
 
+      - name: Compute build cache key parts
+        id: build-cache-key
+        run: |
+          echo "emsdk=3.1.74" >> "$GITHUB_OUTPUT"
+          echo "xed=$(git rev-parse HEAD:XED-to-XML)" >> "$GITHUB_OUTPUT"
+          echo "mbuild=$(git rev-parse HEAD:mbuild)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Rust and web build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/wasm-pack
+            ~/.cache/.wasm-pack
+            target/release
+            target/wasm32-unknown-unknown
+            target/wasm32-unknown-emscripten
+            target/xed-emscripten
+            target/nasm-emscripten
+          key: ${{ runner.os }}-rust-web-${{ steps.build-cache-key.outputs.emsdk }}-${{ steps.build-cache-key.outputs.xed }}-${{ steps.build-cache-key.outputs.mbuild }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust/**/Cargo.toml', 'scripts/build-*.sh', 'scripts/smoke-*.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-web-
+
       - name: Install setup prerequisites
         run: |
           sudo apt-get update
@@ -60,8 +84,9 @@ jobs:
 
       - name: Install wasm-pack
         run: |
-          if ! command -v wasm-pack >/dev/null 2>&1; then
-            cargo install wasm-pack --locked
+          WASM_PACK_VERSION=0.14.0
+          if ! command -v wasm-pack >/dev/null 2>&1 || [ "$(wasm-pack --version)" != "wasm-pack $WASM_PACK_VERSION" ]; then
+            cargo install wasm-pack --version "$WASM_PACK_VERSION" --locked --force
           fi
 
       - name: Build Pages artifact
@@ -76,6 +101,11 @@ jobs:
           test -f dist/pkg/uica_wasm_bg.wasm
           test -f dist/emscripten/uica_emscripten.js
           test -f dist/emscripten/uica_emscripten.wasm
+          test -f dist/nasm/nasm.js
+          test -f dist/nasm/nasm.wasm
+          test -f dist/nasm/LICENSE
+          test -f dist/nasm-assemble.js
+          test -f dist/nasm-worker.js
           test -f dist/uipack-cache.js
           test -f dist/data/manifest.json
           test -f dist/data/arch/SKL.uipack

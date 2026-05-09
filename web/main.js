@@ -4,11 +4,18 @@ import {
 	loadManifest,
 	populateArchSelect,
 } from "./uipack-cache.js";
+import { assembleNasm } from "./nasm-assemble.js";
 
 const button = document.getElementById("analyze-button");
 const status = document.getElementById("status");
 const output = document.getElementById("output");
 const hexInput = document.getElementById("hex-input");
+const asmInput = document.getElementById("asm-input");
+const asmMode = document.getElementById("asm-mode");
+const hexMode = document.getElementById("hex-mode");
+const asmPanel = document.getElementById("asm-panel");
+const hexPanel = document.getElementById("hex-panel");
+const assembledPreview = document.getElementById("assembled-preview");
 const archSelect = document.getElementById("arch-select");
 const cacheStatus = document.getElementById("cache-status");
 const traceTab = document.getElementById("trace-tab");
@@ -22,6 +29,7 @@ const THEME_STORAGE_KEY = "uica-theme";
 const THEMES = ["system", "light", "dark"];
 let Module = null;
 let manifest = null;
+let inputMode = "asm";
 
 function themeLabel(theme) {
 	return `Switch color scheme (currently ${theme} mode)`;
@@ -78,6 +86,69 @@ function selectTab(name) {
 	jsonPanel.classList.toggle("active", !traceActive);
 }
 
+function setInputMode(mode) {
+	inputMode = mode === "hex" ? "hex" : "asm";
+	const asmActive = inputMode === "asm";
+	asmMode.classList.toggle("active", asmActive);
+	hexMode.classList.toggle("active", !asmActive);
+	asmMode.setAttribute("aria-checked", String(asmActive));
+	hexMode.setAttribute("aria-checked", String(!asmActive));
+	asmMode.tabIndex = asmActive ? 0 : -1;
+	hexMode.tabIndex = asmActive ? -1 : 0;
+	asmPanel.hidden = !asmActive;
+	hexPanel.hidden = asmActive;
+	assembledPreview.hidden = true;
+	assembledPreview.textContent = "";
+}
+
+function previewHex(hex) {
+	if (!hex) {
+		assembledPreview.hidden = true;
+		assembledPreview.textContent = "";
+		return;
+	}
+	assembledPreview.textContent = `Assembled: ${hex}`;
+	assembledPreview.hidden = false;
+}
+
+async function getInputHex() {
+	previewHex("");
+	if (inputMode === "hex") {
+		return hexInput.value;
+	}
+	status.textContent = "Assembling...";
+	const assembled = await assembleNasm(asmInput.value);
+	previewHex(assembled.hex);
+	return assembled.hex;
+}
+
+function focusInputMode(mode) {
+	if (mode === "asm") {
+		asmMode.focus();
+	} else {
+		hexMode.focus();
+	}
+}
+
+function handleInputModeKeydown(event, mode) {
+	if (
+		event.key === "ArrowLeft" ||
+		event.key === "ArrowUp" ||
+		event.key === "ArrowRight" ||
+		event.key === "ArrowDown"
+	) {
+		event.preventDefault();
+		const nextMode = mode === "asm" ? "hex" : "asm";
+		setInputMode(nextMode);
+		focusInputMode(nextMode);
+		return;
+	}
+	if (event.key === " " || event.key === "Enter") {
+		event.preventDefault();
+		setInputMode(mode);
+	}
+}
+
 function callRun(request, uipackBytes) {
 	const requestJson = JSON.stringify(request);
 	const requestLen = Module.lengthBytesUTF8(requestJson) + 1;
@@ -100,6 +171,8 @@ function callRun(request, uipackBytes) {
 
 async function runAnalyze() {
 	button.disabled = true;
+	asmMode.disabled = true;
+	hexMode.disabled = true;
 	status.textContent = "Loading UIPack...";
 	try {
 		const arch = archSelect.value;
@@ -108,10 +181,11 @@ async function runAnalyze() {
 				cacheStatus.textContent = message;
 			},
 		});
+		const inputHex = await getInputHex();
 		status.textContent = "Analyzing...";
 		const response = callRun(
 			{
-				hex: hexInput.value,
+				hex: inputHex,
 				arch,
 				invocation: { arch },
 			},
@@ -129,11 +203,13 @@ async function runAnalyze() {
 		selectTab("trace");
 	} catch (error) {
 		traceFrame.srcdoc = "";
-		output.textContent = String(error);
+		output.textContent = error instanceof Error ? error.message : String(error);
 		status.textContent = "Analysis failed";
 		selectTab("json");
 	} finally {
 		button.disabled = false;
+		asmMode.disabled = false;
+		hexMode.disabled = false;
 	}
 }
 
@@ -142,6 +218,15 @@ button.addEventListener("click", () => {
 });
 traceTab.addEventListener("click", () => selectTab("trace"));
 jsonTab.addEventListener("click", () => selectTab("json"));
+asmMode.addEventListener("click", () => setInputMode("asm"));
+hexMode.addEventListener("click", () => setInputMode("hex"));
+asmMode.addEventListener("keydown", (event) =>
+	handleInputModeKeydown(event, "asm"),
+);
+hexMode.addEventListener("keydown", (event) =>
+	handleInputModeKeydown(event, "hex"),
+);
+setInputMode("asm");
 themeToggle.addEventListener("click", () => applyTheme(nextTheme()));
 
 boot();

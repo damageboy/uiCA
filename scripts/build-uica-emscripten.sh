@@ -6,6 +6,44 @@ OUT_DIR="${1:-$ROOT_DIR/dist/emscripten}"
 XED_OUT_DIR="${UICA_EMSCRIPTEN_XED_OUT_DIR:-$ROOT_DIR/target/xed-emscripten}"
 XED_INSTALL_DIR="${UICA_EMSCRIPTEN_XED_DIR:-$XED_OUT_DIR/install}"
 TARGET_DIR="$ROOT_DIR/target/wasm32-unknown-emscripten/release"
+XED_CACHE_KEY_FILE="$XED_OUT_DIR/cache-key.txt"
+
+hash_stdin() {
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum | awk '{print $1}'
+	elif command -v shasum >/dev/null 2>&1; then
+		shasum -a 256 | awk '{print $1}'
+	else
+		echo "sha256sum or shasum not found" >&2
+		exit 127
+	fi
+}
+
+hash_file() {
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "$1" | awk '{print $1}'
+	elif command -v shasum >/dev/null 2>&1; then
+		shasum -a 256 "$1" | awk '{print $1}'
+	else
+		echo "sha256sum or shasum not found" >&2
+		exit 127
+	fi
+}
+
+xed_cache_key() {
+	{
+		hash_file "$ROOT_DIR/scripts/build-xed-emscripten.sh"
+		emcc --version | head -n 1
+		git -C "$ROOT_DIR/XED-to-XML" rev-parse HEAD 2>/dev/null || true
+		git -C "$ROOT_DIR/mbuild" rev-parse HEAD 2>/dev/null || true
+	} | hash_stdin
+}
+
+xed_cache_valid() {
+	[[ -n "${UICA_EMSCRIPTEN_XED_DIR:-}" ]] && return 0
+	[[ -f "$XED_CACHE_KEY_FILE" ]] || return 1
+	[[ "$(cat "$XED_CACHE_KEY_FILE")" == "$(xed_cache_key)" ]]
+}
 
 require_tool() {
 	local tool="$1"
@@ -27,9 +65,11 @@ if ! rustup target list --installed | grep -qx 'wasm32-unknown-emscripten'; then
 	exit 1
 fi
 
-if [[ ! -f "$XED_INSTALL_DIR/include/xed/xed-interface.h" || ! -f "$XED_INSTALL_DIR/lib/libxed.a" ]]; then
+if [[ ! -f "$XED_INSTALL_DIR/include/xed/xed-interface.h" || ! -f "$XED_INSTALL_DIR/lib/libxed.a" ]] || ! xed_cache_valid; then
 	"$ROOT_DIR/scripts/build-xed-emscripten.sh"
 	XED_INSTALL_DIR="$(cat "$XED_OUT_DIR/xed-dir.txt")"
+else
+	printf 'Reusing cached Emscripten XED build at %s\n' "$XED_INSTALL_DIR"
 fi
 
 export UICA_EMSCRIPTEN_XED_DIR="$XED_INSTALL_DIR"

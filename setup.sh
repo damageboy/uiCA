@@ -10,5 +10,5 @@ rm -rf .git/modules/*
 
 wget https://www.uops.info/instructions.xml || exit 1
 ./convertXML.py instructions.xml || exit 1
-cargo run -p uica-data-gen -- instructions.xml rust/uica-data/generated || exit 1
+cargo run -r -p uica-data-gen -- instructions.xml rust/uica-data/generated || exit 1
 rm instructions.xml

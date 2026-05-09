@@ -39,9 +39,11 @@ wasm decoded-IR input
       -> uica-core::engine_with_decoded_uipack_runtime
       -> JSON string
 
-Emscripten raw-byte input
+Emscripten raw-byte/assembly input
   -> index.html fetches shared data/manifest.json + data/arch/*.uipack
       -> browser Cache API stores selected UIPack
+      -> index.html optionally assembles NASM syntax in a browser Worker
+      -> NASM wasm emits raw x86-64 bytes for flat binary input
       -> uica_emscripten.js calls uica_run JSON/bytes ABI
       -> XED decodes raw x86-64 bytes
       -> uica-core::engine_output_with_uipack_runtime(include_reports=true)
@@ -55,6 +57,7 @@ Emscripten raw-byte input
 - Rust toolchain (cargo)
 - For pure wasm build: `wasm-pack` + `wasm32-unknown-unknown` target
 - For Emscripten/XED web build: active emsdk (`emcc`, `em++`, `emar`, `emranlib`) + `wasm32-unknown-emscripten` target
+- Node.js for web smoke scripts
 - Python env for verification harness
 - Intel XED submodule initialized (`git submodule update --init`). Native Rust builds compile/link the repo-local XED library automatically through `uica-xed-sys` when needed.
 
@@ -174,6 +177,9 @@ Pure wasm output:
 
 ```text
 dist/test-pure-wasm.html
+dist/pure-wasm.js
+dist/uipack-cache.js
+dist/style.css
 dist/pkg/uica_wasm.js
 dist/pkg/uica_wasm_bg.wasm
 dist/data/manifest.json
@@ -187,11 +193,12 @@ Pure wasm API:
 - `analyze_hex(hex, arch)` validates hex, then returns an XED-required error
   in this target.
 
-#### Option 3: Emscripten/XED raw-byte web build
+#### Option 3: Emscripten/XED raw-byte/assembly web build
 
 Use this for the main browser UI served at `index.html`. This target builds XED
-with Emscripten, builds Rust for `wasm32-unknown-emscripten`, links both with
-`emcc`, and exposes one JS-facing `uica_run` JSON/bytes ABI.
+with Emscripten, builds Rust for `wasm32-unknown-emscripten`, builds NASM for
+browser-side assembly, links Rust/XED with `emcc`, and exposes one JS-facing
+`uica_run` JSON/bytes ABI.
 
 Install/activate emsdk and target:
 
@@ -233,15 +240,15 @@ scripts/build-uica-emscripten.sh dist/emscripten
 scripts/smoke-emscripten-exports.sh dist/emscripten
 ```
 
-Expected Emscripten artifacts:
+Expected Emscripten-only artifacts:
 
 ```text
 dist/emscripten/uica_emscripten.js
 dist/emscripten/uica_emscripten.wasm
 ```
 
-Build complete web site, including pure wasm, Emscripten/XED wasm, static files,
-and `.uipack` data:
+Build complete web site, including pure wasm, Emscripten/XED wasm, NASM wasm,
+static files, and `.uipack` data:
 
 ```bash
 ./scripts/build-web.sh
@@ -260,15 +267,19 @@ Open:
 http://127.0.0.1:8000/
 ```
 
+The main page defaults to **Assembly** input. Assembly is NASM syntax, wrapped
+as a 64-bit flat binary with `BITS 64` and `DEFAULT REL`, then passed to uiCA as
+raw bytes. **Hex** mode bypasses NASM and sends bytes directly.
+
 Smoke input:
 
 ```text
 Microarchitecture: SKL
-Hex: 48 01 d8
+Assembly: add rax, rbx
 ```
 
-The main page downloads/caches the selected UIPack, calls
-`dist/emscripten/uica_emscripten.js`, and displays:
+The main page downloads/caches the selected UIPack, optionally assembles NASM
+input, calls `dist/emscripten/uica_emscripten.js`, and displays:
 
 - **Trace** tab: Rust-generated HTML execution trace in a sandboxed iframe.
 - **JSON** tab: formatted `UicaResult` JSON.
@@ -289,15 +300,20 @@ and enable HTTPS.
 
 Outputs in `dist/`:
 
-- `dist/index.html` (Emscripten/XED raw-byte UI)
+- `dist/index.html` (Emscripten/XED raw-byte/assembly UI)
 - `dist/test-pure-wasm.html` (pure wasm decoded-IR smoke page)
 - `dist/main.js`
 - `dist/pure-wasm.js`
 - `dist/uipack-cache.js`
 - `dist/style.css`
+- `dist/nasm-assemble.js`
+- `dist/nasm-worker.js`
 - `dist/pkg/*` (pure wasm-pack output)
 - `dist/emscripten/uica_emscripten.js`
 - `dist/emscripten/uica_emscripten.wasm`
+- `dist/nasm/nasm.js`
+- `dist/nasm/nasm.wasm`
+- `dist/nasm/LICENSE`
 - `dist/data/manifest.json`
 - `dist/data/arch/*.uipack`
 

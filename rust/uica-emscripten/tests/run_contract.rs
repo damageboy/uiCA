@@ -3,7 +3,8 @@ use serde_json::Value;
 #[test]
 fn run_reports_invalid_hex_as_json_error() {
     let pack = include_bytes!("../../uica-data/generated/arch/SKL.uipack");
-    let output = uica_emscripten::run_request_json(r#"{"hex":"9z","arch":"SKL"}"#, pack);
+    let output =
+        uica_emscripten::run_analysis_with_request_json(r#"{"hex":"9z","arch":"SKL"}"#, pack);
     let value: Value = serde_json::from_str(&output).unwrap();
 
     assert_eq!(value["schema_version"], "uica-error-v1");
@@ -17,7 +18,8 @@ fn run_reports_invalid_hex_as_json_error() {
 #[test]
 fn run_rejects_uipack_arch_mismatch() {
     let pack = include_bytes!("../../uica-data/generated/arch/SKL.uipack");
-    let output = uica_emscripten::run_request_json(r#"{"hex":"48 01 d8","arch":"HSW"}"#, pack);
+    let output =
+        uica_emscripten::run_analysis_with_request_json(r#"{"hex":"48 01 d8","arch":"HSW"}"#, pack);
     let value: Value = serde_json::from_str(&output).unwrap();
 
     assert_eq!(value["schema_version"], "uica-error-v1");
@@ -31,7 +33,8 @@ fn run_rejects_uipack_arch_mismatch() {
 #[test]
 fn run_decodes_hex_and_returns_uica_result() {
     let pack = include_bytes!("../../uica-data/generated/arch/SKL.uipack");
-    let output = uica_emscripten::run_request_json(r#"{"hex":"48 01 d8","arch":"SKL"}"#, pack);
+    let output =
+        uica_emscripten::run_analysis_with_request_json(r#"{"hex":"48 01 d8","arch":"SKL"}"#, pack);
     let value: Value = serde_json::from_str(&output).unwrap();
 
     assert_eq!(value["schema_version"], "uica-web-result-v1");
@@ -45,7 +48,8 @@ fn run_decodes_hex_and_returns_uica_result() {
 #[test]
 fn run_returns_web_envelope_with_trace_html() {
     let pack = include_bytes!("../../uica-data/generated/arch/SKL.uipack");
-    let output = uica_emscripten::run_request_json(r#"{"hex":"48 01 d8","arch":"SKL"}"#, pack);
+    let output =
+        uica_emscripten::run_analysis_with_request_json(r#"{"hex":"48 01 d8","arch":"SKL"}"#, pack);
     let value: Value = serde_json::from_str(&output).unwrap();
 
     assert_eq!(value["schema_version"], "uica-web-result-v1");

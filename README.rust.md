@@ -421,11 +421,11 @@ Native Rust binary:
 
 ### `uica-wasm`
 
-Wasm API for Rust-only consumers:
+Wasm API for Rust-only consumers. Public surface by caller:
 
-- `analyze_decoded_json_with_uipack(decoded_json, arch, uipack_bytes) -> Result<String, String>`
-- `analyze_decoded_json(decoded_json, arch) -> Result<String, String>` keeps the no-pack compatibility path
-- `analyze_hex(hex, arch) -> Result<String, String>` validates hex then returns an XED-required error in this target
+- Pure wasm/browser callers: `analyze_decoded_json_with_uipack(decoded_json, arch, uipack_bytes) -> Result<String, String>`. JavaScript supplies decoded IR plus manifest-selected `.uipack` bytes; this is the preferred non-XED wasm API.
+- Rust/native smoke tests and legacy/transitional callers: `analyze_decoded_json(decoded_json, arch) -> Result<String, String>`. This keeps the no-pack compatibility path and may fall back when default data is absent.
+- Compatibility probes of the older/raw-byte shape: `analyze_hex(hex, arch) -> Result<String, String>`. It validates hex then returns an XED-required error; real raw-byte browser analysis belongs to `uica-emscripten`.
 
 ### `uica-emscripten`
 
@@ -433,6 +433,7 @@ Emscripten/XED web binary:
 
 - links Rust uiCA with Emscripten-built XED
 - exposes `uica_run(request_json, uipack_bytes)` through a C ABI consumed by `web/main.js`
+- JS call chain: `web/main.js::callRun` -> `Module._uica_run` -> `rust/uica-emscripten/src/main.rs::uica_run` -> `uica_emscripten::run_request_json` in `src/lib.rs`
 - accepts raw x86-64 hex, arch/options, and caller-supplied UIPack bytes
 - returns `uica-web-result-v1` containing `trace_html` plus nested `UicaResult` JSON
 

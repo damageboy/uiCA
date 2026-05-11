@@ -111,10 +111,7 @@ function applyDeepLinkSelection() {
 	}
 
 	return {
-		shouldAnalyze: shouldAutoAnalyzeDeepLink(
-			selection,
-			manifest.architectures,
-		),
+		shouldAnalyze: shouldAutoAnalyzeDeepLink(selection, manifest.architectures),
 		warning,
 	};
 }
@@ -270,6 +267,12 @@ function handleInputModeKeydown(event, mode) {
 	}
 }
 
+// Bridge into Rust/Emscripten ABI.
+//
+// Emscripten exposes the Rust `#[no_mangle] extern "C" fn uica_run` symbol
+// as `Module._uica_run`. That entry point lives in
+// `rust/uica-emscripten/src/main.rs`, then delegates to
+// `uica_emscripten::run_request_json` in `rust/uica-emscripten/src/lib.rs`.
 function callRun(request, uipackBytes) {
 	const requestJson = JSON.stringify(request);
 	const requestLen = Module.lengthBytesUTF8(requestJson) + 1;

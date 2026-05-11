@@ -28,7 +28,16 @@ struct WebRunResult {
     regular_html: String,
 }
 
-pub fn run_request_json(request_json: &str, uipack_bytes: &[u8]) -> String {
+/// Handles the JSON request passed through `uica_run` / `Module._uica_run`.
+///
+/// Caller chain:
+/// `web/main.js::callRun` -> Emscripten `Module._uica_run` ->
+/// `rust/uica-emscripten/src/main.rs::uica_run` -> this function.
+///
+/// This layer owns uiCA-specific request parsing, UIPack validation, XED-backed
+/// decode/analysis, and web response JSON generation. ABI pointer ownership stays
+/// in `main.rs`.
+pub fn run_analysis_with_request_json(request_json: &str, uipack_bytes: &[u8]) -> String {
     match run_request_json_inner(request_json, uipack_bytes) {
         Ok(json) => json,
         Err(error) => error_json(error),
@@ -46,9 +55,9 @@ fn run_request_json_inner(request_json: &str, uipack_bytes: &[u8]) -> Result<Str
     };
     invocation.arch = arch;
 
-    let runtime = MappedUiPackRuntime::from_bytes_verified(uipack_bytes.to_vec())
+    let uipack = MappedUiPackRuntime::from_bytes_verified(uipack_bytes.to_vec())
         .map_err(|err| err.to_string())?;
-    let pack_arch = runtime
+    let pack_arch = uipack
         .view()
         .map_err(|err| err.to_string())?
         .arch()
@@ -61,7 +70,7 @@ fn run_request_json_inner(request_json: &str, uipack_bytes: &[u8]) -> Result<Str
     }
 
     let output =
-        uica_core::engine::engine_output_with_uipack_runtime(&code, &invocation, &runtime, true)?;
+        uica_core::engine::engine_output_with_uipack_runtime(&code, &invocation, &uipack, true)?;
     let reports = output
         .reports
         .as_ref()

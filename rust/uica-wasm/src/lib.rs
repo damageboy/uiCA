@@ -1,3 +1,20 @@
+//! Public wasm-bindgen facade for uiCA analysis without embedding XED.
+//!
+//! Audience map:
+//!
+//! - Pure wasm/browser callers use [`analyze_decoded_json_with_uipack`]. They decode
+//!   instructions elsewhere, fetch manifest-selected `.uipack` bytes, and pass both
+//!   into this crate.
+//! - Rust/native smoke tests and transitional callers may use
+//!   [`analyze_decoded_json`]. It depends on core default data lookup and can fall
+//!   back when data is absent, so it is not the preferred browser API.
+//! - Raw-byte browser analysis with XED belongs to sibling `uica-emscripten`, not
+//!   this crate. [`analyze_hex`] exists only as a wasm-bindgen-compatible stub for
+//!   callers probing this older/raw-byte shape.
+//!
+//! All exported functions return JSON strings on success and JavaScript exceptions
+//! (via `Result<_, String>`) on failure in wasm-bindgen builds.
+
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
@@ -6,6 +23,18 @@ use uica_data::MappedUiPackRuntime;
 use uica_decode_ir::DecodedInstruction;
 use uica_model::Invocation;
 
+/// Analyze pre-decoded instruction IR using core's default data lookup.
+///
+/// Who uses this: Rust/native smoke tests and legacy/transitional callers that
+/// already have `DecodedInstruction` JSON but do not control `.uipack` bytes.
+///
+/// Pure wasm/browser code should prefer [`analyze_decoded_json_with_uipack`]
+/// because that path makes the manifest-selected `.uipack` explicit. This
+/// function may fall back to a reduced result when default data is unavailable.
+///
+/// `decoded_json` must be a JSON array of `uica_decode_ir::DecodedInstruction`.
+/// `arch` is the requested microarchitecture, e.g. `"SKL"`. The returned string
+/// is serialized `uica_model::UicaResult` JSON.
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub fn analyze_decoded_json(decoded_json: &str, arch: &str) -> Result<String, String> {
     let decoded: Vec<DecodedInstruction> =
@@ -19,6 +48,17 @@ pub fn analyze_decoded_json(decoded_json: &str, arch: &str) -> Result<String, St
         .map_err(|err| err.to_string())
 }
 
+/// Analyze pre-decoded instruction IR with caller-supplied `.uipack` bytes.
+///
+/// Who uses this: pure wasm/browser integrations produced by `wasm-bindgen`,
+/// including `web/pure-wasm.js`, where JavaScript fetches/caches architecture
+/// packs and supplies decoded IR. This is the preferred public API for non-XED
+/// wasm execution.
+///
+/// `decoded_json` must be a JSON array of `uica_decode_ir::DecodedInstruction`.
+/// `arch` must match the architecture encoded in `uipack_bytes`; mismatches are
+/// rejected before analysis. The returned string is serialized
+/// `uica_model::UicaResult` JSON.
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub fn analyze_decoded_json_with_uipack(
     decoded_json: &str,
@@ -50,6 +90,17 @@ pub fn analyze_decoded_json_with_uipack(
     serde_json::to_string(&output.result).map_err(|err| err.to_string())
 }
 
+/// Validate raw hex input, then report that XED-backed wasm is required.
+///
+/// Who uses this: compatibility callers probing the old/raw-byte wasm API shape.
+/// It is not a pure wasm analysis path. Browser flows that need raw x86 bytes
+/// should use the Emscripten/XED build in sibling crate `uica-emscripten`; pure
+/// wasm callers should decode elsewhere and use
+/// [`analyze_decoded_json_with_uipack`].
+///
+/// Whitespace is ignored while validating `hex_bytes`. After successful hex
+/// validation, this always returns an error explaining that raw-byte analysis
+/// requires an XED-enabled wasm build.
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub fn analyze_hex(hex_bytes: &str, _arch: &str) -> Result<String, String> {
     let _code = decode_hex(hex_bytes)?;

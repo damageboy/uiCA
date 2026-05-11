@@ -5,8 +5,8 @@ use uica_data::{
     encode_uipack, load_pack, load_pack_bytes, load_uipack, load_uipack_bytes,
     load_uipack_bytes_verified, load_uipack_verified, read_uipack_header,
     read_uipack_header_verified, DataPack, DataPackIndex, InstructionRecord, LatencyRecord,
-    MappedUiPack, MappedUiPackRuntime, OperandRecord, PerfRecord, DATAPACK_SCHEMA_VERSION,
-    UIPACK_MAGIC, UIPACK_VERSION,
+    MappedUiPack, MappedUiPackRuntime, OperandRecord, PerfRecord, PerfVariantRecord,
+    DATAPACK_SCHEMA_VERSION, UIPACK_MAGIC, UIPACK_VERSION,
 };
 
 const CHECKSUM_OFFSET: usize = 24;
@@ -192,6 +192,229 @@ fn sample_pack() -> DataPack {
             },
         ],
     }
+}
+
+fn sample_pack_with_nested_fields() -> DataPack {
+    let ports = BTreeMap::from([("0".to_string(), 1), ("1".to_string(), 1)]);
+
+    DataPack {
+        schema_version: DATAPACK_SCHEMA_VERSION.to_string(),
+        all_ports: vec!["0".to_string(), "1".to_string()],
+        alu_ports: vec!["0".to_string(), "1".to_string()],
+        instructions: vec![InstructionRecord {
+            arch: "SKL".to_string(),
+            iform: "NESTED_FIELDS".to_string(),
+            string: "NESTED".to_string(),
+            all_ports: vec!["0".to_string(), "1".to_string()],
+            alu_ports: vec!["0".to_string(), "1".to_string()],
+            locked: false,
+            xml_attrs: BTreeMap::from([
+                ("agen".to_string(), "1".to_string()),
+                ("immzero".to_string(), "true".to_string()),
+            ]),
+            imm_zero: true,
+            perf: PerfRecord {
+                operands: vec![
+                    OperandRecord {
+                        name: "REG0".to_string(),
+                        r#type: "reg".to_string(),
+                        read: true,
+                        write: false,
+                        implicit: false,
+                        flags: vec![],
+                        flags_read: vec![],
+                        flags_write: vec![],
+                        mem_base: None,
+                        mem_index: None,
+                        mem_scale: None,
+                        mem_disp: None,
+                        is_agen: false,
+                        mem_operand_role: None,
+                    },
+                    OperandRecord {
+                        name: "REG1".to_string(),
+                        r#type: "reg".to_string(),
+                        read: false,
+                        write: true,
+                        implicit: false,
+                        flags: vec![],
+                        flags_read: vec![],
+                        flags_write: vec![],
+                        mem_base: None,
+                        mem_index: None,
+                        mem_scale: None,
+                        mem_disp: None,
+                        is_agen: false,
+                        mem_operand_role: None,
+                    },
+                    OperandRecord {
+                        name: "FLAGS".to_string(),
+                        r#type: "flags".to_string(),
+                        read: true,
+                        write: true,
+                        implicit: true,
+                        flags: vec!["C".to_string(), "SPAZO".to_string()],
+                        flags_read: vec!["C".to_string()],
+                        flags_write: vec!["SPAZO".to_string()],
+                        mem_base: None,
+                        mem_index: None,
+                        mem_scale: None,
+                        mem_disp: None,
+                        is_agen: false,
+                        mem_operand_role: None,
+                    },
+                    OperandRecord {
+                        name: "AGEN0".to_string(),
+                        r#type: "mem".to_string(),
+                        read: true,
+                        write: false,
+                        implicit: false,
+                        flags: vec![],
+                        flags_read: vec![],
+                        flags_write: vec![],
+                        mem_base: Some("RAX".to_string()),
+                        mem_index: Some("RBX".to_string()),
+                        mem_scale: Some(4),
+                        mem_disp: Some(16),
+                        is_agen: true,
+                        mem_operand_role: Some("agen".to_string()),
+                    },
+                ],
+                latencies: vec![LatencyRecord {
+                    start_op: "REG0".to_string(),
+                    target_op: "REG1".to_string(),
+                    cycles: 1,
+                    cycles_addr: Some(2),
+                    cycles_addr_index: Some(3),
+                    cycles_mem: Some(4),
+                    cycles_same_reg: Some(0),
+                }],
+                uops: 2,
+                retire_slots: 2,
+                uops_mite: 2,
+                uops_ms: 0,
+                tp: Some(0.5),
+                ports: ports.clone(),
+                variants: BTreeMap::from([(
+                    "_indexed".to_string(),
+                    PerfVariantRecord {
+                        uops: Some(2),
+                        retire_slots: Some(2),
+                        uops_mite: Some(2),
+                        uops_ms: Some(0),
+                        tp: Some(0.5),
+                        ports: Some(ports),
+                        div_cycles: Some(3),
+                        complex_decoder: Some(true),
+                        n_available_simple_decoders: Some(1),
+                    },
+                )]),
+                div_cycles: 3,
+                may_be_eliminated: false,
+                complex_decoder: true,
+                n_available_simple_decoders: 1,
+                lcp_stall: false,
+                implicit_rsp_change: 0,
+                can_be_used_by_lsd: true,
+                cannot_be_in_dsb_due_to_jcc_erratum: false,
+                no_micro_fusion: false,
+                no_macro_fusion: false,
+                macro_fusible_with: vec!["JZ".to_string(), "JNZ".to_string()],
+            },
+        }],
+    }
+}
+
+#[test]
+fn uipack_nested_payloads_are_binary_not_json() {
+    let pack = sample_pack_with_nested_fields();
+    let bytes = encode_uipack(&pack, "SKL").unwrap();
+    let haystack = String::from_utf8_lossy(&bytes);
+
+    for marker in [
+        "\"start_op\"",
+        "\"target_op\"",
+        "\"cycles_same_reg\"",
+        "\"mem_operand_role\"",
+        "\"macro_fusible_with\"",
+        "\"JZ\"",
+        "\"JNZ\"",
+        "\"agen\"",
+        "\"immzero\"",
+    ] {
+        assert!(
+            !haystack.contains(marker),
+            "UIPack payload still contains JSON field-name marker {marker}"
+        );
+    }
+}
+
+#[test]
+fn roundtrips_uipack_with_all_nested_field_categories() {
+    let pack = sample_pack_with_nested_fields();
+    let bytes = encode_uipack(&pack, "SKL").unwrap();
+    let decoded = load_uipack_bytes(&bytes).unwrap();
+
+    assert_eq!(decoded, pack);
+
+    let instruction = &decoded.instructions[0];
+    assert_eq!(instruction.xml_attrs.get("agen"), Some(&"1".to_string()));
+    assert_eq!(
+        instruction.xml_attrs.get("immzero"),
+        Some(&"true".to_string())
+    );
+    assert_eq!(
+        instruction.perf.macro_fusible_with,
+        vec!["JZ".to_string(), "JNZ".to_string()]
+    );
+
+    let operands = &instruction.perf.operands;
+    assert_eq!(operands.len(), 4);
+    assert_eq!(operands[0].name, "REG0");
+    assert_eq!(operands[0].r#type, "reg");
+    assert_eq!(operands[1].name, "REG1");
+    assert_eq!(operands[1].r#type, "reg");
+
+    let flags = &operands[2];
+    assert_eq!(flags.r#type, "flags");
+    assert_eq!(flags.flags, vec!["C".to_string(), "SPAZO".to_string()]);
+    assert_eq!(flags.flags_read, vec!["C".to_string()]);
+    assert_eq!(flags.flags_write, vec!["SPAZO".to_string()]);
+    assert_eq!(flags.mem_base, None);
+    assert!(!flags.is_agen);
+    assert_eq!(flags.mem_operand_role, None);
+
+    let agen = &operands[3];
+    assert_eq!(agen.name, "AGEN0");
+    assert_eq!(agen.r#type, "mem");
+    assert_eq!(agen.mem_base.as_deref(), Some("RAX"));
+    assert_eq!(agen.mem_index.as_deref(), Some("RBX"));
+    assert_eq!(agen.mem_scale, Some(4));
+    assert_eq!(agen.mem_disp, Some(16));
+    assert!(agen.is_agen);
+    assert_eq!(agen.mem_operand_role.as_deref(), Some("agen"));
+    assert!(agen.flags.is_empty());
+
+    assert_eq!(instruction.perf.latencies.len(), 1);
+    let latency = &instruction.perf.latencies[0];
+    assert_eq!(latency.start_op, "REG0");
+    assert_eq!(latency.target_op, "REG1");
+    assert_eq!(latency.cycles, 1);
+    assert_eq!(latency.cycles_addr, Some(2));
+    assert_eq!(latency.cycles_addr_index, Some(3));
+    assert_eq!(latency.cycles_mem, Some(4));
+    assert_eq!(latency.cycles_same_reg, Some(0));
+
+    let variant = instruction
+        .perf
+        .variants
+        .get("_indexed")
+        .expect("indexed variant");
+    assert_eq!(variant.ports.as_ref().unwrap().get("0"), Some(&1));
+    assert_eq!(variant.ports.as_ref().unwrap().get("1"), Some(&1));
+    assert_eq!(variant.div_cycles, Some(3));
+    assert_eq!(variant.complex_decoder, Some(true));
+    assert_eq!(variant.n_available_simple_decoders, Some(1));
 }
 
 #[test]

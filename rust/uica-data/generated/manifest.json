@@ -1,0 +1,244 @@
+{
+  "schema_version": "uica-datapack-manifest-v2",
+  "uipack_version": 9,
+  "architectures": {
+    "ADL-E": {
+      "path": "arch/ADL-E.uipack",
+      "size": 1487480,
+      "checksum_kind": "fnv1a64",
+      "checksum": "7b21669501549f0c",
+      "record_count": 3788
+    },
+    "ADL-P": {
+      "path": "arch/ADL-P.uipack",
+      "size": 7749432,
+      "checksum_kind": "fnv1a64",
+      "checksum": "c50da531202e6283",
+      "record_count": 15926
+    },
+    "AMT": {
+      "path": "arch/AMT.uipack",
+      "size": 938284,
+      "checksum_kind": "fnv1a64",
+      "checksum": "e65d7140acc5c23c",
+      "record_count": 2421
+    },
+    "ARL-E": {
+      "path": "arch/ARL-E.uipack",
+      "size": 1547484,
+      "checksum_kind": "fnv1a64",
+      "checksum": "8c31fc7d22671288",
+      "record_count": 3909
+    },
+    "ARL-P": {
+      "path": "arch/ARL-P.uipack",
+      "size": 1682896,
+      "checksum_kind": "fnv1a64",
+      "checksum": "9e228076844f8dc0",
+      "record_count": 3909
+    },
+    "BDW": {
+      "path": "arch/BDW.uipack",
+      "size": 1608892,
+      "checksum_kind": "fnv1a64",
+      "checksum": "99024255090bbeff",
+      "record_count": 3707
+    },
+    "BNL": {
+      "path": "arch/BNL.uipack",
+      "size": 881576,
+      "checksum_kind": "fnv1a64",
+      "checksum": "02275f50372a3953",
+      "record_count": 2276
+    },
+    "CFL": {
+      "path": "arch/CFL.uipack",
+      "size": 1630736,
+      "checksum_kind": "fnv1a64",
+      "checksum": "003638e243a270f0",
+      "record_count": 3774
+    },
+    "CLX": {
+      "path": "arch/CLX.uipack",
+      "size": 6210348,
+      "checksum_kind": "fnv1a64",
+      "checksum": "7569b7aa6e926bb0",
+      "record_count": 12985
+    },
+    "CNL": {
+      "path": "arch/CNL.uipack",
+      "size": 6226068,
+      "checksum_kind": "fnv1a64",
+      "checksum": "a6b6d244d0378908",
+      "record_count": 13027
+    },
+    "CON": {
+      "path": "arch/CON.uipack",
+      "size": 927712,
+      "checksum_kind": "fnv1a64",
+      "checksum": "95efccc6959a48ec",
+      "record_count": 2270
+    },
+    "EMR": {
+      "path": "arch/EMR.uipack",
+      "size": 7746124,
+      "checksum_kind": "fnv1a64",
+      "checksum": "135d946a4c7a7f54",
+      "record_count": 15921
+    },
+    "GLM": {
+      "path": "arch/GLM.uipack",
+      "size": 962932,
+      "checksum_kind": "fnv1a64",
+      "checksum": "43b027eb49f697e9",
+      "record_count": 2505
+    },
+    "GLP": {
+      "path": "arch/GLP.uipack",
+      "size": 963192,
+      "checksum_kind": "fnv1a64",
+      "checksum": "2d0e54f4a19c6e9b",
+      "record_count": 2506
+    },
+    "HSW": {
+      "path": "arch/HSW.uipack",
+      "size": 1607272,
+      "checksum_kind": "fnv1a64",
+      "checksum": "b5e6041a34191212",
+      "record_count": 3696
+    },
+    "ICL": {
+      "path": "arch/ICL.uipack",
+      "size": 6546840,
+      "checksum_kind": "fnv1a64",
+      "checksum": "20830d6ae23b2a75",
+      "record_count": 13666
+    },
+    "IVB": {
+      "path": "arch/IVB.uipack",
+      "size": 1357328,
+      "checksum_kind": "fnv1a64",
+      "checksum": "8f7295cae30f3a40",
+      "record_count": 3138
+    },
+    "KBL": {
+      "path": "arch/KBL.uipack",
+      "size": 1632888,
+      "checksum_kind": "fnv1a64",
+      "checksum": "ebc531f87f6f15e1",
+      "record_count": 3774
+    },
+    "MTL-E": {
+      "path": "arch/MTL-E.uipack",
+      "size": 1487480,
+      "checksum_kind": "fnv1a64",
+      "checksum": "23620a5271ba4b7c",
+      "record_count": 3788
+    },
+    "MTL-P": {
+      "path": "arch/MTL-P.uipack",
+      "size": 1645576,
+      "checksum_kind": "fnv1a64",
+      "checksum": "165fa218ea2abecb",
+      "record_count": 3788
+    },
+    "NHM": {
+      "path": "arch/NHM.uipack",
+      "size": 1030152,
+      "checksum_kind": "fnv1a64",
+      "checksum": "a2f689586f17ef25",
+      "record_count": 2398
+    },
+    "RKL": {
+      "path": "arch/RKL.uipack",
+      "size": 6563656,
+      "checksum_kind": "fnv1a64",
+      "checksum": "e3767992d0cf00fe",
+      "record_count": 13722
+    },
+    "SKL": {
+      "path": "arch/SKL.uipack",
+      "size": 1627768,
+      "checksum_kind": "fnv1a64",
+      "checksum": "4c116c11c7bbfe29",
+      "record_count": 3774
+    },
+    "SKX": {
+      "path": "arch/SKX.uipack",
+      "size": 6148876,
+      "checksum_kind": "fnv1a64",
+      "checksum": "d976df9d93368e55",
+      "record_count": 12877
+    },
+    "SNB": {
+      "path": "arch/SNB.uipack",
+      "size": 1352548,
+      "checksum_kind": "fnv1a64",
+      "checksum": "a30cfde7f90374e7",
+      "record_count": 3127
+    },
+    "TGL": {
+      "path": "arch/TGL.uipack",
+      "size": 6550344,
+      "checksum_kind": "fnv1a64",
+      "checksum": "7e64cefc386c0a09",
+      "record_count": 13688
+    },
+    "TRM": {
+      "path": "arch/TRM.uipack",
+      "size": 952152,
+      "checksum_kind": "fnv1a64",
+      "checksum": "0995e114c3bdbb29",
+      "record_count": 2460
+    },
+    "WOL": {
+      "path": "arch/WOL.uipack",
+      "size": 964504,
+      "checksum_kind": "fnv1a64",
+      "checksum": "1c8f3017bb5cd5c6",
+      "record_count": 2366
+    },
+    "WSM": {
+      "path": "arch/WSM.uipack",
+      "size": 1034816,
+      "checksum_kind": "fnv1a64",
+      "checksum": "4e3cdd0c5d61f5a8",
+      "record_count": 2412
+    },
+    "ZEN+": {
+      "path": "arch/ZEN+.uipack",
+      "size": 1477916,
+      "checksum_kind": "fnv1a64",
+      "checksum": "8298951ce48a066b",
+      "record_count": 3739
+    },
+    "ZEN2": {
+      "path": "arch/ZEN2.uipack",
+      "size": 1482504,
+      "checksum_kind": "fnv1a64",
+      "checksum": "e073c3379940ee23",
+      "record_count": 3742
+    },
+    "ZEN3": {
+      "path": "arch/ZEN3.uipack",
+      "size": 1493816,
+      "checksum_kind": "fnv1a64",
+      "checksum": "5177e75a3047e69d",
+      "record_count": 3754
+    },
+    "ZEN4": {
+      "path": "arch/ZEN4.uipack",
+      "size": 6200272,
+      "checksum_kind": "fnv1a64",
+      "checksum": "eb335d79614b6cd8",
+      "record_count": 13756
+    },
+    "ZEN5": {
+      "path": "arch/ZEN5.uipack",
+      "size": 6207004,
+      "checksum_kind": "fnv1a64",
+      "checksum": "364eb3cc2d9e2636",
+      "record_count": 13793
+    }
+  }
+}

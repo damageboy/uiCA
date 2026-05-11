@@ -176,7 +176,7 @@ where
         // Python parity: `getInstructions()` indexes uops.info data by exact
         // XED iform first (`archData.instrData.get(instrD['iform'], [])`). If
         // the decoded iform signature has no matching record (e.g. XED `VGPR`
-        // vs datapack `GPR` MULX), Python creates `UnknownInstr` instead of
+        // vs instruction-record `GPR` MULX), Python creates `UnknownInstr` instead of
         // falling back to a mnemonic-only record.
         return None;
     }

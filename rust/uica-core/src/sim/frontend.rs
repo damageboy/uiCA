@@ -10,6 +10,7 @@ use std::cell::RefCell;
 use std::collections::{HashSet, VecDeque};
 use std::rc::Rc;
 
+use crate::instruction_data::InstructionDataSource;
 use crate::micro_arch::MicroArchConfig;
 
 use super::cache_blocks::*;
@@ -25,7 +26,7 @@ use super::types::{
     InstrInstance, InstrTemplate, LaminatedUop, OperandKey, Uop, UopProperties, UopSource,
 };
 use super::uop_expand::{
-    apply_python_pop5c_decoder_shape, expand_instr_instance_to_lam_uops_with_storage,
+    apply_python_pop5c_decoder_shape, expand_instr_instance_to_lam_uops_with_data,
     instr_uses_indexed_addr, instr_uses_same_reg, perf_for_operands,
     perf_for_python_getinstructions, perf_uops_mite, python_decoder_shape_from_record,
     python_may_be_eliminated_for_getinstructions, record_may_be_eliminated,
@@ -35,10 +36,10 @@ use super::uop_storage::UopStorage;
 fn populate_instr_instance_metadata(
     instr_i: &mut InstrInstance,
     arch_name: &str,
-    pack_index: &uica_data::DataPackIndex<'_>,
+    instruction_data: InstructionDataSource<'_>,
     no_micro_fusion: bool,
     no_macro_fusion: bool,
-) {
+) -> Result<(), String> {
     let norm = crate::matcher::NormalizedInstrRef {
         mnemonic: &instr_i.mnemonic,
         decoded_iform: &instr_i.decoded_iform,
@@ -50,8 +51,9 @@ fn populate_instr_instance_metadata(
         xml_attrs: &instr_i.xml_attrs,
         agen: instr_i.agen.as_deref(),
     };
-    let candidates = pack_index.candidates_for(arch_name, &instr_i.mnemonic);
-    if let Some(record) = crate::matcher::match_instruction_record_iter(norm, candidates) {
+    let matched = instruction_data.match_record(arch_name, &instr_i.mnemonic, norm)?;
+    if let Some(record) = matched {
+        let record = &record;
         let arch = crate::micro_arch::get_micro_arch(arch_name);
         let perf = if let Some(arch) = arch.as_ref() {
             perf_for_python_getinstructions(
@@ -145,15 +147,16 @@ fn populate_instr_instance_metadata(
     // Keep structural exclusions that Python canBeUsedByLSD() enforces even
     // when older packs lack explicit metadata.
     instr_i.can_be_used_by_lsd &= instr_i.uops_ms == 0 && instr_i.implicit_rsp_change == 0;
+    Ok(())
 }
 
 fn populate_and_recompute_cache_blocks(
     cache_blocks: &mut [Vec<InstrInstance>],
     arch_name: &str,
-    pack_index: &uica_data::DataPackIndex<'_>,
+    instruction_data: InstructionDataSource<'_>,
     no_micro_fusion: bool,
     no_macro_fusion: bool,
-) {
+) -> Result<(), String> {
     let lengths: Vec<usize> = cache_blocks.iter().map(Vec::len).collect();
     let mut all: Vec<InstrInstance> = cache_blocks
         .iter()
@@ -163,10 +166,10 @@ fn populate_and_recompute_cache_blocks(
         populate_instr_instance_metadata(
             inst,
             arch_name,
-            pack_index,
+            instruction_data,
             no_micro_fusion,
             no_macro_fusion,
-        );
+        )?;
     }
     recompute_macro_fusion_and_is_last(&mut all);
 
@@ -175,6 +178,7 @@ fn populate_and_recompute_cache_blocks(
         *block = all[pos..pos + len].to_vec();
         pos += len;
     }
+    Ok(())
 }
 
 fn lam_idxs_for_block(block: &[InstrInstance], all_instances: &[InstrInstance]) -> Vec<Vec<u64>> {
@@ -292,47 +296,52 @@ pub struct FrontEnd<'a> {
     pub high8_reg_clean: std::collections::HashMap<String, bool>,
     pub reg_merge_issued_for: HashSet<u64>,
     pub uop_storage: UopStorage,
-    pub pack: &'a uica_data::DataPack,
-    pub pack_index: &'a uica_data::DataPackIndex<'a>,
+    pub all_ports: Vec<String>,
+    pub alu_ports: Vec<String>,
+    pub(crate) instruction_data: InstructionDataSource<'a>,
 }
 
 impl<'a> FrontEnd<'a> {
-    pub fn new(
-        arch: MicroArchConfig,
-        unroll: bool,
-        base_instructions: Vec<InstrInstance>,
-        alignment_offset: u32,
-        pack: &'a uica_data::DataPack,
-        pack_index: &'a uica_data::DataPackIndex<'a>,
-    ) -> Self {
-        Self::new_with_init_policy(
-            arch,
-            unroll,
-            base_instructions,
-            alignment_offset,
-            pack,
-            pack_index,
-            "diff",
-            false,
-            false,
-            false,
-        )
-    }
-
     #[allow(clippy::too_many_arguments)]
-    pub fn new_with_init_policy(
+    pub fn new_with_runtime(
         arch: MicroArchConfig,
         unroll: bool,
         base_instructions: Vec<InstrInstance>,
         alignment_offset: u32,
-        pack: &'a uica_data::DataPack,
-        pack_index: &'a uica_data::DataPackIndex<'a>,
+        runtime: &'a uica_data::MappedUiPackRuntime,
         init_policy: impl Into<String>,
         simple_front_end: bool,
         no_micro_fusion: bool,
         no_macro_fusion: bool,
-    ) -> Self {
+    ) -> Result<Self, String> {
+        Self::new_with_instruction_data(
+            arch,
+            unroll,
+            base_instructions,
+            alignment_offset,
+            InstructionDataSource::new(runtime),
+            init_policy,
+            simple_front_end,
+            no_micro_fusion,
+            no_macro_fusion,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_with_instruction_data(
+        arch: MicroArchConfig,
+        unroll: bool,
+        base_instructions: Vec<InstrInstance>,
+        alignment_offset: u32,
+        instruction_data: InstructionDataSource<'a>,
+        init_policy: impl Into<String>,
+        simple_front_end: bool,
+        no_micro_fusion: bool,
+        no_macro_fusion: bool,
+    ) -> Result<Self, String> {
         let init_policy = init_policy.into();
+        let all_ports = instruction_data.all_ports()?;
+        let alu_ports = instruction_data.alu_ports()?;
         let instr_templates = build_instruction_templates(&base_instructions);
         let instruction_queue = Rc::new(RefCell::new(VecDeque::<InstrInstance>::new()));
 
@@ -373,10 +382,10 @@ impl<'a> FrontEnd<'a> {
             populate_and_recompute_cache_blocks(
                 &mut first_round_blocks,
                 arch.name,
-                pack_index,
+                instruction_data,
                 no_micro_fusion,
                 no_macro_fusion,
-            );
+            )?;
 
             let test_instances: Vec<InstrInstance> = first_round_blocks
                 .iter()
@@ -423,7 +432,7 @@ impl<'a> FrontEnd<'a> {
         let mut frontend = Self {
             renamer: Renamer::new_with_init_policy(arch.clone(), init_policy.clone()),
             reorder_buffer: ReorderBuffer::new(arch.clone()),
-            scheduler: Scheduler::new(arch.clone(), pack.all_ports.clone()),
+            scheduler: Scheduler::new(arch.clone(), all_ports.clone()),
             decoder: Decoder::new(arch.clone(), instruction_queue.clone()),
             predecoder: PreDecoder::new(arch.clone(), instruction_queue),
             dsb: Dsb::new(arch.clone()),
@@ -457,8 +466,9 @@ impl<'a> FrontEnd<'a> {
             .collect(),
             reg_merge_issued_for: HashSet::new(),
             uop_storage: UopStorage::new(),
-            pack,
-            pack_index,
+            all_ports,
+            alu_ports,
+            instruction_data,
         };
 
         // Pre-load LSD iterations (ported from uiCA.py FrontEnd.__init__).
@@ -466,17 +476,17 @@ impl<'a> FrontEnd<'a> {
             // Collect all cache blocks to pre-load
             let mut all_blocks = Vec::new();
             {
-                let pack_index = frontend.pack_index;
+                let instruction_data = frontend.instruction_data;
                 if let Some(ref mut gen) = frontend.cache_blocks_generator {
                     // First round
                     if let Some(mut first_round) = gen.next() {
                         populate_and_recompute_cache_blocks(
                             &mut first_round,
                             frontend.arch.name,
-                            pack_index,
+                            instruction_data,
                             frontend.no_micro_fusion,
                             frontend.no_macro_fusion,
-                        );
+                        )?;
                         all_blocks.extend(first_round);
                     }
                     // (LSDUnrollCount - 1) additional rounds
@@ -485,10 +495,10 @@ impl<'a> FrontEnd<'a> {
                             populate_and_recompute_cache_blocks(
                                 &mut additional_round,
                                 frontend.arch.name,
-                                pack_index,
+                                instruction_data,
                                 frontend.no_micro_fusion,
                                 frontend.no_macro_fusion,
-                            );
+                            )?;
                             all_blocks.extend(additional_round);
                         }
                     }
@@ -502,16 +512,16 @@ impl<'a> FrontEnd<'a> {
             // DSB or MITE: load first round
             let mut first_round_blocks = Vec::new();
             {
-                let pack_index = frontend.pack_index;
+                let instruction_data = frontend.instruction_data;
                 if let Some(ref mut gen) = frontend.cache_blocks_generator {
                     if let Some(mut first_round) = gen.next() {
                         populate_and_recompute_cache_blocks(
                             &mut first_round,
                             frontend.arch.name,
-                            pack_index,
+                            instruction_data,
                             frontend.no_micro_fusion,
                             frontend.no_macro_fusion,
-                        );
+                        )?;
                         first_round_blocks.extend(first_round);
                     }
                 }
@@ -521,31 +531,31 @@ impl<'a> FrontEnd<'a> {
             }
         }
 
-        frontend
+        Ok(frontend)
     }
 
     fn prepare_instr_instance_uops(&mut self, instr_i: &mut InstrInstance, source: UopSource) {
         populate_instr_instance_metadata(
             instr_i,
             self.arch.name,
-            self.pack_index,
+            self.instruction_data,
             self.no_micro_fusion,
             self.no_macro_fusion,
-        );
+        )
+        .expect("front-end instruction metadata failed");
 
         if instr_i.macro_fused_with_prev_instr || !instr_i.laminated_uops.is_empty() {
             return;
         }
 
-        if let Ok(lam_idxs) = expand_instr_instance_to_lam_uops_with_storage(
+        if let Ok(lam_idxs) = expand_instr_instance_to_lam_uops_with_data(
             instr_i,
             &mut self.uop_idx_counter,
             &mut self.fused_idx_counter,
             &mut self.lam_idx_counter,
             &mut self.uop_storage,
             self.arch.name,
-            self.pack,
-            Some(self.pack_index),
+            self.instruction_data,
         ) {
             for &lam_idx in &lam_idxs {
                 if let Some(lam_uop) = self.uop_storage.get_laminated_uop_mut(lam_idx) {
@@ -580,10 +590,11 @@ impl<'a> FrontEnd<'a> {
             populate_and_recompute_cache_blocks(
                 &mut blocks,
                 self.arch.name,
-                self.pack_index,
+                self.instruction_data,
                 self.no_micro_fusion,
                 self.no_macro_fusion,
-            );
+            )
+            .expect("front-end instruction metadata failed");
         }
         if first_was_fused_with_prev {
             if let Some(first) = blocks[0].first_mut() {
@@ -671,10 +682,11 @@ impl<'a> FrontEnd<'a> {
                             populate_and_recompute_cache_blocks(
                                 &mut cache_blocks,
                                 self.arch.name,
-                                self.pack_index,
+                                self.instruction_data,
                                 self.no_micro_fusion,
                                 self.no_macro_fusion,
-                            );
+                            )
+                            .expect("front-end instruction metadata failed");
                             blocks_to_add.extend(cache_blocks);
                         }
                     }
@@ -699,10 +711,11 @@ impl<'a> FrontEnd<'a> {
                         populate_and_recompute_cache_blocks(
                             &mut cache_blocks,
                             self.arch.name,
-                            self.pack_index,
+                            self.instruction_data,
                             self.no_micro_fusion,
                             self.no_macro_fusion,
-                        );
+                        )
+                        .expect("front-end instruction metadata failed");
                         blocks_to_add = cache_blocks;
                         false
                     } else {
@@ -1253,7 +1266,7 @@ impl<'a> FrontEnd<'a> {
         latencies_by_operand.insert(OperandKey::Reg("RSP".to_string()), 1);
         let instr_input_operands = first_uop.prop.instr_input_operands.clone();
         let prop = UopProperties {
-            possible_ports: shared_slice(self.pack.alu_ports.clone()),
+            possible_ports: shared_slice(self.alu_ports.clone()),
             div_cycles: 0,
             is_load_uop: false,
             is_store_address_uop: false,
@@ -1334,10 +1347,16 @@ mod tests {
         let mut instances = super::super::types::build_instruction_instances(&decoded, 0);
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../uica-data/generated/manifest.json");
-        let pack = uica_data::load_manifest_pack(manifest, "SKL").unwrap();
-        let index = uica_data::DataPackIndex::new(&pack);
+        let runtime = uica_data::load_manifest_runtime(manifest, "SKL").unwrap();
 
-        populate_instr_instance_metadata(&mut instances[0], "SKL", &index, false, false);
+        populate_instr_instance_metadata(
+            &mut instances[0],
+            "SKL",
+            InstructionDataSource::new(&runtime),
+            false,
+            false,
+        )
+        .unwrap();
 
         assert_eq!(instances[0].instr_str.as_ref(), "POP (R64)");
         assert!(instances[0].opcode_hex.ends_with("5C"));

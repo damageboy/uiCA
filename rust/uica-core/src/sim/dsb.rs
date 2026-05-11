@@ -179,8 +179,8 @@ pub fn get_dsb_blocks(
             continue;
         }
 
-        // Use the DataPack uops_mite count to determine how many DSB slots
-        // this instruction occupies. `uops_mite` is set from the DataPack
+        // Use the UIPack uops_mite count to determine how many DSB slots
+        // this instruction occupies. `uops_mite` is set from the instruction
         // record in build_instruction_instances (via uop_expand). Fall back
         // to 1 if not set so instructions without a record still get a slot.
         let n_required_entries = (instr_i.uops_mite as usize).max(1);

@@ -502,7 +502,7 @@ pub fn build_graph_report(
         }
     }
 
-    for port in &frontend.pack.all_ports {
+    for port in &frontend.all_ports {
         let name = format!("&mu;ops port {port}");
         add_series(&mut events, &mut order, &name, len);
     }
@@ -786,7 +786,9 @@ mod tests {
         render_regular_html, render_regular_text, render_trace_html, uops_info_url,
     };
     use std::collections::BTreeMap;
-    use uica_data::{DataPack, DATAPACK_SCHEMA_VERSION};
+    use uica_data::{
+        encode_uipack, DataPack as UiPackFixture, MappedUiPackRuntime, DATAPACK_SCHEMA_VERSION,
+    };
     use uica_model::{GraphReport, GraphSeries, TraceInstructionRow, TraceReport, TraceUopRow};
 
     #[test]
@@ -922,8 +924,8 @@ mod tests {
         assert!(!html.contains("<script src="));
     }
 
-    fn empty_pack() -> DataPack {
-        DataPack {
+    fn empty_fixture() -> UiPackFixture {
+        UiPackFixture {
             schema_version: DATAPACK_SCHEMA_VERSION.to_string(),
             all_ports: vec!["0".to_string()],
             alu_ports: vec!["0".to_string()],
@@ -935,9 +937,22 @@ mod tests {
         instances: Vec<crate::sim::InstrInstance>,
     ) -> crate::sim::FrontEnd<'static> {
         let arch = crate::get_micro_arch("SKL").expect("SKL config should exist");
-        let pack = Box::leak(Box::new(empty_pack()));
-        let index = Box::leak(Box::new(uica_data::DataPackIndex::new(pack)));
-        let mut frontend = crate::sim::FrontEnd::new(arch, true, Vec::new(), 0, pack, index);
+        let runtime = Box::leak(Box::new(
+            MappedUiPackRuntime::from_bytes(encode_uipack(&empty_fixture(), "SKL").unwrap())
+                .unwrap(),
+        ));
+        let mut frontend = crate::sim::FrontEnd::new_with_runtime(
+            arch,
+            true,
+            Vec::new(),
+            0,
+            runtime,
+            "diff",
+            false,
+            false,
+            false,
+        )
+        .unwrap();
         frontend.all_generated_instr_instances = instances;
         frontend
     }

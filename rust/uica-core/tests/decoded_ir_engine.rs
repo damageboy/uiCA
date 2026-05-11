@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
 
-use uica_data::{DataPack, InstructionRecord, PerfRecord};
+use uica_data::{
+    encode_uipack, DataPack as UiPackFixture, InstructionRecord, MappedUiPackRuntime, PerfRecord,
+};
 use uica_decode_ir::DecodedInstruction;
 use uica_model::Invocation;
 
 #[test]
-fn analyzes_caller_supplied_decoded_ir_with_pack() {
+fn analyzes_caller_supplied_decoded_ir_with_runtime() {
     let decoded = vec![DecodedInstruction {
         ip: 0,
         len: 3,
@@ -33,7 +35,7 @@ fn analyzes_caller_supplied_decoded_ir_with_pack() {
         xml_attrs: BTreeMap::new(),
     }];
 
-    let pack = DataPack {
+    let fixture = UiPackFixture {
         schema_version: "uica-instructions-pack-v1".to_string(),
         all_ports: vec![
             "0".to_string(),
@@ -91,14 +93,18 @@ fn analyzes_caller_supplied_decoded_ir_with_pack() {
         }],
     };
 
-    let result = uica_core::engine::engine_with_decoded_pack(
+    let runtime = MappedUiPackRuntime::from_bytes(encode_uipack(&fixture, "SKL").unwrap()).unwrap();
+    let result = uica_core::engine::engine_output_with_decoded_uipack_runtime(
         &decoded,
         &Invocation {
             arch: "SKL".to_string(),
             ..Invocation::default()
         },
-        &pack,
-    );
+        &runtime,
+        false,
+    )
+    .unwrap()
+    .result;
 
     assert_eq!(result.invocation.arch, "SKL");
     assert_eq!(result.summary.mode, "unroll");

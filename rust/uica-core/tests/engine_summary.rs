@@ -1,7 +1,33 @@
 use std::collections::BTreeMap;
 
-use uica_data::{DataPack, InstructionRecord, LatencyRecord, OperandRecord, PerfRecord};
+use uica_data::{
+    DataPack as UiPackFixture, InstructionRecord, LatencyRecord, OperandRecord, PerfRecord,
+};
 use uica_model::Invocation;
+
+fn run_fixture(
+    code: &[u8],
+    invocation: &Invocation,
+    fixture: &UiPackFixture,
+) -> uica_model::UicaResult {
+    let runtime = uica_data::MappedUiPackRuntime::from_bytes(
+        uica_data::encode_uipack(fixture, &invocation.arch).unwrap(),
+    )
+    .unwrap();
+    uica_core::engine::engine_output_with_uipack_runtime(code, invocation, &runtime, false)
+        .unwrap()
+        .result
+}
+
+fn engine_with_runtime(
+    code: &[u8],
+    invocation: &Invocation,
+    runtime: &uica_data::MappedUiPackRuntime,
+) -> uica_model::UicaResult {
+    uica_core::engine::engine_output_with_uipack_runtime(code, invocation, runtime, false)
+        .unwrap()
+        .result
+}
 
 #[test]
 fn computes_summary_from_decoded_records() {
@@ -11,7 +37,7 @@ fn computes_summary_from_decoded_records() {
         ..Invocation::default()
     };
 
-    let pack = DataPack {
+    let pack = UiPackFixture {
         schema_version: "uica-instructions-pack-v1".to_string(),
         all_ports: Default::default(),
         alu_ports: Default::default(),
@@ -49,7 +75,7 @@ fn computes_summary_from_decoded_records() {
         }],
     };
 
-    let result = uica_core::engine::engine_with_pack(&code, &invocation, &pack);
+    let result = run_fixture(&code, &invocation, &pack);
 
     assert_eq!(result.invocation.arch, "SKL");
     assert_eq!(result.summary.mode, "unroll");
@@ -74,7 +100,7 @@ fn quick_add_loop_model_matches_expected_outputs() {
             ..Invocation::default()
         };
 
-        let pack = DataPack {
+        let pack = UiPackFixture {
             schema_version: "uica-instructions-pack-v1".to_string(),
             all_ports: Default::default(),
             alu_ports: Default::default(),
@@ -178,7 +204,7 @@ fn quick_add_loop_model_matches_expected_outputs() {
             ],
         };
 
-        let result = uica_core::engine::engine_with_pack(&code, &invocation, &pack);
+        let result = run_fixture(&code, &invocation, &pack);
         assert_eq!(
             result.summary.throughput_cycles_per_iteration,
             Some(2.0),
@@ -210,15 +236,15 @@ fn unrolled_mite_cycle_json_keeps_predecode_events() {
     let code = hex::decode("4183ff0119c083e00885c98945c4b8010000000f4fc139c2").unwrap();
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../uica-data/generated/manifest.json");
-    let pack = uica_data::load_manifest_pack(&manifest, "SKL").unwrap();
-    let result = uica_core::engine::engine_with_pack(
+    let runtime = uica_data::load_manifest_runtime(&manifest, "SKL").unwrap();
+    let result = engine_with_runtime(
         &code,
         &Invocation {
             arch: "SKL".to_string(),
             min_cycles: 500,
             ..Invocation::default()
         },
-        &pack,
+        &runtime,
     );
 
     assert_eq!(
@@ -247,15 +273,15 @@ fn flag_chain_bottlenecks_use_simulated_throughput() {
     let code = hex::decode("4801d84819d14d11c849ffca75f2").unwrap();
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../uica-data/generated/manifest.json");
-    let pack = uica_data::load_manifest_pack(&manifest, "HSW").unwrap();
-    let result = uica_core::engine::engine_with_pack(
+    let runtime = uica_data::load_manifest_runtime(&manifest, "HSW").unwrap();
+    let result = engine_with_runtime(
         &code,
         &Invocation {
             arch: "HSW".to_string(),
             min_cycles: 500,
             ..Invocation::default()
         },
-        &pack,
+        &runtime,
     );
 
     assert_eq!(result.summary.throughput_cycles_per_iteration, Some(2.11));
@@ -270,15 +296,15 @@ fn flag_chain_scheduling_bottleneck_uses_retired_port_usage() {
     let code = hex::decode("4801d84819d14d11c849ffca75f2").unwrap();
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../uica-data/generated/manifest.json");
-    let pack = uica_data::load_manifest_pack(&manifest, "SKL").unwrap();
-    let result = uica_core::engine::engine_with_pack(
+    let runtime = uica_data::load_manifest_runtime(&manifest, "SKL").unwrap();
+    let result = engine_with_runtime(
         &code,
         &Invocation {
             arch: "SKL".to_string(),
             min_cycles: 500,
             ..Invocation::default()
         },
-        &pack,
+        &runtime,
     );
 
     assert_eq!(result.summary.throughput_cycles_per_iteration, Some(1.54));
@@ -332,7 +358,7 @@ fn quick_dec_jcc_model_matches_expected_outputs() {
             ..Invocation::default()
         };
 
-        let pack = DataPack {
+        let pack = UiPackFixture {
             schema_version: "uica-instructions-pack-v1".to_string(),
             all_ports: Default::default(),
             alu_ports: Default::default(),
@@ -404,7 +430,7 @@ fn quick_dec_jcc_model_matches_expected_outputs() {
             ],
         };
 
-        let result = uica_core::engine::engine_with_pack(&code, &invocation, &pack);
+        let result = run_fixture(&code, &invocation, &pack);
         assert_eq!(
             result.summary.throughput_cycles_per_iteration,
             Some(1.0),
@@ -433,7 +459,7 @@ fn mem_address_latency_feeds_dependency_limit_like_python() {
         ..Invocation::default()
     };
 
-    let pack = DataPack {
+    let pack = UiPackFixture {
         schema_version: "uica-instructions-pack-v2".to_string(),
         all_ports: Default::default(),
         alu_ports: Default::default(),
@@ -685,7 +711,7 @@ fn mem_address_latency_feeds_dependency_limit_like_python() {
         ],
     };
 
-    let result = uica_core::engine::engine_with_pack(&code, &invocation, &pack);
+    let result = run_fixture(&code, &invocation, &pack);
     assert_eq!(result.summary.limits.get("dependencies"), Some(&Some(6.0)));
     assert!(result
         .summary
@@ -701,16 +727,16 @@ fn jne_alias_matches_jnz_record_in_engine_path() {
     let code = hex::decode("4801d875fb").unwrap(); // add rax, rbx; jne back
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../uica-data/generated/manifest.json");
-    let pack = uica_data::load_manifest_pack(&manifest, "SKL").unwrap();
+    let runtime = uica_data::load_manifest_runtime(&manifest, "SKL").unwrap();
 
-    let result = uica_core::engine::engine_with_pack(
+    let result = engine_with_runtime(
         &code,
         &Invocation {
             arch: "SKL".to_string(),
             min_cycles: 500,
             ..Invocation::default()
         },
-        &pack,
+        &runtime,
     );
 
     assert_eq!(result.summary.mode, "loop");
@@ -740,7 +766,7 @@ fn quick_model_falls_back_safely_when_pack_is_incomplete() {
         ..Invocation::default()
     };
 
-    let pack = DataPack {
+    let pack = UiPackFixture {
         schema_version: "uica-instructions-pack-v1".to_string(),
         all_ports: Default::default(),
         alu_ports: Default::default(),
@@ -778,7 +804,7 @@ fn quick_model_falls_back_safely_when_pack_is_incomplete() {
         }],
     };
 
-    let result = uica_core::engine::engine_with_pack(&code, &invocation, &pack);
+    let result = run_fixture(&code, &invocation, &pack);
     assert_eq!(result.summary.mode, "loop");
     assert_eq!(result.summary.throughput_cycles_per_iteration, Some(9.0));
     assert_eq!(result.summary.iterations_simulated, 54);
@@ -793,7 +819,7 @@ fn quick_model_falls_back_safely_when_pack_is_incomplete() {
 }
 
 #[test]
-fn empty_pack_uses_python_unknown_instr_defaults() {
+fn empty_fixture_uses_python_unknown_instr_defaults() {
     let code = hex::decode("4801d84829d875f8").unwrap(); // add; sub; jnz
     let invocation = Invocation {
         arch: "SKL".to_string(),
@@ -801,14 +827,14 @@ fn empty_pack_uses_python_unknown_instr_defaults() {
         ..Invocation::default()
     };
 
-    let pack = DataPack {
+    let pack = UiPackFixture {
         schema_version: "uica-instructions-pack-v1".to_string(),
         all_ports: Default::default(),
         alu_ports: Default::default(),
         instructions: vec![],
     };
 
-    let result = uica_core::engine::engine_with_pack(&code, &invocation, &pack);
+    let result = run_fixture(&code, &invocation, &pack);
     assert_eq!(result.summary.mode, "loop");
     assert_eq!(result.summary.throughput_cycles_per_iteration, Some(1.0));
     assert_eq!(result.summary.iterations_simulated, 500);
@@ -868,7 +894,7 @@ fn curated12_cmov_setcc_model_matches_expected_outputs() {
             ..Invocation::default()
         };
 
-        let pack = DataPack {
+        let pack = UiPackFixture {
             schema_version: "uica-instructions-pack-v1".to_string(),
             all_ports: Default::default(),
             alu_ports: Default::default(),
@@ -1072,7 +1098,7 @@ fn curated12_cmov_setcc_model_matches_expected_outputs() {
             ],
         };
 
-        let result = uica_core::engine::engine_with_pack(&code, &invocation, &pack);
+        let result = run_fixture(&code, &invocation, &pack);
         assert_eq!(result.summary.mode, "loop", "{arch}");
         assert_eq!(
             result.summary.throughput_cycles_per_iteration,
@@ -1118,7 +1144,7 @@ fn curated12_alu_dep_model_matches_expected_outputs() {
             ..Invocation::default()
         };
 
-        let pack = DataPack {
+        let pack = UiPackFixture {
             schema_version: "uica-instructions-pack-v1".to_string(),
             all_ports: Default::default(),
             alu_ports: Default::default(),
@@ -1286,7 +1312,7 @@ fn curated12_alu_dep_model_matches_expected_outputs() {
             ],
         };
 
-        let result = uica_core::engine::engine_with_pack(&code, &invocation, &pack);
+        let result = run_fixture(&code, &invocation, &pack);
         assert_eq!(result.summary.mode, "loop", "{arch}");
         assert_eq!(
             result.summary.throughput_cycles_per_iteration,
@@ -1371,7 +1397,7 @@ fn curated12_flag_chain_model_matches_expected_outputs() {
             ..Invocation::default()
         };
 
-        let pack = DataPack {
+        let pack = UiPackFixture {
             schema_version: "uica-instructions-pack-v1".to_string(),
             all_ports: Default::default(),
             alu_ports: Default::default(),
@@ -1547,7 +1573,7 @@ fn curated12_flag_chain_model_matches_expected_outputs() {
             ],
         };
 
-        let result = uica_core::engine::engine_with_pack(&code, &invocation, &pack);
+        let result = run_fixture(&code, &invocation, &pack);
         assert_eq!(result.summary.mode, "loop", "{arch}");
         assert_eq!(
             result.summary.throughput_cycles_per_iteration,
@@ -1621,7 +1647,7 @@ fn curated12_load_store_mix_model_matches_expected_outputs() {
             ..Invocation::default()
         };
 
-        let pack = DataPack {
+        let pack = UiPackFixture {
             schema_version: "uica-instructions-pack-v1".to_string(),
             all_ports: Default::default(),
             alu_ports: Default::default(),
@@ -1757,7 +1783,7 @@ fn curated12_load_store_mix_model_matches_expected_outputs() {
             ],
         };
 
-        let result = uica_core::engine::engine_with_pack(&code, &invocation, &pack);
+        let result = run_fixture(&code, &invocation, &pack);
         assert_eq!(result.summary.mode, "loop", "{arch}");
         assert_eq!(
             result.summary.throughput_cycles_per_iteration,
@@ -1821,7 +1847,7 @@ fn curated12_store_stream_model_matches_expected_outputs() {
             ..Invocation::default()
         };
 
-        let pack = DataPack {
+        let pack = UiPackFixture {
             schema_version: "uica-instructions-pack-v1".to_string(),
             all_ports: Default::default(),
             alu_ports: Default::default(),
@@ -1957,7 +1983,7 @@ fn curated12_store_stream_model_matches_expected_outputs() {
             ],
         };
 
-        let result = uica_core::engine::engine_with_pack(&code, &invocation, &pack);
+        let result = run_fixture(&code, &invocation, &pack);
         assert_eq!(result.summary.mode, "loop", "{arch}");
         assert_eq!(
             result.summary.throughput_cycles_per_iteration,
@@ -2023,7 +2049,7 @@ fn curated12_div_mul_model_matches_expected_outputs() {
             min_cycles: 500,
             ..Invocation::default()
         };
-        let pack = DataPack {
+        let pack = UiPackFixture {
             schema_version: "uica-instructions-pack-v1".to_string(),
             all_ports: Default::default(),
             alu_ports: Default::default(),
@@ -2222,7 +2248,7 @@ fn curated12_div_mul_model_matches_expected_outputs() {
                 },
             ],
         };
-        let result = uica_core::engine::engine_with_pack(&code, &invocation, &pack);
+        let result = run_fixture(&code, &invocation, &pack);
         assert_eq!(
             result.summary.throughput_cycles_per_iteration,
             Some(throughput),
@@ -2257,7 +2283,7 @@ fn curated12_shift_rotate_model_matches_expected_outputs() {
             min_cycles: 500,
             ..Invocation::default()
         };
-        let pack = DataPack {
+        let pack = UiPackFixture {
             schema_version: "uica-instructions-pack-v1".to_string(),
             all_ports: Default::default(),
             alu_ports: Default::default(),
@@ -2424,7 +2450,7 @@ fn curated12_shift_rotate_model_matches_expected_outputs() {
                 },
             ],
         };
-        let result = uica_core::engine::engine_with_pack(&code, &invocation, &pack);
+        let result = run_fixture(&code, &invocation, &pack);
         assert_eq!(
             result.summary.throughput_cycles_per_iteration,
             Some(throughput),
@@ -2500,7 +2526,7 @@ fn curated12_vector128_model_matches_expected_outputs() {
             min_cycles: 500,
             ..Invocation::default()
         };
-        let pack = DataPack {
+        let pack = UiPackFixture {
             schema_version: "uica-instructions-pack-v1".to_string(),
             all_ports: Default::default(),
             alu_ports: Default::default(),
@@ -2667,7 +2693,7 @@ fn curated12_vector128_model_matches_expected_outputs() {
                 },
             ],
         };
-        let result = uica_core::engine::engine_with_pack(&code, &invocation, &pack);
+        let result = run_fixture(&code, &invocation, &pack);
         assert_eq!(
             result.summary.throughput_cycles_per_iteration,
             Some(throughput),
@@ -2702,7 +2728,7 @@ fn curated12_vector256_model_matches_expected_outputs() {
             min_cycles: 500,
             ..Invocation::default()
         };
-        let pack = DataPack {
+        let pack = UiPackFixture {
             schema_version: "uica-instructions-pack-v1".to_string(),
             all_ports: Default::default(),
             alu_ports: Default::default(),
@@ -2869,7 +2895,7 @@ fn curated12_vector256_model_matches_expected_outputs() {
                 },
             ],
         };
-        let result = uica_core::engine::engine_with_pack(&code, &invocation, &pack);
+        let result = run_fixture(&code, &invocation, &pack);
         assert_eq!(
             result.summary.throughput_cycles_per_iteration,
             Some(throughput),
@@ -2908,7 +2934,7 @@ fn curated12_fence_mix_model_matches_expected_outputs() {
             min_cycles: 500,
             ..Invocation::default()
         };
-        let pack = DataPack {
+        let pack = UiPackFixture {
             schema_version: "uica-instructions-pack-v1".to_string(),
             all_ports: Default::default(),
             alu_ports: Default::default(),
@@ -3075,7 +3101,7 @@ fn curated12_fence_mix_model_matches_expected_outputs() {
                 },
             ],
         };
-        let result = uica_core::engine::engine_with_pack(&code, &invocation, &pack);
+        let result = run_fixture(&code, &invocation, &pack);
         assert_eq!(
             result.summary.throughput_cycles_per_iteration,
             Some(throughput),
@@ -3109,7 +3135,7 @@ fn emits_cycle_skeleton_with_expected_length_and_cycle_indices() {
         ..Invocation::default()
     };
 
-    let pack = DataPack {
+    let pack = UiPackFixture {
         schema_version: "uica-instructions-pack-v1".to_string(),
         all_ports: Default::default(),
         alu_ports: Default::default(),
@@ -3147,7 +3173,7 @@ fn emits_cycle_skeleton_with_expected_length_and_cycle_indices() {
         }],
     };
 
-    let result = uica_core::engine::engine_with_pack(&code, &invocation, &pack);
+    let result = run_fixture(&code, &invocation, &pack);
 
     // Summary still from analytical path.
     assert_eq!(result.summary.cycles_simulated, 13);
@@ -3175,8 +3201,8 @@ fn partial_reg_movzx_elimination_aliases_python_input() {
 
     let pack_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../uica-data/generated/arch/HSW.uipack");
-    let pack = uica_data::load_uipack(pack_path).unwrap();
-    let result = uica_core::engine::engine_with_pack(&code, &invocation, &pack);
+    let runtime = uica_data::MappedUiPackRuntime::open(pack_path).unwrap();
+    let result = engine_with_runtime(&code, &invocation, &runtime);
     let depends = result.cycles[0]["addedToRS"][1]["dependsOn"]
         .as_array()
         .unwrap();
@@ -3199,8 +3225,8 @@ fn movzx_special_case_uses_python_sr_fallback() {
 
     let pack_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../uica-data/generated/arch/HSW.uipack");
-    let pack = uica_data::load_uipack(pack_path).unwrap();
-    let result = uica_core::engine::engine_with_pack(&code, &invocation, &pack);
+    let runtime = uica_data::MappedUiPackRuntime::open(pack_path).unwrap();
+    let result = engine_with_runtime(&code, &invocation, &runtime);
     let movzx_depends = result.cycles[0]["addedToRS"][1]["dependsOn"]
         .as_array()
         .unwrap();

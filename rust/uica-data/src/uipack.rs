@@ -17,7 +17,7 @@ use crate::{
 };
 
 pub const UIPACK_MAGIC: [u8; 8] = *b"UIPACK\0\0";
-pub const UIPACK_VERSION: u16 = 8;
+pub const UIPACK_VERSION: u16 = 9;
 pub const UIPACK_CHECKSUM_FNV1A64: u16 = 1;
 
 const UIPACK_HEADER_SIZE: usize = 72;
@@ -25,6 +25,11 @@ const UIPACK_RECORD_SIZE: usize = 96;
 const UIPACK_PORT_ENTRY_SIZE: usize = 8;
 const UIPACK_ALIGNMENT: usize = 8;
 const CHECKSUM_OFFSET: usize = 24;
+#[allow(dead_code)]
+const NONE_U32: u32 = u32::MAX;
+const MIN_OPERAND_BLOB_BYTES: usize = 56;
+const MIN_LATENCY_BLOB_BYTES: usize = 32;
+const MIN_VARIANT_BLOB_BYTES: usize = 48;
 
 const FNV1A64_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
 const FNV1A64_PRIME: u64 = 0x100000001b3;
@@ -51,7 +56,6 @@ pub struct UiPackHeader {
 #[derive(Debug)]
 pub enum UiPackError {
     Io(std::io::Error),
-    Json(serde_json::Error),
     InvalidFormat(String),
 }
 
@@ -59,7 +63,6 @@ impl fmt::Display for UiPackError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(err) => write!(f, "I/O error: {err}"),
-            Self::Json(err) => write!(f, "JSON parse error: {err}"),
             Self::InvalidFormat(msg) => f.write_str(msg),
         }
     }
@@ -69,7 +72,6 @@ impl std::error::Error for UiPackError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(err) => Some(err),
-            Self::Json(err) => Some(err),
             Self::InvalidFormat(_) => None,
         }
     }
@@ -78,12 +80,6 @@ impl std::error::Error for UiPackError {
 impl From<std::io::Error> for UiPackError {
     fn from(value: std::io::Error) -> Self {
         Self::Io(value)
-    }
-}
-
-impl From<serde_json::Error> for UiPackError {
-    fn from(value: serde_json::Error) -> Self {
-        Self::Json(value)
     }
 }
 
@@ -454,52 +450,67 @@ impl<'a> UiPackRecordView<'a> {
     }
 
     pub fn operands(&self) -> Result<Vec<OperandRecord>, UiPackError> {
-        Ok(serde_json::from_slice(self.blob(
-            self.entry.operands_offset,
-            self.entry.operands_size,
-            "operands",
-        )?)?)
+        decode_operands(
+            self.view,
+            self.blob(
+                self.entry.operands_offset,
+                self.entry.operands_size,
+                "operands",
+            )?,
+        )
     }
 
     pub fn latencies(&self) -> Result<Vec<LatencyRecord>, UiPackError> {
-        Ok(serde_json::from_slice(self.blob(
-            self.entry.latencies_offset,
-            self.entry.latencies_size,
-            "latencies",
-        )?)?)
+        decode_latencies(
+            self.view,
+            self.blob(
+                self.entry.latencies_offset,
+                self.entry.latencies_size,
+                "latencies",
+            )?,
+        )
     }
 
     pub fn variants(&self) -> Result<BTreeMap<String, PerfVariantRecord>, UiPackError> {
         if self.entry.variants_size == 0 {
             return Ok(BTreeMap::new());
         }
-        Ok(serde_json::from_slice(self.blob(
-            self.entry.variants_offset,
-            self.entry.variants_size,
-            "variants",
-        )?)?)
+        decode_variants(
+            self.view,
+            self.blob(
+                self.entry.variants_offset,
+                self.entry.variants_size,
+                "variants",
+            )?,
+        )
     }
 
     pub fn macro_fusible_with(&self) -> Result<Vec<String>, UiPackError> {
         if self.entry.macro_fusible_size == 0 {
             return Ok(Vec::new());
         }
-        Ok(serde_json::from_slice(self.blob(
-            self.entry.macro_fusible_offset,
-            self.entry.macro_fusible_size,
-            "macro_fusible_with",
-        )?)?)
+        decode_string_list(
+            self.view,
+            self.blob(
+                self.entry.macro_fusible_offset,
+                self.entry.macro_fusible_size,
+                "macro_fusible_with",
+            )?,
+        )
     }
 
     pub fn xml_attrs(&self) -> Result<BTreeMap<String, String>, UiPackError> {
         if self.entry.xml_attrs_size == 0 {
             return Ok(BTreeMap::new());
         }
-        Ok(serde_json::from_slice(self.blob(
-            self.entry.xml_attrs_offset,
-            self.entry.xml_attrs_size,
-            "xml_attrs",
-        )?)?)
+        decode_string_map(
+            self.view,
+            self.blob(
+                self.entry.xml_attrs_offset,
+                self.entry.xml_attrs_size,
+                "xml_attrs",
+            )?,
+        )
     }
 
     fn blob(&self, offset: u32, size: u32, name: &str) -> Result<&'a [u8], UiPackError> {
@@ -735,11 +746,12 @@ pub fn encode_uipack(pack: &DataPack, arch: &str) -> Result<Vec<u8>, UiPackError
         let ports_count = u32::try_from(record.perf.ports.len()).map_err(|_| {
             UiPackError::InvalidFormat("too many ports on instruction record".to_string())
         })?;
-        let operands = serde_json::to_vec(&record.perf.operands)?;
-        let latencies = serde_json::to_vec(&record.perf.latencies)?;
-        let variants = serde_json::to_vec(&record.perf.variants)?;
-        let macro_fusible_with = serde_json::to_vec(&record.perf.macro_fusible_with)?;
-        let xml_attrs = serde_json::to_vec(&record.xml_attrs)?;
+        intern_record_blob_strings(record, &mut strings)?;
+        let operands = encode_operands(&record.perf.operands, &strings)?;
+        let latencies = encode_latencies(&record.perf.latencies, &strings)?;
+        let variants = encode_variants(&record.perf.variants, &strings)?;
+        let macro_fusible_with = encode_string_list(&record.perf.macro_fusible_with, &strings)?;
+        let xml_attrs = encode_string_map(&record.xml_attrs, &strings)?;
 
         raw_records.push(RawRecordEntry {
             iform_offset,
@@ -1124,9 +1136,612 @@ impl StringTable {
         Ok(offset)
     }
 
+    fn offset_of(&self, value: &str) -> Result<u32, UiPackError> {
+        self.offsets.get(value).copied().ok_or_else(|| {
+            UiPackError::InvalidFormat(format!("uipack string '{value}' was not interned"))
+        })
+    }
+
     fn into_bytes(self) -> Vec<u8> {
         self.bytes
     }
+}
+
+fn intern_record_blob_strings(
+    record: &InstructionRecord,
+    strings: &mut StringTable,
+) -> Result<(), UiPackError> {
+    for operand in &record.perf.operands {
+        strings.intern(&operand.name)?;
+        strings.intern(&operand.r#type)?;
+        for flag in &operand.flags {
+            strings.intern(flag)?;
+        }
+        for flag in &operand.flags_read {
+            strings.intern(flag)?;
+        }
+        for flag in &operand.flags_write {
+            strings.intern(flag)?;
+        }
+        if let Some(mem_base) = &operand.mem_base {
+            strings.intern(mem_base)?;
+        }
+        if let Some(mem_index) = &operand.mem_index {
+            strings.intern(mem_index)?;
+        }
+        if let Some(mem_operand_role) = &operand.mem_operand_role {
+            strings.intern(mem_operand_role)?;
+        }
+    }
+
+    for latency in &record.perf.latencies {
+        strings.intern(&latency.start_op)?;
+        strings.intern(&latency.target_op)?;
+    }
+
+    for (variant_key, variant) in &record.perf.variants {
+        strings.intern(variant_key)?;
+        if let Some(ports) = &variant.ports {
+            for port_key in ports.keys() {
+                strings.intern(port_key)?;
+            }
+        }
+    }
+
+    for macro_fusible in &record.perf.macro_fusible_with {
+        strings.intern(macro_fusible)?;
+    }
+
+    for (key, value) in &record.xml_attrs {
+        strings.intern(key)?;
+        strings.intern(value)?;
+    }
+
+    Ok(())
+}
+
+fn encode_operands(
+    operands: &[OperandRecord],
+    strings: &StringTable,
+) -> Result<Vec<u8>, UiPackError> {
+    let mut bytes = Vec::new();
+    push_u32(&mut bytes, count_u32(operands.len(), "uipack operands")?);
+
+    for operand in operands {
+        push_u32(&mut bytes, strings.offset_of(&operand.name)?);
+        push_u32(&mut bytes, strings.offset_of(&operand.r#type)?);
+        let flags_bits = u32::from(operand.read)
+            | (u32::from(operand.write) << 1)
+            | (u32::from(operand.implicit) << 2)
+            | (u32::from(operand.is_agen) << 3);
+        push_u32(&mut bytes, flags_bits);
+        encode_string_offsets(&mut bytes, &operand.flags, strings)?;
+        encode_string_offsets(&mut bytes, &operand.flags_read, strings)?;
+        encode_string_offsets(&mut bytes, &operand.flags_write, strings)?;
+        push_optional_string_offset(&mut bytes, operand.mem_base.as_deref(), strings)?;
+        push_optional_string_offset(&mut bytes, operand.mem_index.as_deref(), strings)?;
+        match operand.mem_scale {
+            Some(value) => {
+                push_u32(&mut bytes, 1);
+                push_i32(&mut bytes, value);
+            }
+            None => {
+                push_u32(&mut bytes, 0);
+                push_i32(&mut bytes, 0);
+            }
+        }
+        match operand.mem_disp {
+            Some(value) => {
+                push_u32(&mut bytes, 1);
+                push_i64(&mut bytes, value);
+            }
+            None => {
+                push_u32(&mut bytes, 0);
+                push_i64(&mut bytes, 0);
+            }
+        }
+        push_optional_string_offset(&mut bytes, operand.mem_operand_role.as_deref(), strings)?;
+    }
+
+    Ok(bytes)
+}
+
+fn decode_operands(view: &UiPackView<'_>, bytes: &[u8]) -> Result<Vec<OperandRecord>, UiPackError> {
+    let mut cursor = BlobCursor::new(bytes, "operands");
+    let count = read_blob_count(&mut cursor, "uipack operands count overflow")?;
+    if count > cursor.remaining() / MIN_OPERAND_BLOB_BYTES {
+        return Err(cursor.truncated_error());
+    }
+    let mut operands = Vec::with_capacity(count);
+
+    for _ in 0..count {
+        let name = decode_required_string(view, cursor.read_u32()?)?;
+        let r#type = decode_required_string(view, cursor.read_u32()?)?;
+        let flags_bits = cursor.read_u32()?;
+        if flags_bits & !0x0f != 0 {
+            return Err(UiPackError::InvalidFormat(
+                "uipack operands flags_bits has unknown bits".to_string(),
+            ));
+        }
+        let flags = decode_string_offsets(view, &mut cursor)?;
+        let flags_read = decode_string_offsets(view, &mut cursor)?;
+        let flags_write = decode_string_offsets(view, &mut cursor)?;
+        let mem_base = decode_optional_string(view, cursor.read_u32()?)?;
+        let mem_index = decode_optional_string(view, cursor.read_u32()?)?;
+        let has_mem_scale = cursor.read_u32()?;
+        let mem_scale_value = cursor.read_i32()?;
+        let mem_scale = decode_presence_i32(has_mem_scale, mem_scale_value, "mem_scale")?;
+        let has_mem_disp = cursor.read_u32()?;
+        let mem_disp_value = cursor.read_i64()?;
+        let mem_disp = decode_presence_i64(has_mem_disp, mem_disp_value, "mem_disp")?;
+        let mem_operand_role = decode_optional_string(view, cursor.read_u32()?)?;
+
+        operands.push(OperandRecord {
+            name,
+            r#type,
+            read: flags_bits & 1 != 0,
+            write: flags_bits & (1 << 1) != 0,
+            implicit: flags_bits & (1 << 2) != 0,
+            flags,
+            flags_read,
+            flags_write,
+            mem_base,
+            mem_index,
+            mem_scale,
+            mem_disp,
+            is_agen: flags_bits & (1 << 3) != 0,
+            mem_operand_role,
+        });
+    }
+
+    if cursor.offset != bytes.len() {
+        return Err(UiPackError::InvalidFormat(
+            "uipack operands blob has trailing bytes".to_string(),
+        ));
+    }
+
+    Ok(operands)
+}
+
+fn encode_latencies(
+    latencies: &[LatencyRecord],
+    strings: &StringTable,
+) -> Result<Vec<u8>, UiPackError> {
+    let mut bytes = Vec::new();
+    push_u32(&mut bytes, count_u32(latencies.len(), "uipack latencies")?);
+
+    for latency in latencies {
+        push_u32(&mut bytes, strings.offset_of(&latency.start_op)?);
+        push_u32(&mut bytes, strings.offset_of(&latency.target_op)?);
+        push_i32(&mut bytes, latency.cycles);
+        let option_bits = u32::from(latency.cycles_addr.is_some())
+            | (u32::from(latency.cycles_addr_index.is_some()) << 1)
+            | (u32::from(latency.cycles_mem.is_some()) << 2)
+            | (u32::from(latency.cycles_same_reg.is_some()) << 3);
+        push_u32(&mut bytes, option_bits);
+        push_i32(&mut bytes, latency.cycles_addr.unwrap_or_default());
+        push_i32(&mut bytes, latency.cycles_addr_index.unwrap_or_default());
+        push_i32(&mut bytes, latency.cycles_mem.unwrap_or_default());
+        push_i32(&mut bytes, latency.cycles_same_reg.unwrap_or_default());
+    }
+
+    Ok(bytes)
+}
+
+fn decode_latencies(
+    view: &UiPackView<'_>,
+    bytes: &[u8],
+) -> Result<Vec<LatencyRecord>, UiPackError> {
+    let mut cursor = BlobCursor::new(bytes, "latencies");
+    let count = read_blob_count(&mut cursor, "uipack latencies count overflow")?;
+    if count > cursor.remaining() / MIN_LATENCY_BLOB_BYTES {
+        return Err(cursor.truncated_error());
+    }
+    let mut latencies = Vec::with_capacity(count);
+
+    for _ in 0..count {
+        let start_op = decode_required_string(view, cursor.read_u32()?)?;
+        let target_op = decode_required_string(view, cursor.read_u32()?)?;
+        let cycles = cursor.read_i32()?;
+        let option_bits = cursor.read_u32()?;
+        if option_bits & !0x0f != 0 {
+            return Err(UiPackError::InvalidFormat(
+                "uipack latencies option_bits has unknown bits".to_string(),
+            ));
+        }
+        let cycles_addr_value = cursor.read_i32()?;
+        let cycles_addr_index_value = cursor.read_i32()?;
+        let cycles_mem_value = cursor.read_i32()?;
+        let cycles_same_reg_value = cursor.read_i32()?;
+        for (bit, value, field) in [
+            (1, cycles_addr_value, "cycles_addr_or_0"),
+            (1 << 1, cycles_addr_index_value, "cycles_addr_index_or_0"),
+            (1 << 2, cycles_mem_value, "cycles_mem_or_0"),
+            (1 << 3, cycles_same_reg_value, "cycles_same_reg_or_0"),
+        ] {
+            if option_bits & bit == 0 && value != 0 {
+                return Err(UiPackError::InvalidFormat(format!(
+                    "uipack latencies {field} is nonzero while option absent"
+                )));
+            }
+        }
+
+        latencies.push(LatencyRecord {
+            start_op,
+            target_op,
+            cycles,
+            cycles_addr: if option_bits & 1 != 0 {
+                Some(cycles_addr_value)
+            } else {
+                None
+            },
+            cycles_addr_index: if option_bits & (1 << 1) != 0 {
+                Some(cycles_addr_index_value)
+            } else {
+                None
+            },
+            cycles_mem: if option_bits & (1 << 2) != 0 {
+                Some(cycles_mem_value)
+            } else {
+                None
+            },
+            cycles_same_reg: if option_bits & (1 << 3) != 0 {
+                Some(cycles_same_reg_value)
+            } else {
+                None
+            },
+        });
+    }
+
+    if cursor.offset != bytes.len() {
+        return Err(UiPackError::InvalidFormat(
+            "uipack latencies blob has trailing bytes".to_string(),
+        ));
+    }
+
+    Ok(latencies)
+}
+
+fn encode_variants(
+    variants: &BTreeMap<String, PerfVariantRecord>,
+    strings: &StringTable,
+) -> Result<Vec<u8>, UiPackError> {
+    let mut bytes = Vec::new();
+    push_u32(&mut bytes, count_u32(variants.len(), "uipack variants")?);
+
+    for (name, variant) in variants {
+        push_u32(&mut bytes, strings.offset_of(name)?);
+        let option_bits = u32::from(variant.uops.is_some())
+            | (u32::from(variant.retire_slots.is_some()) << 1)
+            | (u32::from(variant.uops_mite.is_some()) << 2)
+            | (u32::from(variant.uops_ms.is_some()) << 3)
+            | (u32::from(variant.tp.is_some()) << 4)
+            | (u32::from(variant.ports.is_some()) << 5)
+            | (u32::from(variant.div_cycles.is_some()) << 6)
+            | (u32::from(variant.complex_decoder.is_some()) << 7)
+            | (u32::from(variant.n_available_simple_decoders.is_some()) << 8);
+        push_u32(&mut bytes, option_bits);
+        push_i32(&mut bytes, variant.uops.unwrap_or_default());
+        push_i32(&mut bytes, variant.retire_slots.unwrap_or_default());
+        push_i32(&mut bytes, variant.uops_mite.unwrap_or_default());
+        push_i32(&mut bytes, variant.uops_ms.unwrap_or_default());
+        push_u64(&mut bytes, variant.tp.unwrap_or_default().to_bits());
+        push_u32(&mut bytes, variant.div_cycles.unwrap_or_default());
+        push_u32(
+            &mut bytes,
+            variant.complex_decoder.map(u32::from).unwrap_or_default(),
+        );
+        push_u32(
+            &mut bytes,
+            variant.n_available_simple_decoders.unwrap_or_default(),
+        );
+        if let Some(ports) = &variant.ports {
+            push_u32(&mut bytes, count_u32(ports.len(), "uipack variant ports")?);
+            for (port, count) in ports {
+                push_u32(&mut bytes, strings.offset_of(port)?);
+                push_i32(&mut bytes, *count);
+            }
+        } else {
+            push_u32(&mut bytes, 0);
+        }
+    }
+
+    Ok(bytes)
+}
+
+fn decode_variants(
+    view: &UiPackView<'_>,
+    bytes: &[u8],
+) -> Result<BTreeMap<String, PerfVariantRecord>, UiPackError> {
+    let mut cursor = BlobCursor::new(bytes, "variants");
+    let count = read_blob_count(&mut cursor, "uipack variants count overflow")?;
+    if count > cursor.remaining() / MIN_VARIANT_BLOB_BYTES {
+        return Err(cursor.truncated_error());
+    }
+    let mut variants = BTreeMap::new();
+
+    for _ in 0..count {
+        let name = decode_required_string(view, cursor.read_u32()?)?;
+        let option_bits = cursor.read_u32()?;
+        if option_bits & !0x01ff != 0 {
+            return Err(UiPackError::InvalidFormat(
+                "uipack variants option_bits has unknown bits".to_string(),
+            ));
+        }
+
+        let uops_value = cursor.read_i32()?;
+        let retire_slots_value = cursor.read_i32()?;
+        let uops_mite_value = cursor.read_i32()?;
+        let uops_ms_value = cursor.read_i32()?;
+        let tp_bits_value = cursor.read_u64()?;
+        let div_cycles_value = cursor.read_u32()?;
+        let complex_decoder_value = cursor.read_u32()?;
+        let n_available_simple_decoders_value = cursor.read_u32()?;
+        let ports_count = read_blob_count(&mut cursor, "uipack variant ports count overflow")?;
+
+        for (bit, nonzero, field) in [
+            (1, uops_value != 0, "uops_or_0"),
+            (1 << 1, retire_slots_value != 0, "retire_slots_or_0"),
+            (1 << 2, uops_mite_value != 0, "uops_mite_or_0"),
+            (1 << 3, uops_ms_value != 0, "uops_ms_or_0"),
+            (1 << 4, tp_bits_value != 0, "tp_bits_or_0"),
+            (1 << 6, div_cycles_value != 0, "div_cycles_or_0"),
+            (1 << 7, complex_decoder_value != 0, "complex_decoder_or_0"),
+            (
+                1 << 8,
+                n_available_simple_decoders_value != 0,
+                "n_available_simple_decoders_or_0",
+            ),
+        ] {
+            if option_bits & bit == 0 && nonzero {
+                return Err(UiPackError::InvalidFormat(format!(
+                    "uipack variants {field} is nonzero while option absent"
+                )));
+            }
+        }
+
+        let ports = if option_bits & (1 << 5) != 0 {
+            if ports_count > cursor.remaining() / UIPACK_PORT_ENTRY_SIZE {
+                return Err(cursor.truncated_error());
+            }
+            let mut ports = BTreeMap::new();
+            for _ in 0..ports_count {
+                let port = decode_required_string(view, cursor.read_u32()?)?;
+                let count = cursor.read_i32()?;
+                if ports.insert(port.clone(), count).is_some() {
+                    return Err(UiPackError::InvalidFormat(format!(
+                        "duplicate variant port key '{port}' in uipack"
+                    )));
+                }
+            }
+            Some(ports)
+        } else {
+            if ports_count != 0 {
+                return Err(UiPackError::InvalidFormat(
+                    "uipack variants ports_count is nonzero while option absent".to_string(),
+                ));
+            }
+            None
+        };
+
+        let complex_decoder = if option_bits & (1 << 7) != 0 {
+            match complex_decoder_value {
+                0 => Some(false),
+                1 => Some(true),
+                _ => {
+                    return Err(UiPackError::InvalidFormat(
+                        "uipack variants complex_decoder_or_0 is not boolean".to_string(),
+                    ));
+                }
+            }
+        } else {
+            None
+        };
+
+        if variants
+            .insert(
+                name.clone(),
+                PerfVariantRecord {
+                    uops: if option_bits & 1 != 0 {
+                        Some(uops_value)
+                    } else {
+                        None
+                    },
+                    retire_slots: if option_bits & (1 << 1) != 0 {
+                        Some(retire_slots_value)
+                    } else {
+                        None
+                    },
+                    uops_mite: if option_bits & (1 << 2) != 0 {
+                        Some(uops_mite_value)
+                    } else {
+                        None
+                    },
+                    uops_ms: if option_bits & (1 << 3) != 0 {
+                        Some(uops_ms_value)
+                    } else {
+                        None
+                    },
+                    tp: if option_bits & (1 << 4) != 0 {
+                        Some(f64::from_bits(tp_bits_value))
+                    } else {
+                        None
+                    },
+                    ports,
+                    div_cycles: if option_bits & (1 << 6) != 0 {
+                        Some(div_cycles_value)
+                    } else {
+                        None
+                    },
+                    complex_decoder,
+                    n_available_simple_decoders: if option_bits & (1 << 8) != 0 {
+                        Some(n_available_simple_decoders_value)
+                    } else {
+                        None
+                    },
+                },
+            )
+            .is_some()
+        {
+            return Err(UiPackError::InvalidFormat(format!(
+                "duplicate variant key '{name}' in uipack"
+            )));
+        }
+    }
+
+    if cursor.offset != bytes.len() {
+        return Err(UiPackError::InvalidFormat(
+            "uipack variants blob has trailing bytes".to_string(),
+        ));
+    }
+
+    Ok(variants)
+}
+
+fn encode_string_list(values: &[String], strings: &StringTable) -> Result<Vec<u8>, UiPackError> {
+    let mut bytes = Vec::new();
+    push_u32(&mut bytes, count_u32(values.len(), "uipack string list")?);
+    for value in values {
+        push_u32(&mut bytes, strings.offset_of(value)?);
+    }
+    Ok(bytes)
+}
+
+fn decode_string_list(view: &UiPackView<'_>, bytes: &[u8]) -> Result<Vec<String>, UiPackError> {
+    let mut cursor = BlobCursor::new(bytes, "string list");
+    let count = read_blob_count(&mut cursor, "uipack string list count overflow")?;
+    if count > cursor.remaining() / 4 {
+        return Err(cursor.truncated_error());
+    }
+    let mut values = Vec::with_capacity(count);
+    for _ in 0..count {
+        values.push(decode_required_string(view, cursor.read_u32()?)?);
+    }
+    if cursor.offset != bytes.len() {
+        return Err(UiPackError::InvalidFormat(
+            "uipack string list blob has trailing bytes".to_string(),
+        ));
+    }
+    Ok(values)
+}
+
+fn encode_string_map(
+    values: &BTreeMap<String, String>,
+    strings: &StringTable,
+) -> Result<Vec<u8>, UiPackError> {
+    let mut bytes = Vec::new();
+    push_u32(&mut bytes, count_u32(values.len(), "uipack string map")?);
+    for (key, value) in values {
+        push_u32(&mut bytes, strings.offset_of(key)?);
+        push_u32(&mut bytes, strings.offset_of(value)?);
+    }
+    Ok(bytes)
+}
+
+fn decode_string_map(
+    view: &UiPackView<'_>,
+    bytes: &[u8],
+) -> Result<BTreeMap<String, String>, UiPackError> {
+    let mut cursor = BlobCursor::new(bytes, "string map");
+    let count = read_blob_count(&mut cursor, "uipack string map count overflow")?;
+    if count > cursor.remaining() / 8 {
+        return Err(cursor.truncated_error());
+    }
+    let mut values = BTreeMap::new();
+    for _ in 0..count {
+        let key = decode_required_string(view, cursor.read_u32()?)?;
+        let value = decode_required_string(view, cursor.read_u32()?)?;
+        if values.insert(key.clone(), value).is_some() {
+            return Err(UiPackError::InvalidFormat(format!(
+                "duplicate string map key '{key}' in uipack"
+            )));
+        }
+    }
+    if cursor.offset != bytes.len() {
+        return Err(UiPackError::InvalidFormat(
+            "uipack string map blob has trailing bytes".to_string(),
+        ));
+    }
+    Ok(values)
+}
+
+fn encode_string_offsets(
+    bytes: &mut Vec<u8>,
+    values: &[String],
+    strings: &StringTable,
+) -> Result<(), UiPackError> {
+    bytes.extend_from_slice(&encode_string_list(values, strings)?);
+    Ok(())
+}
+
+fn decode_string_offsets(
+    view: &UiPackView<'_>,
+    cursor: &mut BlobCursor<'_>,
+) -> Result<Vec<String>, UiPackError> {
+    let count = read_blob_count(cursor, "uipack operands string list count overflow")?;
+    if count > cursor.remaining() / 4 {
+        return Err(cursor.truncated_error());
+    }
+    let mut values = Vec::with_capacity(count);
+    for _ in 0..count {
+        values.push(decode_required_string(view, cursor.read_u32()?)?);
+    }
+    Ok(values)
+}
+
+fn push_optional_string_offset(
+    bytes: &mut Vec<u8>,
+    value: Option<&str>,
+    strings: &StringTable,
+) -> Result<(), UiPackError> {
+    match value {
+        Some(value) => push_u32(bytes, strings.offset_of(value)?),
+        None => push_u32(bytes, NONE_U32),
+    }
+    Ok(())
+}
+
+fn decode_required_string(view: &UiPackView<'_>, offset: u32) -> Result<String, UiPackError> {
+    Ok(view.resolve_string(offset)?.to_string())
+}
+
+fn decode_optional_string(
+    view: &UiPackView<'_>,
+    offset: u32,
+) -> Result<Option<String>, UiPackError> {
+    if offset == NONE_U32 {
+        Ok(None)
+    } else {
+        Ok(Some(decode_required_string(view, offset)?))
+    }
+}
+
+fn decode_presence_i32(present: u32, value: i32, field: &str) -> Result<Option<i32>, UiPackError> {
+    match present {
+        0 => Ok(None),
+        1 => Ok(Some(value)),
+        _ => Err(UiPackError::InvalidFormat(format!(
+            "uipack operands {field} presence flag is invalid"
+        ))),
+    }
+}
+
+fn decode_presence_i64(present: u32, value: i64, field: &str) -> Result<Option<i64>, UiPackError> {
+    match present {
+        0 => Ok(None),
+        1 => Ok(Some(value)),
+        _ => Err(UiPackError::InvalidFormat(format!(
+            "uipack operands {field} presence flag is invalid"
+        ))),
+    }
+}
+
+fn count_u32(count: usize, name: &str) -> Result<u32, UiPackError> {
+    u32::try_from(count).map_err(|_| UiPackError::InvalidFormat(format!("{name} too large")))
+}
+
+fn read_blob_count(cursor: &mut BlobCursor<'_>, message: &str) -> Result<usize, UiPackError> {
+    usize::try_from(cursor.read_u32()?).map_err(|_| UiPackError::InvalidFormat(message.to_string()))
 }
 
 fn validate_section(
@@ -1273,6 +1888,26 @@ fn write_port_entry(dst: &mut [u8], port: &PortEntry) {
     dst[4..8].copy_from_slice(&port.count.to_le_bytes());
 }
 
+#[allow(dead_code)]
+fn push_u32(dst: &mut Vec<u8>, value: u32) {
+    dst.extend_from_slice(&value.to_le_bytes());
+}
+
+#[allow(dead_code)]
+fn push_i32(dst: &mut Vec<u8>, value: i32) {
+    dst.extend_from_slice(&value.to_le_bytes());
+}
+
+#[allow(dead_code)]
+fn push_i64(dst: &mut Vec<u8>, value: i64) {
+    dst.extend_from_slice(&value.to_le_bytes());
+}
+
+#[allow(dead_code)]
+fn push_u64(dst: &mut Vec<u8>, value: u64) {
+    dst.extend_from_slice(&value.to_le_bytes());
+}
+
 fn read_record_entry(src: &[u8], version: u16) -> RecordEntry {
     RecordEntry {
         iform_offset: read_u32(src, 0),
@@ -1332,6 +1967,69 @@ fn read_u64(src: &[u8], offset: usize) -> u64 {
     u64::from_le_bytes(bytes)
 }
 
+#[allow(dead_code)]
+struct BlobCursor<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+    name: &'static str,
+}
+
+#[allow(dead_code)]
+impl<'a> BlobCursor<'a> {
+    fn new(bytes: &'a [u8], name: &'static str) -> Self {
+        Self {
+            bytes,
+            offset: 0,
+            name,
+        }
+    }
+
+    fn read_u32(&mut self) -> Result<u32, UiPackError> {
+        let mut bytes = [0_u8; 4];
+        bytes.copy_from_slice(self.read_exact(4)?);
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn read_i32(&mut self) -> Result<i32, UiPackError> {
+        let mut bytes = [0_u8; 4];
+        bytes.copy_from_slice(self.read_exact(4)?);
+        Ok(i32::from_le_bytes(bytes))
+    }
+
+    fn read_i64(&mut self) -> Result<i64, UiPackError> {
+        let mut bytes = [0_u8; 8];
+        bytes.copy_from_slice(self.read_exact(8)?);
+        Ok(i64::from_le_bytes(bytes))
+    }
+
+    fn read_u64(&mut self) -> Result<u64, UiPackError> {
+        let mut bytes = [0_u8; 8];
+        bytes.copy_from_slice(self.read_exact(8)?);
+        Ok(u64::from_le_bytes(bytes))
+    }
+
+    fn read_exact(&mut self, len: usize) -> Result<&'a [u8], UiPackError> {
+        let end = self
+            .offset
+            .checked_add(len)
+            .ok_or_else(|| self.truncated_error())?;
+        if end > self.bytes.len() {
+            return Err(self.truncated_error());
+        }
+        let start = self.offset;
+        self.offset = end;
+        Ok(&self.bytes[start..end])
+    }
+
+    fn remaining(&self) -> usize {
+        self.bytes.len().saturating_sub(self.offset)
+    }
+
+    fn truncated_error(&self) -> UiPackError {
+        UiPackError::InvalidFormat(format!("uipack {} blob truncated", self.name))
+    }
+}
+
 fn fnv1a64_with_zeroed_checksum(bytes: &[u8]) -> u64 {
     let mut hash = FNV1A64_OFFSET_BASIS;
 
@@ -1353,5 +2051,496 @@ fn align_up(value: usize, align: usize) -> usize {
         value
     } else {
         value + (align - value % align)
+    }
+}
+
+#[cfg(test)]
+mod binary_blob_primitives_tests {
+    use super::*;
+
+    #[test]
+    fn push_helpers_write_little_endian_values() {
+        let mut bytes = Vec::new();
+
+        push_u32(&mut bytes, 0x01020304);
+        push_i32(&mut bytes, -2);
+        push_i64(&mut bytes, -8);
+        push_u64(&mut bytes, 0x0102030405060708);
+
+        assert_eq!(
+            bytes,
+            vec![
+                0x04, 0x03, 0x02, 0x01, 0xfe, 0xff, 0xff, 0xff, 0xf8, 0xff, 0xff, 0xff, 0xff, 0xff,
+                0xff, 0xff, 0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,
+            ]
+        );
+    }
+
+    #[test]
+    fn blob_cursor_reads_values_and_reports_named_truncation() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0x01020304_u32.to_le_bytes());
+        bytes.extend_from_slice(&(-2_i32).to_le_bytes());
+        bytes.extend_from_slice(&(-8_i64).to_le_bytes());
+        bytes.extend_from_slice(&0x0102030405060708_u64.to_le_bytes());
+        let mut cursor = BlobCursor::new(&bytes, "latencies");
+
+        assert_eq!(cursor.read_u32().unwrap(), 0x01020304);
+        assert_eq!(cursor.read_i32().unwrap(), -2);
+        assert_eq!(cursor.read_i64().unwrap(), -8);
+        assert_eq!(cursor.read_u64().unwrap(), 0x0102030405060708);
+        assert_eq!(cursor.offset, bytes.len());
+
+        let err = BlobCursor::new(&[0, 1, 2], "operands")
+            .read_u32()
+            .unwrap_err();
+        assert_eq!(err.to_string(), "uipack operands blob truncated");
+    }
+
+    fn latency_view_for_strings(strings: &StringTable) -> UiPackView<'_> {
+        UiPackView {
+            bytes: &[],
+            header: UiPackHeader {
+                version: UIPACK_VERSION,
+                header_size: UIPACK_HEADER_SIZE as u16,
+                checksum_kind: UIPACK_CHECKSUM_FNV1A64,
+                file_len: 0,
+                checksum: 0,
+                arch_offset: 0,
+                strings_offset: 0,
+                strings_size: strings.bytes.len() as u32,
+                records_offset: 0,
+                records_count: 0,
+                ports_offset: 0,
+                ports_count: 0,
+                schema_offset: 0,
+                all_ports_offset: 0,
+                alu_ports_offset: 0,
+            },
+            strings: &strings.bytes,
+            arch: "",
+            schema_version: "",
+            all_ports_raw: "",
+            alu_ports_raw: "",
+        }
+    }
+
+    #[test]
+    fn string_list_and_map_blobs_roundtrip_as_offsets() {
+        let mut strings = StringTable::new();
+        let jz = strings.intern("JZ").unwrap();
+        let jnz = strings.intern("JNZ").unwrap();
+        let agen = strings.intern("agen").unwrap();
+        let one = strings.intern("1").unwrap();
+        let immzero = strings.intern("immzero").unwrap();
+        let true_value = strings.intern("true").unwrap();
+        let view = latency_view_for_strings(&strings);
+
+        let list = vec!["JZ".to_string(), "JNZ".to_string()];
+        let list_bytes = encode_string_list(&list, &strings).unwrap();
+        assert_eq!(list_bytes.len(), 4 + list.len() * 4);
+        assert_eq!(&list_bytes[..4], &2_u32.to_le_bytes());
+        assert_eq!(&list_bytes[4..8], &jz.to_le_bytes());
+        assert_eq!(&list_bytes[8..12], &jnz.to_le_bytes());
+        assert_eq!(decode_string_list(&view, &list_bytes).unwrap(), list);
+
+        let map = BTreeMap::from([
+            ("agen".to_string(), "1".to_string()),
+            ("immzero".to_string(), "true".to_string()),
+        ]);
+        let map_bytes = encode_string_map(&map, &strings).unwrap();
+        assert_eq!(map_bytes.len(), 4 + map.len() * 8);
+        assert_eq!(&map_bytes[..4], &2_u32.to_le_bytes());
+        assert_eq!(&map_bytes[4..8], &agen.to_le_bytes());
+        assert_eq!(&map_bytes[8..12], &one.to_le_bytes());
+        assert_eq!(&map_bytes[12..16], &immzero.to_le_bytes());
+        assert_eq!(&map_bytes[16..20], &true_value.to_le_bytes());
+        assert_eq!(decode_string_map(&view, &map_bytes).unwrap(), map);
+    }
+
+    #[test]
+    fn string_list_and_map_blobs_reject_malformed_payloads() {
+        let mut strings = StringTable::new();
+        let key = strings.intern("agen").unwrap();
+        let value = strings.intern("1").unwrap();
+        let view = latency_view_for_strings(&strings);
+
+        let mut trailing_list = encode_string_list(&["agen".to_string()], &strings).unwrap();
+        trailing_list.push(0);
+        let err = decode_string_list(&view, &trailing_list)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("uipack string list blob has trailing bytes"),
+            "{err}"
+        );
+
+        let mut truncated_map = Vec::new();
+        push_u32(&mut truncated_map, 1);
+        push_u32(&mut truncated_map, key);
+        let err = decode_string_map(&view, &truncated_map)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("uipack string map blob truncated"), "{err}");
+
+        let mut duplicate_map = Vec::new();
+        push_u32(&mut duplicate_map, 2);
+        push_u32(&mut duplicate_map, key);
+        push_u32(&mut duplicate_map, value);
+        push_u32(&mut duplicate_map, key);
+        push_u32(&mut duplicate_map, value);
+        let err = decode_string_map(&view, &duplicate_map)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("duplicate string map key 'agen'"), "{err}");
+    }
+
+    #[test]
+    fn latency_blob_roundtrips_binary_options() {
+        let mut strings = StringTable::new();
+        strings.intern("REG0").unwrap();
+        strings.intern("REG1").unwrap();
+        strings.intern("MEM0").unwrap();
+        let view = latency_view_for_strings(&strings);
+        let latencies = vec![
+            LatencyRecord {
+                start_op: "REG0".to_string(),
+                target_op: "REG1".to_string(),
+                cycles: 1,
+                cycles_addr: Some(2),
+                cycles_addr_index: None,
+                cycles_mem: Some(4),
+                cycles_same_reg: Some(0),
+            },
+            LatencyRecord {
+                start_op: "MEM0".to_string(),
+                target_op: "REG0".to_string(),
+                cycles: -1,
+                cycles_addr: None,
+                cycles_addr_index: Some(3),
+                cycles_mem: None,
+                cycles_same_reg: None,
+            },
+        ];
+
+        let bytes = encode_latencies(&latencies, &strings).unwrap();
+
+        assert_eq!(bytes.len(), 4 + latencies.len() * MIN_LATENCY_BLOB_BYTES);
+        assert_eq!(&bytes[..4], &2_u32.to_le_bytes());
+        assert_eq!(decode_latencies(&view, &bytes).unwrap(), latencies);
+    }
+
+    #[test]
+    fn latency_blob_rejects_absent_options_with_nonzero_payload() {
+        let mut strings = StringTable::new();
+        let start = strings.intern("REG0").unwrap();
+        let target = strings.intern("REG1").unwrap();
+        let view = latency_view_for_strings(&strings);
+        let mut bytes = Vec::new();
+        push_u32(&mut bytes, 1);
+        push_u32(&mut bytes, start);
+        push_u32(&mut bytes, target);
+        push_i32(&mut bytes, 1);
+        push_u32(&mut bytes, 0);
+        push_i32(&mut bytes, 0);
+        push_i32(&mut bytes, 0);
+        push_i32(&mut bytes, 7);
+        push_i32(&mut bytes, 0);
+
+        let err = decode_latencies(&view, &bytes).unwrap_err().to_string();
+        assert!(err.contains("latencies"), "{err}");
+        assert!(err.contains("absent") || err.contains("nonzero"), "{err}");
+    }
+
+    #[test]
+    fn latency_blob_rejects_malformed_or_trailing_bytes() {
+        let mut strings = StringTable::new();
+        let start = strings.intern("REG0").unwrap();
+        let target = strings.intern("REG1").unwrap();
+        let view = latency_view_for_strings(&strings);
+        let latencies = vec![LatencyRecord {
+            start_op: "REG0".to_string(),
+            target_op: "REG1".to_string(),
+            cycles: 1,
+            cycles_addr: None,
+            cycles_addr_index: None,
+            cycles_mem: None,
+            cycles_same_reg: None,
+        }];
+
+        let mut trailing = encode_latencies(&latencies, &strings).unwrap();
+        trailing.push(0);
+        let err = decode_latencies(&view, &trailing).unwrap_err().to_string();
+        assert!(
+            err.contains("uipack latencies blob has trailing bytes"),
+            "{err}"
+        );
+
+        let mut unknown_bits = Vec::new();
+        push_u32(&mut unknown_bits, 1);
+        push_u32(&mut unknown_bits, start);
+        push_u32(&mut unknown_bits, target);
+        push_i32(&mut unknown_bits, 1);
+        push_u32(&mut unknown_bits, 1 << 4);
+        push_i32(&mut unknown_bits, 0);
+        push_i32(&mut unknown_bits, 0);
+        push_i32(&mut unknown_bits, 0);
+        push_i32(&mut unknown_bits, 0);
+        let err = decode_latencies(&view, &unknown_bits)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("uipack latencies option_bits has unknown bits"),
+            "{err}"
+        );
+
+        let mut truncated = Vec::new();
+        push_u32(&mut truncated, 1);
+        let err = decode_latencies(&view, &truncated).unwrap_err().to_string();
+        assert!(err.contains("uipack latencies blob truncated"), "{err}");
+    }
+
+    #[test]
+    fn variant_blob_roundtrips_binary_options() {
+        let mut strings = StringTable::new();
+        strings.intern("_indexed").unwrap();
+        strings.intern("_full").unwrap();
+        strings.intern("0").unwrap();
+        strings.intern("1").unwrap();
+        let view = latency_view_for_strings(&strings);
+        let variants = BTreeMap::from([
+            (
+                "_full".to_string(),
+                PerfVariantRecord {
+                    uops: Some(2),
+                    retire_slots: Some(3),
+                    uops_mite: Some(4),
+                    uops_ms: Some(0),
+                    tp: Some(0.5),
+                    ports: Some(BTreeMap::from([
+                        ("0".to_string(), 1),
+                        ("1".to_string(), -2),
+                    ])),
+                    div_cycles: Some(7),
+                    complex_decoder: Some(false),
+                    n_available_simple_decoders: Some(1),
+                },
+            ),
+            (
+                "_indexed".to_string(),
+                PerfVariantRecord {
+                    uops: Some(0),
+                    ports: Some(BTreeMap::new()),
+                    ..PerfVariantRecord::default()
+                },
+            ),
+        ]);
+
+        let bytes = encode_variants(&variants, &strings).unwrap();
+
+        assert_eq!(&bytes[..4], &2_u32.to_le_bytes());
+        assert_eq!(decode_variants(&view, &bytes).unwrap(), variants);
+    }
+
+    #[test]
+    fn variant_blob_rejects_malformed_options() {
+        let mut strings = StringTable::new();
+        let variant = strings.intern("_indexed").unwrap();
+        let port = strings.intern("0").unwrap();
+        let view = latency_view_for_strings(&strings);
+
+        let mut trailing = encode_variants(
+            &BTreeMap::from([(
+                "_indexed".to_string(),
+                PerfVariantRecord {
+                    uops: Some(1),
+                    ..PerfVariantRecord::default()
+                },
+            )]),
+            &strings,
+        )
+        .unwrap();
+        trailing.push(0);
+        let err = decode_variants(&view, &trailing).unwrap_err().to_string();
+        assert!(
+            err.contains("uipack variants blob has trailing bytes"),
+            "{err}"
+        );
+
+        let mut unknown_bits = Vec::new();
+        push_u32(&mut unknown_bits, 1);
+        push_u32(&mut unknown_bits, variant);
+        push_u32(&mut unknown_bits, 1 << 9);
+        push_i32(&mut unknown_bits, 0);
+        push_i32(&mut unknown_bits, 0);
+        push_i32(&mut unknown_bits, 0);
+        push_i32(&mut unknown_bits, 0);
+        push_u64(&mut unknown_bits, 0);
+        push_u32(&mut unknown_bits, 0);
+        push_u32(&mut unknown_bits, 0);
+        push_u32(&mut unknown_bits, 0);
+        push_u32(&mut unknown_bits, 0);
+        let err = decode_variants(&view, &unknown_bits)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("uipack variants option_bits has unknown bits"),
+            "{err}"
+        );
+
+        let mut absent_nonzero = Vec::new();
+        push_u32(&mut absent_nonzero, 1);
+        push_u32(&mut absent_nonzero, variant);
+        push_u32(&mut absent_nonzero, 0);
+        push_i32(&mut absent_nonzero, 5);
+        push_i32(&mut absent_nonzero, 0);
+        push_i32(&mut absent_nonzero, 0);
+        push_i32(&mut absent_nonzero, 0);
+        push_u64(&mut absent_nonzero, 0);
+        push_u32(&mut absent_nonzero, 0);
+        push_u32(&mut absent_nonzero, 0);
+        push_u32(&mut absent_nonzero, 0);
+        push_u32(&mut absent_nonzero, 0);
+        let err = decode_variants(&view, &absent_nonzero)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("uops_or_0"), "{err}");
+
+        let mut absent_ports = Vec::new();
+        push_u32(&mut absent_ports, 1);
+        push_u32(&mut absent_ports, variant);
+        push_u32(&mut absent_ports, 0);
+        push_i32(&mut absent_ports, 0);
+        push_i32(&mut absent_ports, 0);
+        push_i32(&mut absent_ports, 0);
+        push_i32(&mut absent_ports, 0);
+        push_u64(&mut absent_ports, 0);
+        push_u32(&mut absent_ports, 0);
+        push_u32(&mut absent_ports, 0);
+        push_u32(&mut absent_ports, 0);
+        push_u32(&mut absent_ports, 1);
+        push_u32(&mut absent_ports, port);
+        push_i32(&mut absent_ports, 1);
+        let err = decode_variants(&view, &absent_ports)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("ports"), "{err}");
+
+        let mut invalid_bool = Vec::new();
+        push_u32(&mut invalid_bool, 1);
+        push_u32(&mut invalid_bool, variant);
+        push_u32(&mut invalid_bool, 1 << 7);
+        push_i32(&mut invalid_bool, 0);
+        push_i32(&mut invalid_bool, 0);
+        push_i32(&mut invalid_bool, 0);
+        push_i32(&mut invalid_bool, 0);
+        push_u64(&mut invalid_bool, 0);
+        push_u32(&mut invalid_bool, 0);
+        push_u32(&mut invalid_bool, 2);
+        push_u32(&mut invalid_bool, 0);
+        push_u32(&mut invalid_bool, 0);
+        let err = decode_variants(&view, &invalid_bool)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("complex_decoder"), "{err}");
+    }
+
+    #[test]
+    fn intern_record_blob_strings_interns_nested_payload_strings() {
+        let record = InstructionRecord {
+            arch: "TST".to_string(),
+            iform: "ADD_GPR".to_string(),
+            string: "ADD RAX, RBX".to_string(),
+            all_ports: Vec::new(),
+            alu_ports: Vec::new(),
+            locked: false,
+            xml_attrs: BTreeMap::from([
+                ("agen".to_string(), "1".to_string()),
+                ("immzero".to_string(), "true".to_string()),
+            ]),
+            imm_zero: false,
+            perf: PerfRecord {
+                uops: 1,
+                retire_slots: 1,
+                uops_mite: 1,
+                uops_ms: 0,
+                tp: Some(0.5),
+                ports: BTreeMap::new(),
+                variants: BTreeMap::from([(
+                    "_indexed".to_string(),
+                    PerfVariantRecord {
+                        ports: Some(BTreeMap::from([("0".to_string(), 1), ("1".to_string(), 1)])),
+                        ..PerfVariantRecord::default()
+                    },
+                )]),
+                div_cycles: 0,
+                may_be_eliminated: false,
+                complex_decoder: false,
+                n_available_simple_decoders: 0,
+                lcp_stall: false,
+                implicit_rsp_change: 0,
+                can_be_used_by_lsd: false,
+                cannot_be_in_dsb_due_to_jcc_erratum: false,
+                no_micro_fusion: false,
+                no_macro_fusion: false,
+                macro_fusible_with: vec!["JZ".to_string(), "JNZ".to_string()],
+                operands: vec![OperandRecord {
+                    name: "REG0".to_string(),
+                    r#type: "reg".to_string(),
+                    read: true,
+                    write: false,
+                    implicit: false,
+                    flags: vec!["C".to_string(), "SPAZO".to_string()],
+                    flags_read: vec!["CF".to_string()],
+                    flags_write: vec!["ZF".to_string()],
+                    mem_base: Some("RAX".to_string()),
+                    mem_index: Some("RBX".to_string()),
+                    mem_scale: Some(4),
+                    mem_disp: Some(8),
+                    is_agen: true,
+                    mem_operand_role: Some("read_write".to_string()),
+                }],
+                latencies: vec![LatencyRecord {
+                    start_op: "LAT_START".to_string(),
+                    target_op: "LAT_TARGET".to_string(),
+                    cycles: 1,
+                    cycles_addr: None,
+                    cycles_addr_index: None,
+                    cycles_mem: None,
+                    cycles_same_reg: None,
+                }],
+            },
+        };
+
+        let mut strings = StringTable::new();
+        intern_record_blob_strings(&record, &mut strings).unwrap();
+
+        for expected in [
+            "REG0",
+            "reg",
+            "C",
+            "SPAZO",
+            "CF",
+            "ZF",
+            "RAX",
+            "RBX",
+            "read_write",
+            "LAT_START",
+            "LAT_TARGET",
+            "_indexed",
+            "0",
+            "1",
+            "JZ",
+            "JNZ",
+            "agen",
+            "immzero",
+            "true",
+        ] {
+            let offset = *strings
+                .offsets
+                .get(expected)
+                .unwrap_or_else(|| panic!("missing interned string {expected}"));
+            assert_eq!(read_string_ref(&strings.bytes, offset).unwrap(), expected);
+        }
     }
 }

@@ -1,6 +1,6 @@
 //! 1:1 port of Python's `computeUopProperties` from `uiCA.py` / `facile.py`.
 //!
-//! Given a DataPack record (which now carries operand descriptors and per-
+//! Given an instruction record (carrying operand descriptors and per-
 //! operand-pair latency data from UIPack), produces a list
 //! of `UopPlan` values that drive laminated-uop creation.
 //!
@@ -10,7 +10,7 @@
 //!   3. For non-mem uops: compute latency classes, create base + extra uops
 //!      with correct input/output operand names and latencies.
 //!   4. Handle the special 3-uop shift-by-CL case.
-//!   5. The resulting UopPlans feed `expand_instr_instance_to_lam_uops_with_storage`.
+//!   5. The resulting UopPlans feed `expand_instr_instance_to_lam_uops_with_runtime`.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
@@ -18,6 +18,7 @@ use super::types::{
     shared_slice, FusedUop, InstrInstance, LaminatedUop, OperandKey, Uop, UopProperties,
 };
 use super::uop_storage::UopStorage;
+use crate::instruction_data::InstructionDataSource;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -168,47 +169,13 @@ pub struct UopPlan {
     pub mem_addr_index: Option<usize>,
 }
 
-// ---------------------------------------------------------------------------
-// is_instr_supported
-// ---------------------------------------------------------------------------
-
-/// True iff we can produce a plan for this decoded instruction.
-pub fn is_instr_supported(
-    instr: &InstrInstance,
-    arch_name: &str,
-    index: &uica_data::DataPackIndex<'_>,
-) -> bool {
-    let _ = (instr, arch_name, index);
-    // Python parity: missing `archData.instrData[iform]` becomes UnknownInstr,
-    // which still enters the simulator as a single zero-port retire-slot uop.
-    true
-}
-
-/// Look up (uops_mite, uops_ms) from the DataPack.
-pub fn lookup_uops_mite_ms(
-    mnemonic: &str,
-    iform_signature: &str,
-    max_op_size_bytes: u8,
-    arch_name: &str,
-    pack: &uica_data::DataPack,
-) -> (u32, u32) {
-    let index = uica_data::DataPackIndex::new(pack);
-    lookup_uops_mite_ms_indexed(
-        mnemonic,
-        iform_signature,
-        max_op_size_bytes,
-        arch_name,
-        &index,
-    )
-}
-
 pub fn record_uops_mite(record: &uica_data::InstructionRecord) -> u32 {
     perf_uops_mite(&record.perf)
 }
 
 pub(crate) fn perf_uops_mite(perf: &uica_data::PerfRecord) -> u32 {
     // Python parity: data generation stores `uopsMITE` after applying
-    // convertXML/getInstructions defaulting. Runtime consumes the datapack fact.
+    // convertXML/getInstructions defaulting. Runtime consumes the UIPack field.
     perf.uops_mite.max(0) as u32
 }
 
@@ -420,34 +387,6 @@ fn lea_agen_concrete_names(record: &uica_data::InstructionRecord) -> Vec<String>
     names
 }
 
-pub fn lookup_uops_mite_ms_indexed(
-    mnemonic: &str,
-    iform_signature: &str,
-    max_op_size_bytes: u8,
-    arch_name: &str,
-    index: &uica_data::DataPackIndex<'_>,
-) -> (u32, u32) {
-    use crate::matcher::{match_instruction_record_iter, NormalizedInstrRef};
-    let explicit_reg_operands = Vec::new();
-    let xml_attrs = BTreeMap::new();
-    let norm = NormalizedInstrRef {
-        mnemonic,
-        decoded_iform: "",
-        iform_signature,
-        max_op_size_bytes,
-        immediate: None,
-        uses_high8_reg: false,
-        explicit_reg_operands: &explicit_reg_operands,
-        xml_attrs: &xml_attrs,
-        agen: None,
-    };
-    let candidates = index.candidates_for(arch_name, mnemonic);
-    match match_instruction_record_iter(norm, candidates) {
-        Some(rec) => (record_uops_mite(rec), rec.perf.uops_ms as u32),
-        None => (1, 0),
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Main expand entry point
 // ---------------------------------------------------------------------------
@@ -455,30 +394,20 @@ pub fn lookup_uops_mite_ms_indexed(
 /// Expand one InstrInstance into laminated uops stored in UopStorage.
 /// Returns the lam_idx list or an error string.
 #[allow(clippy::too_many_arguments)]
-pub fn expand_instr_instance_to_lam_uops_with_storage(
+pub(crate) fn expand_instr_instance_to_lam_uops_with_data(
     instr: &InstrInstance,
     uop_idx_counter: &mut u64,
     fused_idx_counter: &mut u64,
     lam_idx_counter: &mut u64,
     storage: &mut UopStorage,
     arch_name: &str,
-    pack: &uica_data::DataPack,
-    pack_index: Option<&uica_data::DataPackIndex<'_>>,
+    data: InstructionDataSource<'_>,
 ) -> Result<Vec<u64>, String> {
     if instr.macro_fused_with_prev_instr {
         return Ok(vec![]);
     }
-    use crate::matcher::{match_instruction_record_iter, NormalizedInstrRef};
 
-    // Use pre-built index if provided (avoids O(n) rebuild per call).
-    let owned_index;
-    let index = if let Some(idx) = pack_index {
-        idx
-    } else {
-        owned_index = uica_data::DataPackIndex::new(pack);
-        &owned_index
-    };
-    let norm = NormalizedInstrRef {
+    let norm = crate::matcher::NormalizedInstrRef {
         mnemonic: &instr.mnemonic,
         decoded_iform: &instr.decoded_iform,
         iform_signature: &instr.iform_signature,
@@ -489,8 +418,8 @@ pub fn expand_instr_instance_to_lam_uops_with_storage(
         xml_attrs: &instr.xml_attrs,
         agen: instr.agen.as_deref(),
     };
-    let candidates = index.candidates_for(arch_name, &instr.mnemonic);
-    let record = match match_instruction_record_iter(norm, candidates) {
+    let matched = data.match_record(arch_name, &instr.mnemonic, norm)?;
+    let record = match matched.as_ref() {
         Some(rec) => rec,
         None => {
             // Python parity: `getInstructions()` creates `UnknownInstr` for
@@ -576,6 +505,27 @@ pub fn expand_instr_instance_to_lam_uops_with_storage(
         arch_name,
         Some(record),
     ))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn expand_instr_instance_to_lam_uops_with_runtime(
+    instr: &InstrInstance,
+    uop_idx_counter: &mut u64,
+    fused_idx_counter: &mut u64,
+    lam_idx_counter: &mut u64,
+    storage: &mut UopStorage,
+    arch_name: &str,
+    runtime: &uica_data::MappedUiPackRuntime,
+) -> Result<Vec<u64>, String> {
+    expand_instr_instance_to_lam_uops_with_data(
+        instr,
+        uop_idx_counter,
+        fused_idx_counter,
+        lam_idx_counter,
+        storage,
+        arch_name,
+        InstructionDataSource::new(runtime),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1449,7 +1399,7 @@ fn emit_lam_uops(
     };
 
     // Python parity: `UopProperties` stores actual operand objects from
-    // `Instr.inputRegOperands` / `Instr.outputRegOperands`. DataPack REGn names
+    // `Instr.inputRegOperands` / `Instr.outputRegOperands`. XML REGn names
     // must resolve through full instruction operand order, not through the
     // local uop input/output list (e.g. DIV REG2 remains EDX even when alone).
     let mut input_operand_map: HashMap<String, String> = HashMap::new();
@@ -1879,9 +1829,33 @@ mod tests {
     use super::{compute_uop_plans, compute_uop_plans_inner, python_decoder_shape_from_record};
     use std::collections::BTreeMap;
     use uica_data::{
-        load_manifest_pack, DataPack, DataPackIndex, InstructionRecord, LatencyRecord,
+        encode_uipack, load_manifest_runtime, record_view_to_instruction_record,
+        DataPack as UiPackFixture, InstructionRecord, LatencyRecord, MappedUiPackRuntime,
         OperandRecord, PerfRecord, PerfVariantRecord,
     };
+
+    fn runtime_from_fixture(fixture: &UiPackFixture, arch: &str) -> MappedUiPackRuntime {
+        MappedUiPackRuntime::from_bytes(encode_uipack(fixture, arch).unwrap()).unwrap()
+    }
+
+    fn manifest_record(
+        arch: &str,
+        mnemonic: &str,
+        mut matches: impl FnMut(&InstructionRecord) -> bool,
+    ) -> InstructionRecord {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../uica-data/generated/manifest.json");
+        let runtime = load_manifest_runtime(manifest, arch).unwrap();
+        let view = runtime.view().unwrap();
+        for &record_index in runtime.index().record_indices_for_mnemonic(mnemonic) {
+            let record =
+                record_view_to_instruction_record(view.record(record_index).unwrap()).unwrap();
+            if matches(&record) {
+                return record;
+            }
+        }
+        panic!("{arch} {mnemonic} record not found")
+    }
 
     fn operand(name: &str, kind: &str, read: bool, write: bool) -> OperandRecord {
         OperandRecord {
@@ -1903,7 +1877,7 @@ mod tests {
     }
 
     #[test]
-    fn decoder_shape_uses_datapack_complex_and_sdec() {
+    fn decoder_shape_uses_record_complex_and_sdec() {
         let record = InstructionRecord {
             arch: "HSW".to_string(),
             iform: "SBB_GPRv_GPRv_19".to_string(),
@@ -1945,7 +1919,7 @@ mod tests {
 
     #[test]
     fn unmatched_iform_emits_unknown_instr_zero_port_uop() {
-        let pack = DataPack {
+        let pack = UiPackFixture {
             schema_version: uica_data::DATAPACK_SCHEMA_VERSION.to_string(),
             all_ports: Default::default(),
             alu_ports: Default::default(),
@@ -1982,7 +1956,7 @@ mod tests {
                 },
             }],
         };
-        let index = DataPackIndex::new(&pack);
+        let runtime = runtime_from_fixture(&pack, "HSW");
         let mut instr = super::super::types::InstrInstance::new(
             0,
             0,
@@ -2001,15 +1975,14 @@ mod tests {
         let mut uop_idx = 0;
         let mut fused_idx = 0;
         let mut lam_idx = 0;
-        let lam_idxs = super::expand_instr_instance_to_lam_uops_with_storage(
+        let lam_idxs = super::expand_instr_instance_to_lam_uops_with_runtime(
             &instr,
             &mut uop_idx,
             &mut fused_idx,
             &mut lam_idx,
             &mut storage,
             "HSW",
-            &pack,
-            Some(&index),
+            &runtime,
         )
         .expect("unknown instruction expansion should succeed");
 
@@ -2022,16 +1995,9 @@ mod tests {
 
     #[test]
     fn cmov_latency_class_pseudo_uop_precedes_base_uop() {
-        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../uica-data/generated/manifest.json");
-        let pack = load_manifest_pack(manifest, "HSW").unwrap();
-        let index = DataPackIndex::new(&pack);
-        let record = index
-            .candidates_for("HSW", "CMOVG")
-            .find(|record| record.iform == "CMOVNLE_GPRv_GPRv")
-            .expect("CMOVNLE_GPRv_GPRv record");
+        let record = manifest_record("HSW", "CMOVG", |record| record.iform == "CMOVNLE_GPRv_GPRv");
 
-        let plans = compute_uop_plans(record, "HSW");
+        let plans = compute_uop_plans(&record, "HSW");
 
         assert_eq!(plans.len(), 2);
         assert_eq!(plans[0].ports, vec!["0", "6"]);
@@ -2043,16 +2009,11 @@ mod tests {
 
     #[test]
     fn vex_scalar_load_op_keeps_python_reg_latency_class() {
-        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../uica-data/generated/manifest.json");
-        let pack = load_manifest_pack(manifest, "SKL").unwrap();
-        let index = DataPackIndex::new(&pack);
-        let record = index
-            .candidates_for("SKL", "VMULSD")
-            .find(|record| record.iform == "VMULSD_XMMdq_XMMdq_MEMq")
-            .expect("VMULSD_XMMdq_XMMdq_MEMq record");
+        let record = manifest_record("SKL", "VMULSD", |record| {
+            record.iform == "VMULSD_XMMdq_XMMdq_MEMq"
+        });
 
-        let plans = compute_uop_plans(record, "SKL");
+        let plans = compute_uop_plans(&record, "SKL");
 
         assert_eq!(plans.len(), 2);
         assert!(plans[0].is_load);
@@ -2062,19 +2023,12 @@ mod tests {
 
     #[test]
     fn eliminated_mov_uses_same_reg_latency_for_fallback_uop() {
-        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../uica-data/generated/manifest.json");
-        let pack = load_manifest_pack(manifest, "HSW").unwrap();
-        let index = DataPackIndex::new(&pack);
-        let record = index
-            .candidates_for("HSW", "MOV")
-            .find(|record| {
-                super::record_may_be_eliminated(record) && record.string == "MOV_89 (R64, R64)"
-            })
-            .expect("eliminable MOV_89 (R64, R64) record");
+        let record = manifest_record("HSW", "MOV", |record| {
+            super::record_may_be_eliminated(record) && record.string == "MOV_89 (R64, R64)"
+        });
 
-        assert!(super::record_may_be_eliminated(record));
-        let plans = compute_uop_plans(record, "HSW");
+        assert!(super::record_may_be_eliminated(&record));
+        let plans = compute_uop_plans(&record, "HSW");
 
         assert_eq!(plans.len(), 1);
         assert_eq!(plans[0].latencies.get("REG0"), Some(&1));
@@ -2400,13 +2354,13 @@ mod tests {
                 variants: Default::default(),
             },
         };
-        let pack = DataPack {
+        let pack = UiPackFixture {
             schema_version: uica_data::DATAPACK_SCHEMA_VERSION.to_string(),
             all_ports: Default::default(),
             alu_ports: Default::default(),
             instructions: vec![record],
         };
-        let index = DataPackIndex::new(&pack);
+        let runtime = runtime_from_fixture(&pack, "ICL");
         let mut instr = super::super::types::InstrInstance::new(
             0,
             0,
@@ -2432,15 +2386,14 @@ mod tests {
         let mut uop_idx = 0;
         let mut fused_idx = 0;
         let mut lam_idx = 0;
-        super::expand_instr_instance_to_lam_uops_with_storage(
+        super::expand_instr_instance_to_lam_uops_with_runtime(
             &instr,
             &mut uop_idx,
             &mut fused_idx,
             &mut lam_idx,
             &mut storage,
             "ICL",
-            &pack,
-            Some(&index),
+            &runtime,
         )
         .expect("expand should succeed");
 
@@ -2457,19 +2410,12 @@ mod tests {
 
     #[test]
     fn lfence_zero_port_plans_keep_retire_slot_padding() {
-        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../uica-data/generated/manifest.json");
-        let pack = load_manifest_pack(manifest, "HSW").unwrap();
-        let index = DataPackIndex::new(&pack);
-        let record = index
-            .candidates_for("HSW", "LFENCE")
-            .find(|record| record.iform == "LFENCE")
-            .expect("LFENCE record");
+        let record = manifest_record("HSW", "LFENCE", |record| record.iform == "LFENCE");
 
-        let plans = compute_uop_plans(record, "HSW");
+        let plans = compute_uop_plans(&record, "HSW");
 
         assert_eq!(record.perf.retire_slots, 2);
-        assert_eq!(super::record_uops_mite(record), 1);
+        assert_eq!(super::record_uops_mite(&record), 1);
         assert_eq!(plans.len(), 2);
         assert!(plans.iter().all(|plan| plan.ports.is_empty()));
     }

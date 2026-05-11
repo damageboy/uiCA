@@ -29,6 +29,12 @@ fn validate_arch_name(arch: &str) -> Result<()> {
 
 pub fn convert_xml_to_pack_dir(xml_path: &Path, out_dir: &Path) -> Result<DataPackManifest> {
     let packs_by_arch = parse_xml_to_packs(xml_path)?;
+    if packs_by_arch.is_empty() {
+        return Err(
+            "no architecture measurements found; likely wrong input XML (expected uops.info instructions.xml)"
+                .into(),
+        );
+    }
     for arch in packs_by_arch.keys() {
         validate_arch_name(arch)?;
     }

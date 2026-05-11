@@ -339,7 +339,7 @@ pub struct InstrInstance {
     pub immediate: Option<i64>,
     /// Exact XED iform decoded for this instruction.
     pub decoded_iform: Rc<str>,
-    /// Iform-style operand signature for DataPack disambiguation.
+    /// Iform-style operand signature for instruction-record disambiguation.
     pub iform_signature: Rc<str>,
     /// Max operand register size bytes (0=unknown); used for record disambiguation.
     pub max_op_size_bytes: u8,

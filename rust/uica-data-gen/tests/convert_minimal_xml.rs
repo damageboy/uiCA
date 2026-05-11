@@ -380,7 +380,7 @@ fn accumulates_duplicate_port_keys() {
 }
 
 #[test]
-fn writes_empty_manifest_when_xml_has_no_matching_measurement_or_arch() {
+fn errors_when_xml_has_no_matching_measurement_or_arch() {
     let temp = tempdir().unwrap();
     let xml = temp.path().join("instructions.xml");
     let out_dir = temp.path().join("generated");
@@ -398,16 +398,13 @@ fn writes_empty_manifest_when_xml_has_no_matching_measurement_or_arch() {
     )
     .unwrap();
 
-    let manifest = convert_xml_to_pack_dir(&xml, &out_dir).unwrap();
+    let err = convert_xml_to_pack_dir(&xml, &out_dir).unwrap_err();
+    let err = err.to_string();
 
-    assert_eq!(manifest.schema_version, DATAPACK_MANIFEST_SCHEMA_VERSION);
-    assert!(manifest.architectures.is_empty());
-    assert!(out_dir.join("manifest.json").is_file());
-    assert!(out_dir.join("arch").is_dir());
-    assert!(std::fs::read_dir(out_dir.join("arch"))
-        .unwrap()
-        .next()
-        .is_none());
+    assert!(err.contains("no architecture measurements found"));
+    assert!(err.contains("likely wrong input XML"));
+    assert!(!out_dir.join("manifest.json").exists());
+    assert!(!out_dir.join("arch").exists());
 }
 
 #[test]

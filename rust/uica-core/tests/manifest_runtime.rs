@@ -5,9 +5,9 @@ use std::sync::{Mutex, OnceLock};
 use tempfile::tempdir;
 use uica_core::{match_instruction_record_iter, NormalizedInstr};
 use uica_data::{
-    encode_uipack, load_manifest_pack, read_uipack_header, DataPack, DataPackIndex,
-    DataPackManifest, DataPackManifestArchEntry, InstructionRecord, LatencyRecord, OperandRecord,
-    PerfRecord, DATAPACK_MANIFEST_SCHEMA_VERSION, DATAPACK_SCHEMA_VERSION, UIPACK_VERSION,
+    encode_uipack, read_uipack_header, record_view_to_instruction_record,
+    DataPack as UiPackFixture, InstructionRecord, LatencyRecord, OperandRecord, PerfRecord,
+    DATAPACK_MANIFEST_SCHEMA_VERSION, DATAPACK_SCHEMA_VERSION, UIPACK_VERSION,
 };
 use uica_model::Invocation;
 
@@ -84,19 +84,19 @@ impl Drop for EnvVarGuard {
     }
 }
 
-fn sample_pack(
+fn sample_fixture(
     arch: &str,
     mnemonic: &str,
     string: &str,
     uops: i32,
     ports: &[(&str, i32)],
-) -> DataPack {
+) -> UiPackFixture {
     let iform = match mnemonic {
         "ADD" => "ADD_GPRv_GPRv_01".to_string(),
         _ => format!("{mnemonic}_GPRv_GPRv"),
     };
 
-    DataPack {
+    UiPackFixture {
         schema_version: DATAPACK_SCHEMA_VERSION.to_string(),
         all_ports: Default::default(),
         alu_ports: Default::default(),
@@ -181,35 +181,35 @@ fn sample_pack(
 
 fn write_manifest_fixture(
     temp: &tempfile::TempDir,
-    packs: &[(&str, DataPack)],
+    fixtures: &[(&str, UiPackFixture)],
 ) -> std::path::PathBuf {
     let generated_dir = temp.path().join("generated");
     let arch_dir = generated_dir.join("arch");
     std::fs::create_dir_all(&arch_dir).unwrap();
 
     let mut architectures = BTreeMap::new();
-    for (arch, pack) in packs {
-        let bytes = encode_uipack(pack, arch).unwrap();
+    for (arch, fixture) in fixtures {
+        let bytes = encode_uipack(fixture, arch).unwrap();
         let header = read_uipack_header(&bytes).unwrap();
         let relative_path = format!("arch/{arch}.uipack");
         std::fs::write(generated_dir.join(&relative_path), bytes).unwrap();
         architectures.insert(
             arch.to_string(),
-            DataPackManifestArchEntry {
-                path: relative_path,
-                size: header.file_len,
-                checksum_kind: "fnv1a64".to_string(),
-                checksum: format!("{:016x}", header.checksum),
-                record_count: header.records_count,
-            },
+            serde_json::json!({
+                "path": relative_path,
+                "size": header.file_len,
+                "checksum_kind": "fnv1a64",
+                "checksum": format!("{:016x}", header.checksum),
+                "record_count": header.records_count,
+            }),
         );
     }
 
-    let manifest = DataPackManifest {
-        schema_version: DATAPACK_MANIFEST_SCHEMA_VERSION.to_string(),
-        uipack_version: UIPACK_VERSION,
-        architectures,
-    };
+    let manifest = serde_json::json!({
+        "schema_version": DATAPACK_MANIFEST_SCHEMA_VERSION,
+        "uipack_version": UIPACK_VERSION,
+        "architectures": architectures,
+    });
     let manifest_path = generated_dir.join("manifest.json");
     std::fs::write(
         &manifest_path,
@@ -223,8 +223,7 @@ fn write_manifest_fixture(
 fn dsb_multi_slot_instruction_expands_real_laminated_uops_once() {
     let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../uica-data/generated/manifest.json");
-    let pack = load_manifest_pack(&manifest_path, "SKL").unwrap();
-    let index = DataPackIndex::new(&pack);
+    let runtime = uica_data::load_manifest_runtime(&manifest_path, "SKL").unwrap();
     let arch = uica_core::get_micro_arch("SKL").unwrap();
 
     // shl rax, cl; dec r15; jnz -8
@@ -234,7 +233,18 @@ fn dsb_multi_slot_instruction_expands_real_laminated_uops_once() {
         uica_decoder::decode_raw(&[0x48, 0xd3, 0xe0, 0x49, 0xff, 0xcf, 0x75, 0xf8]).unwrap();
     let base_instances = uica_core::sim::types::build_instruction_instances(&decoded, 0);
 
-    let mut frontend = uica_core::sim::FrontEnd::new(arch, false, base_instances, 0, &pack, &index);
+    let mut frontend = uica_core::sim::FrontEnd::new_with_runtime(
+        arch,
+        false,
+        base_instances,
+        0,
+        &runtime,
+        "diff",
+        false,
+        false,
+        false,
+    )
+    .unwrap();
 
     assert_eq!(frontend.uop_source.as_deref(), Some("DSB"));
     assert_laminated_uops_populated_once(&frontend);
@@ -270,8 +280,7 @@ fn dsb_multi_slot_instruction_expands_real_laminated_uops_once() {
 fn stack_pointer_changes_disable_lsd_like_python_getinstructions() {
     let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../uica-data/generated/manifest.json");
-    let pack = load_manifest_pack(&manifest_path, "HSW").unwrap();
-    let index = DataPackIndex::new(&pack);
+    let runtime = uica_data::load_manifest_runtime(&manifest_path, "HSW").unwrap();
     let arch = uica_core::get_micro_arch("HSW").unwrap();
 
     // push rax; pop rbx; add rbx, rcx; dec rdx; jnz back
@@ -309,15 +318,14 @@ fn stack_pointer_changes_disable_lsd_like_python_getinstructions() {
     let mut uop_idx = 0;
     let mut fused_idx = 0;
     let mut lam_idx = 0;
-    uica_core::sim::uop_expand::expand_instr_instance_to_lam_uops_with_storage(
+    uica_core::sim::uop_expand::expand_instr_instance_to_lam_uops_with_runtime(
         &enter[0],
         &mut uop_idx,
         &mut fused_idx,
         &mut lam_idx,
         &mut storage,
         "HSW",
-        &pack,
-        None,
+        &runtime,
     )
     .unwrap();
     assert!(storage.uops.values().any(|uop| {
@@ -369,15 +377,14 @@ fn stack_pointer_changes_disable_lsd_like_python_getinstructions() {
         let mut uop_idx = 0;
         let mut fused_idx = 0;
         let mut lam_idx = 0;
-        uica_core::sim::uop_expand::expand_instr_instance_to_lam_uops_with_storage(
+        uica_core::sim::uop_expand::expand_instr_instance_to_lam_uops_with_runtime(
             &instrs[0],
             &mut uop_idx,
             &mut fused_idx,
             &mut lam_idx,
             &mut storage,
             "HSW",
-            &pack,
-            None,
+            &runtime,
         )
         .unwrap();
         assert!(storage.uops.values().all(|uop| {
@@ -389,7 +396,18 @@ fn stack_pointer_changes_disable_lsd_like_python_getinstructions() {
         }));
     }
 
-    let frontend = uica_core::sim::FrontEnd::new(arch, false, base_instances, 0, &pack, &index);
+    let frontend = uica_core::sim::FrontEnd::new_with_runtime(
+        arch,
+        false,
+        base_instances,
+        0,
+        &runtime,
+        "diff",
+        false,
+        false,
+        false,
+    )
+    .unwrap();
 
     assert_eq!(frontend.uop_source.as_deref(), Some("DSB"));
     assert!(frontend
@@ -400,19 +418,26 @@ fn stack_pointer_changes_disable_lsd_like_python_getinstructions() {
 }
 
 #[test]
-fn binary_manifest_pack_supports_index_matcher_and_perf_lookup() {
+fn binary_manifest_runtime_supports_index_matcher_and_perf_lookup() {
     let temp = tempdir().unwrap();
     let manifest_path = write_manifest_fixture(
         &temp,
         &[(
             "SKL",
-            sample_pack("SKL", "MOV", "MOVE", 2, &[("23", 2), ("5", 1)]),
+            sample_fixture("SKL", "MOV", "MOVE", 2, &[("23", 2), ("5", 1)]),
         )],
     );
 
-    let pack = load_manifest_pack(&manifest_path, "SKL").unwrap();
-    let index = DataPackIndex::new(&pack);
-    let candidates = index.candidates_for("skl", "move rax, rbx");
+    let runtime = uica_data::load_manifest_runtime(&manifest_path, "SKL").unwrap();
+    let view = runtime.view().unwrap();
+    let candidates: Vec<InstructionRecord> = runtime
+        .index()
+        .record_indices_for_mnemonic("move rax, rbx")
+        .iter()
+        .map(|&record_index| {
+            record_view_to_instruction_record(view.record(record_index).unwrap()).unwrap()
+        })
+        .collect();
     let matched = match_instruction_record_iter(
         NormalizedInstr {
             max_op_size_bytes: 0,
@@ -426,9 +451,9 @@ fn binary_manifest_pack_supports_index_matcher_and_perf_lookup() {
             agen: None,
         }
         .as_ref(),
-        candidates,
+        candidates.iter(),
     )
-    .expect("iform fallback should match binary pack record");
+    .expect("iform fallback should match runtime record");
 
     assert_eq!(matched.iform, "MOV_GPRv_GPRv");
     assert_eq!(matched.perf.uops, 2);
@@ -445,8 +470,8 @@ fn engine_prefers_manifest_selected_arch_pack_from_env_dir() {
     let _manifest_path = write_manifest_fixture(
         &temp,
         &[
-            ("SKL", sample_pack("SKL", "ADD", "ADD", 1, &[("0", 2)])),
-            ("HSW", sample_pack("HSW", "SUB", "SUB", 1, &[("1", 1)])),
+            ("SKL", sample_fixture("SKL", "ADD", "ADD", 1, &[("0", 2)])),
+            ("HSW", sample_fixture("HSW", "SUB", "SUB", 1, &[("1", 1)])),
         ],
     );
 
@@ -477,8 +502,8 @@ fn engine_loads_manifest_file_from_env_path() {
     let manifest_path = write_manifest_fixture(
         &temp,
         &[
-            ("SKL", sample_pack("SKL", "ADD", "ADD", 1, &[("0", 2)])),
-            ("HSW", sample_pack("HSW", "SUB", "SUB", 1, &[("1", 1)])),
+            ("SKL", sample_fixture("SKL", "ADD", "ADD", 1, &[("0", 2)])),
+            ("HSW", sample_fixture("HSW", "SUB", "SUB", 1, &[("1", 1)])),
         ],
     );
 
@@ -508,7 +533,7 @@ fn engine_trace_uses_manifest_uipack_from_env_path() {
     let temp = tempdir().unwrap();
     let manifest_path = write_manifest_fixture(
         &temp,
-        &[("SKL", sample_pack("SKL", "ADD", "ADD", 1, &[("0", 1)]))],
+        &[("SKL", sample_fixture("SKL", "ADD", "ADD", 1, &[("0", 1)]))],
     );
 
     {
@@ -588,11 +613,11 @@ fn event_trace_emits_executed_events_for_zero_port_uops() {
 }
 
 #[test]
-fn datapack_for_arch_without_microarch_model_fails_clearly() {
+fn uipack_for_arch_without_microarch_model_fails_clearly() {
     let _lock = env_lock().lock().unwrap();
     let temp = tempdir().unwrap();
     let pack_path = temp.path().join("ZEN5.uipack");
-    let pack = sample_pack("ZEN5", "ADD", "ADD", 1, &[("0", 2)]);
+    let pack = sample_fixture("ZEN5", "ADD", "ADD", 1, &[("0", 2)]);
     std::fs::write(&pack_path, encode_uipack(&pack, "ZEN5").unwrap()).unwrap();
 
     let _env = EnvVarGuard::set("UICA_RUST_DATAPACK", &pack_path);
@@ -616,7 +641,7 @@ fn verify_uipack_rejects_bad_checksum_but_default_load_skips_it() {
     let original = env::var_os("UICA_RUST_DATAPACK");
     let temp = tempdir().unwrap();
     let pack_path = temp.path().join("SKL.uipack");
-    let pack = sample_pack("SKL", "ADD", "ADD", 1, &[("0", 2)]);
+    let pack = sample_fixture("SKL", "ADD", "ADD", 1, &[("0", 2)]);
     let mut bytes = encode_uipack(&pack, "SKL").unwrap();
     bytes[24] ^= 1;
     std::fs::write(&pack_path, bytes).unwrap();
@@ -645,7 +670,7 @@ fn engine_loads_single_uipack_file_from_env_path() {
     let original = env::var_os("UICA_RUST_DATAPACK");
     let temp = tempdir().unwrap();
     let pack_path = temp.path().join("SKL.uipack");
-    let pack = sample_pack("SKL", "ADD", "ADD", 1, &[("0", 2)]);
+    let pack = sample_fixture("SKL", "ADD", "ADD", 1, &[("0", 2)]);
     std::fs::write(&pack_path, encode_uipack(&pack, "SKL").unwrap()).unwrap();
 
     {

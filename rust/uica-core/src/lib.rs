@@ -8,9 +8,10 @@ pub mod sim;
 pub mod x64;
 
 pub use analytical::{compute_issue_limit, compute_port_usage_limit, InstructionPortUsage};
-#[cfg(feature = "xed-decoder")]
-pub use engine::engine;
-pub use engine::engine_with_decoded;
+pub use engine::{
+    simulate, DecodeErrorPolicy, MissingUipackPolicy, SimulationInput, SimulationOptions,
+    SimulationOutput, SimulationRequest, UipackSource,
+};
 pub use matcher::{
     match_instruction, match_instruction_record, match_instruction_record_iter,
     match_instruction_record_ref, normalize_mnemonic, CandidateRecord, NormalizedInstr,

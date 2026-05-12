@@ -4,6 +4,10 @@ use std::process;
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
+use uica_core::engine::{
+    DecodeErrorPolicy, MissingUipackPolicy, SimulationInput, SimulationOptions, SimulationRequest,
+    UipackSource,
+};
 use uica_decoder::extract_text_from_object;
 use uica_model::Invocation;
 
@@ -128,8 +132,23 @@ fn run() -> Result<()> {
     };
 
     if let Some(path) = &args.event_trace {
-        let trace = uica_core::engine::engine_trace(&bytes, &invocation, args.verify_uipack)
-            .map_err(|e| anyhow!("trace engine failed: {e}"))?;
+        let output = uica_core::engine::simulate(SimulationRequest {
+            input: SimulationInput::Bytes(&bytes),
+            invocation: &invocation,
+            uipack: UipackSource::Default {
+                verify_checksum: args.verify_uipack,
+            },
+            options: SimulationOptions {
+                include_trace: true,
+                missing_uipack: MissingUipackPolicy::Error,
+                decode_errors: DecodeErrorPolicy::Error,
+                ..SimulationOptions::default()
+            },
+        })
+        .map_err(|e| anyhow!("trace engine failed: {e}"))?;
+        let trace = output
+            .trace
+            .ok_or_else(|| anyhow!("trace engine did not produce event trace"))?;
         trace
             .finish_to_path(path)
             .with_context(|| format!("failed to write event trace {}", path.display()))?;
@@ -138,21 +157,42 @@ fn run() -> Result<()> {
     let wants_default_text = wants_default_text(&args);
     let wants_reports = args.trace.is_some() || args.graph.is_some() || wants_default_text;
     let output = if wants_reports {
-        uica_core::engine::engine_output(&bytes, &invocation, true, args.verify_uipack)
-            .map_err(|e| anyhow!("report engine failed: {e}"))?
-    } else {
-        uica_core::engine::EngineOutput {
-            result: if args.verify_uipack {
-                uica_core::engine::engine_output(&bytes, &invocation, false, true)
-                    .map_err(|e| anyhow!("uipack verification failed: {e}"))?
-                    .result
-            } else {
-                uica_core::engine::engine_output(&bytes, &invocation, false, false)
-                    .map_err(|e| anyhow!("engine failed: {e}"))?
-                    .result
+        uica_core::engine::simulate(SimulationRequest {
+            input: SimulationInput::Bytes(&bytes),
+            invocation: &invocation,
+            uipack: UipackSource::Default {
+                verify_checksum: args.verify_uipack,
             },
-            reports: None,
-        }
+            options: SimulationOptions {
+                include_reports: true,
+                missing_uipack: MissingUipackPolicy::Error,
+                ..SimulationOptions::default()
+            },
+        })
+        .map_err(|e| anyhow!("report engine failed: {e}"))?
+    } else {
+        uica_core::engine::simulate(SimulationRequest {
+            input: SimulationInput::Bytes(&bytes),
+            invocation: &invocation,
+            uipack: UipackSource::Default {
+                verify_checksum: args.verify_uipack,
+            },
+            options: SimulationOptions {
+                missing_uipack: if args.verify_uipack {
+                    MissingUipackPolicy::Error
+                } else {
+                    MissingUipackPolicy::Fallback
+                },
+                ..SimulationOptions::default()
+            },
+        })
+        .map_err(|e| {
+            if args.verify_uipack {
+                anyhow!("uipack verification failed: {e}")
+            } else {
+                anyhow!("engine failed: {e}")
+            }
+        })?
     };
     let result = output.result;
 

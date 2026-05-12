@@ -1,4 +1,6 @@
-use uica_core::engine::engine_output_with_uipack_runtime;
+use uica_core::engine::{
+    simulate, SimulationInput, SimulationOptions, SimulationRequest, UipackSource,
+};
 use uica_data::load_manifest_runtime;
 use uica_model::Invocation;
 
@@ -15,12 +17,22 @@ fn mapped_runtime_engine_is_stable_for_skl_add() {
         .join("../uica-data/generated/manifest.json");
     let runtime = load_manifest_runtime(&manifest, "SKL").unwrap();
 
-    let first = engine_output_with_uipack_runtime(&code, &invocation, &runtime, false)
-        .unwrap()
-        .result;
-    let second = engine_output_with_uipack_runtime(&code, &invocation, &runtime, false)
-        .unwrap()
-        .result;
+    let first = simulate(SimulationRequest {
+        input: SimulationInput::Bytes(&code),
+        invocation: &invocation,
+        uipack: UipackSource::Runtime(&runtime),
+        options: SimulationOptions::default(),
+    })
+    .unwrap()
+    .result;
+    let second = simulate(SimulationRequest {
+        input: SimulationInput::Bytes(&code),
+        invocation: &invocation,
+        uipack: UipackSource::Runtime(&runtime),
+        options: SimulationOptions::default(),
+    })
+    .unwrap()
+    .result;
 
     assert_eq!(first.summary, second.summary);
     assert_eq!(first.parameters, second.parameters);

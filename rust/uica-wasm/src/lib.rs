@@ -18,7 +18,7 @@
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-use uica_core::engine;
+use uica_core::{simulate, SimulationInput, SimulationOptions, SimulationRequest, UipackSource};
 use uica_data::MappedUiPackRuntime;
 use uica_decode_ir::DecodedInstruction;
 use uica_model::Invocation;
@@ -44,8 +44,16 @@ pub fn analyze_decoded_json(decoded_json: &str, arch: &str) -> Result<String, St
         ..Invocation::default()
     };
 
-    serde_json::to_string(&engine::engine_with_decoded(&decoded, &invocation))
-        .map_err(|err| err.to_string())
+    let output = simulate(SimulationRequest {
+        input: SimulationInput::Decoded(&decoded),
+        invocation: &invocation,
+        uipack: UipackSource::Default {
+            verify_checksum: false,
+        },
+        options: SimulationOptions::default(),
+    })?;
+
+    serde_json::to_string(&output.result).map_err(|err| err.to_string())
 }
 
 /// Analyze pre-decoded instruction IR with caller-supplied `.uipack` bytes.
@@ -84,8 +92,12 @@ pub fn analyze_decoded_json_with_uipack(
             arch.trim().to_ascii_uppercase()
         ));
     }
-    let output =
-        engine::engine_output_with_decoded_uipack_runtime(&decoded, &invocation, &runtime, false)?;
+    let output = simulate(SimulationRequest {
+        input: SimulationInput::Decoded(&decoded),
+        invocation: &invocation,
+        uipack: UipackSource::Runtime(&runtime),
+        options: SimulationOptions::default(),
+    })?;
 
     serde_json::to_string(&output.result).map_err(|err| err.to_string())
 }

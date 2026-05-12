@@ -26,79 +26,209 @@ use crate::instruction_data::InstructionDataSource;
 use crate::matcher::NormalizedInstrRef;
 use crate::micro_arch::{get_micro_arch, MicroArchConfig};
 
+#[derive(Clone)]
+pub struct SimulationRequest<'a> {
+    pub input: SimulationInput<'a>,
+    pub invocation: &'a Invocation,
+    pub uipack: UipackSource<'a>,
+    pub options: SimulationOptions,
+}
+
+#[derive(Clone, Debug)]
+pub enum SimulationInput<'a> {
+    Decoded(&'a [DecodedInstruction]),
+    #[cfg(feature = "xed-decoder")]
+    Bytes(&'a [u8]),
+}
+
+#[derive(Clone)]
+pub enum UipackSource<'a> {
+    Runtime(&'a MappedUiPackRuntime),
+    Default { verify_checksum: bool },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SimulationOptions {
+    pub include_reports: bool,
+    pub include_trace: bool,
+    pub missing_uipack: MissingUipackPolicy,
+    pub decode_errors: DecodeErrorPolicy,
+}
+
+impl Default for SimulationOptions {
+    fn default() -> Self {
+        Self {
+            include_reports: false,
+            include_trace: false,
+            missing_uipack: MissingUipackPolicy::Fallback,
+            decode_errors: DecodeErrorPolicy::Fallback,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MissingUipackPolicy {
+    Error,
+    Fallback,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DecodeErrorPolicy {
+    Error,
+    Fallback,
+}
+
 #[derive(Clone, Debug, Default)]
-pub struct EngineOutput {
+pub struct SimulationOutput {
     pub result: UicaResult,
     pub reports: Option<uica_model::ReportBundle>,
+    pub trace: Option<crate::sim::TraceWriter>,
 }
 
-pub fn engine_output_with_decoded(
-    decoded: &[DecodedInstruction],
-    invocation: &Invocation,
-    include_reports: bool,
-    verify_uipack: bool,
-) -> Result<EngineOutput, String> {
-    let runtime = if verify_uipack {
-        load_default_runtime_verified(&invocation.arch)?
-    } else {
-        let Some(runtime) = load_default_runtime(&invocation.arch, false) else {
-            if include_reports {
-                return Err(format!("uipack data not found for {}", invocation.arch));
-            }
-            return Ok(EngineOutput {
-                result: fallback_result_from_decoded(decoded, invocation),
-                reports: None,
-            });
-        };
-        runtime
+pub fn simulate(request: SimulationRequest<'_>) -> Result<SimulationOutput, String> {
+    let decoded = match get_decoded_instructions(&request) {
+        Ok(value) => value,
+        Err(exit) => return exit.into_result(),
     };
-    engine_output_with_decoded_uipack_runtime(decoded, invocation, &runtime, include_reports)
+
+    let runtime = match get_uipack_for_sim(&request, decoded.as_slice()) {
+        Ok(value) => value,
+        Err(exit) => return exit.into_result(),
+    };
+
+    simulate_with_decoded_data_internal(
+        decoded.as_slice(),
+        request.invocation,
+        InstructionDataSource::new(runtime.as_runtime()),
+        request.options.include_reports,
+        request.options.include_trace,
+    )
 }
 
-pub fn engine_with_decoded(decoded: &[DecodedInstruction], invocation: &Invocation) -> UicaResult {
-    if let Some(runtime) = load_default_runtime(&invocation.arch, false) {
-        return engine_output_with_decoded_uipack_runtime(decoded, invocation, &runtime, false)
-            .map(|output| output.result)
-            .unwrap_or_else(|_| fallback_result_from_decoded(decoded, invocation));
+enum SimulationEarlyExit {
+    Output(Box<SimulationOutput>),
+    Error(String),
+}
+
+impl SimulationEarlyExit {
+    fn output(output: SimulationOutput) -> Self {
+        Self::Output(Box::new(output))
     }
 
-    fallback_result_from_decoded(decoded, invocation)
-}
-
-#[cfg(feature = "xed-decoder")]
-pub fn engine_output(
-    code: &[u8],
-    invocation: &Invocation,
-    include_reports: bool,
-    verify_uipack: bool,
-) -> Result<EngineOutput, String> {
-    let decoded = match decode_raw(code) {
-        Ok(decoded) => decoded,
-        Err(_) => {
-            return Ok(EngineOutput {
-                result: fallback_result_from_decoded(&[], invocation),
-                reports: None,
-            })
+    fn into_result(self) -> Result<SimulationOutput, String> {
+        match self {
+            Self::Output(output) => Ok(*output),
+            Self::Error(error) => Err(error),
         }
-    };
-    engine_output_with_decoded(&decoded, invocation, include_reports, verify_uipack)
+    }
 }
 
-#[cfg(feature = "xed-decoder")]
-pub fn engine(code: &[u8], invocation: &Invocation) -> UicaResult {
-    let decoded = match decode_raw(code) {
-        Ok(decoded) => decoded,
-        Err(_) => return fallback_result_from_decoded(&[], invocation),
-    };
-    engine_with_decoded(&decoded, invocation)
+enum DecodedInput<'a> {
+    Borrowed(&'a [DecodedInstruction]),
+    #[cfg(feature = "xed-decoder")]
+    Owned(Vec<DecodedInstruction>),
 }
 
-fn engine_with_decoded_data_internal<'a>(
+impl<'a> DecodedInput<'a> {
+    fn as_slice(&self) -> &[DecodedInstruction] {
+        match self {
+            Self::Borrowed(decoded) => decoded,
+            #[cfg(feature = "xed-decoder")]
+            Self::Owned(decoded) => decoded,
+        }
+    }
+}
+
+enum RuntimeInput<'a> {
+    Borrowed(&'a MappedUiPackRuntime),
+    Owned(MappedUiPackRuntime),
+}
+
+impl<'a> RuntimeInput<'a> {
+    fn as_runtime(&self) -> &MappedUiPackRuntime {
+        match self {
+            Self::Borrowed(runtime) => runtime,
+            Self::Owned(runtime) => runtime,
+        }
+    }
+}
+
+fn get_uipack_for_sim<'a>(
+    request: &SimulationRequest<'a>,
+    decoded: &[DecodedInstruction],
+) -> Result<RuntimeInput<'a>, SimulationEarlyExit> {
+    match request.uipack {
+        UipackSource::Runtime(runtime) => Ok(RuntimeInput::Borrowed(runtime)),
+        UipackSource::Default { verify_checksum } => {
+            let runtime = if verify_checksum {
+                match load_default_runtime_verified(&request.invocation.arch) {
+                    Ok(runtime) => runtime,
+                    Err(err)
+                        if request.options.missing_uipack == MissingUipackPolicy::Fallback
+                            && err.starts_with("uipack data not found") =>
+                    {
+                        return Err(SimulationEarlyExit::output(SimulationOutput {
+                            result: fallback_result_from_decoded(decoded, request.invocation),
+                            reports: None,
+                            trace: None,
+                        }))
+                    }
+                    Err(err) => return Err(SimulationEarlyExit::Error(err)),
+                }
+            } else {
+                match load_default_runtime(&request.invocation.arch, false) {
+                    Some(runtime) => runtime,
+                    None => match request.options.missing_uipack {
+                        MissingUipackPolicy::Error => {
+                            return Err(SimulationEarlyExit::Error(format!(
+                                "uipack data not found for {}",
+                                request.invocation.arch
+                            )))
+                        }
+                        MissingUipackPolicy::Fallback => {
+                            return Err(SimulationEarlyExit::output(SimulationOutput {
+                                result: fallback_result_from_decoded(decoded, request.invocation),
+                                reports: None,
+                                trace: None,
+                            }))
+                        }
+                    },
+                }
+            };
+            Ok(RuntimeInput::Owned(runtime))
+        }
+    }
+}
+
+fn get_decoded_instructions<'a>(
+    request: &SimulationRequest<'a>,
+) -> Result<DecodedInput<'a>, SimulationEarlyExit> {
+    match request.input {
+        SimulationInput::Decoded(decoded) => Ok(DecodedInput::Borrowed(decoded)),
+        #[cfg(feature = "xed-decoder")]
+        SimulationInput::Bytes(code) => match decode_raw(code) {
+            Ok(decoded) => Ok(DecodedInput::Owned(decoded)),
+            Err(err) => match request.options.decode_errors {
+                DecodeErrorPolicy::Error => {
+                    Err(SimulationEarlyExit::Error(format!("decode error: {err}")))
+                }
+                DecodeErrorPolicy::Fallback => Err(SimulationEarlyExit::output(SimulationOutput {
+                    result: fallback_result_from_decoded(&[], request.invocation),
+                    reports: None,
+                    trace: None,
+                })),
+            },
+        },
+    }
+}
+
+fn simulate_with_decoded_data_internal<'a>(
     decoded: &[DecodedInstruction],
     invocation: &Invocation,
     data: InstructionDataSource<'a>,
     include_reports: bool,
-) -> Result<EngineOutput, String> {
+    include_trace: bool,
+) -> Result<SimulationOutput, String> {
     let normalized_invocation = Invocation {
         arch: invocation.arch.to_ascii_uppercase(),
         ..invocation.clone()
@@ -110,6 +240,7 @@ fn engine_with_decoded_data_internal<'a>(
     };
 
     let mut reports = None;
+    let mut trace = None;
     let arch = match get_micro_arch(&normalized_invocation.arch) {
         Some(arch) => arch,
         None => {
@@ -403,59 +534,69 @@ fn engine_with_decoded_data_internal<'a>(
     let mut lsd_active = false;
     let mut lsd_unroll_count = 1u32;
     let simulation = run_simulation_for_cycles(decoded, &normalized_invocation, data);
-    if let Ok((frontend, uops_for_round, final_clock)) = simulation {
-        lsd_active = frontend.uop_source.as_deref() == Some("LSD");
-        lsd_unroll_count = frontend.lsd_unroll_count;
-        result.summary.iterations_simulated = uops_for_round.len() as u32;
-        result.summary.cycles_simulated = final_clock + 1;
-        if let Some(simulated_throughput) = compute_simulated_throughput(&frontend, &uops_for_round)
-        {
-            // Python parity: JSON `TP` is derived from `uopsForRound` retirement
-            // samples for both loop and unroll mode, then passed into
-            // `getBottlenecks`.
-            result.summary.throughput_cycles_per_iteration = Some(simulated_throughput);
-        }
-        refresh_summary_limits_from_python_bottlenecks(
-            &mut result.summary,
-            decoded,
-            &loop_facts,
-            &arch,
-            &frontend,
-            &uops_for_round,
-        );
-        align_frontend_limits_with_simulated_sources(&mut result.summary, &frontend);
-        if let Some(throughput) = result.summary.throughput_cycles_per_iteration {
-            result.summary.bottlenecks_predicted =
-                predicted_bottlenecks(&result.summary.limits, throughput);
-        }
-        append_python_runtime_bottlenecks(&mut result.summary, &frontend, &uops_for_round);
-        result.cycles = build_cycles_json(&frontend, final_clock);
-        result.instructions = build_instructions_json(&frontend);
-        if include_reports {
-            let last_relevant_round = uops_for_round.len().saturating_sub(2) as u32;
-            let trace =
-                crate::report::build_trace_report(&frontend, last_relevant_round, final_clock);
-            let graph = crate::report::build_graph_report(
-                &frontend,
-                &normalized_invocation.arch,
-                final_clock,
-            );
-            let regular = build_regular_report(
+    match simulation {
+        Ok((frontend, uops_for_round, final_clock)) => {
+            lsd_active = frontend.uop_source.as_deref() == Some("LSD");
+            lsd_unroll_count = frontend.lsd_unroll_count;
+            result.summary.iterations_simulated = uops_for_round.len() as u32;
+            result.summary.cycles_simulated = final_clock + 1;
+            if let Some(simulated_throughput) =
+                compute_simulated_throughput(&frontend, &uops_for_round)
+            {
+                // Python parity: JSON `TP` is derived from `uopsForRound` retirement
+                // samples for both loop and unroll mode, then passed into
+                // `getBottlenecks`.
+                result.summary.throughput_cycles_per_iteration = Some(simulated_throughput);
+            }
+            refresh_summary_limits_from_python_bottlenecks(
+                &mut result.summary,
+                decoded,
+                &loop_facts,
+                &arch,
                 &frontend,
                 &uops_for_round,
-                &result.summary,
-                &normalized_invocation.arch,
-                &all_ports,
             );
-            reports = Some(uica_model::ReportBundle {
-                trace,
-                graph,
-                regular,
-            });
+            align_frontend_limits_with_simulated_sources(&mut result.summary, &frontend);
+            if let Some(throughput) = result.summary.throughput_cycles_per_iteration {
+                result.summary.bottlenecks_predicted =
+                    predicted_bottlenecks(&result.summary.limits, throughput);
+            }
+            append_python_runtime_bottlenecks(&mut result.summary, &frontend, &uops_for_round);
+            result.cycles = build_cycles_json(&frontend, final_clock);
+            result.instructions = build_instructions_json(&frontend);
+            if include_reports {
+                let last_relevant_round = uops_for_round.len().saturating_sub(2) as u32;
+                let trace_report =
+                    crate::report::build_trace_report(&frontend, last_relevant_round, final_clock);
+                let graph = crate::report::build_graph_report(
+                    &frontend,
+                    &normalized_invocation.arch,
+                    final_clock,
+                );
+                let regular = build_regular_report(
+                    &frontend,
+                    &uops_for_round,
+                    &result.summary,
+                    &normalized_invocation.arch,
+                    &all_ports,
+                );
+                reports = Some(uica_model::ReportBundle {
+                    trace: trace_report,
+                    graph,
+                    regular,
+                });
+            }
+            if include_trace {
+                trace = Some(emit_trace_from_frontend(&frontend, final_clock)?);
+            }
         }
-    } else {
-        result.cycles = Vec::new();
-        result.instructions = build_instructions_json_from_decoded(decoded);
+        Err(err) => {
+            if include_trace {
+                return Err(err);
+            }
+            result.cycles = Vec::new();
+            result.instructions = build_instructions_json_from_decoded(decoded);
+        }
     }
 
     result.parameters = json!({
@@ -473,40 +614,11 @@ fn engine_with_decoded_data_internal<'a>(
         "mode": result.summary.mode,
     });
 
-    Ok(EngineOutput { result, reports })
-}
-
-pub fn engine_output_with_decoded_uipack_runtime(
-    decoded: &[DecodedInstruction],
-    invocation: &Invocation,
-    runtime: &MappedUiPackRuntime,
-    include_reports: bool,
-) -> Result<EngineOutput, String> {
-    engine_with_decoded_data_internal(
-        decoded,
-        invocation,
-        InstructionDataSource::new(runtime),
-        include_reports,
-    )
-}
-
-#[cfg(feature = "xed-decoder")]
-pub fn engine_output_with_uipack_runtime(
-    code: &[u8],
-    invocation: &Invocation,
-    runtime: &MappedUiPackRuntime,
-    include_reports: bool,
-) -> Result<EngineOutput, String> {
-    let decoded = match decode_raw(code) {
-        Ok(decoded) => decoded,
-        Err(_) => {
-            return Ok(EngineOutput {
-                result: fallback_result_from_decoded(&[], invocation),
-                reports: None,
-            })
-        }
-    };
-    engine_output_with_decoded_uipack_runtime(&decoded, invocation, runtime, include_reports)
+    Ok(SimulationOutput {
+        result,
+        reports,
+        trace,
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -1780,27 +1892,6 @@ fn runtime_manifest_path(path: &Path) -> Option<PathBuf> {
     None
 }
 
-/// Trace-mode engine: runs FrontEnd simulation and emits Q events.
-#[cfg(feature = "xed-decoder")]
-pub fn engine_trace(
-    code: &[u8],
-    invocation: &Invocation,
-    verify_uipack: bool,
-) -> Result<crate::sim::TraceWriter, String> {
-    let decoded = decode_raw(code).map_err(|err| format!("decode error: {err}"))?;
-    let runtime = if verify_uipack {
-        load_default_runtime_verified(&invocation.arch)?
-    } else {
-        load_default_runtime(&invocation.arch, false)
-            .ok_or_else(|| format!("uipack data not found for {}", invocation.arch))?
-    };
-    let (frontend, _, max_cycle) =
-        run_simulation_for_cycles(&decoded, invocation, InstructionDataSource::new(&runtime))?;
-
-    // Emit trace events from simulator state, mirroring Python's generateEventTrace.
-    emit_trace_from_frontend(&frontend, max_cycle)
-}
-
 fn python_lam_uop_order(instr_i: &crate::sim::types::InstrInstance) -> Vec<u64> {
     // Python parity: `generateJSONOutput()` and `generateEventTrace()` enumerate
     // `instrI.regMergeUops + instrI.stackSyncUops + instrI.uops`. Merge/sync
@@ -1815,7 +1906,6 @@ fn python_lam_uop_order(instr_i: &crate::sim::types::InstrInstance) -> Vec<u64> 
         .collect()
 }
 
-#[cfg(feature = "xed-decoder")]
 fn emit_trace_from_frontend(
     frontend: &crate::sim::FrontEnd,
     max_cycle: u32,
@@ -3022,11 +3112,51 @@ mod tests {
         uica_data::MappedUiPackRuntime::from_bytes(encode_uipack(fixture, arch).unwrap()).unwrap()
     }
 
+    fn simulate_bytes_with_runtime(
+        code: &[u8],
+        invocation: &Invocation,
+        runtime: &uica_data::MappedUiPackRuntime,
+        include_reports: bool,
+    ) -> Result<SimulationOutput, String> {
+        simulate(SimulationRequest {
+            input: SimulationInput::Bytes(code),
+            invocation,
+            uipack: UipackSource::Runtime(runtime),
+            options: SimulationOptions {
+                include_reports,
+                ..SimulationOptions::default()
+            },
+        })
+    }
+
+    fn simulate_bytes_default(
+        code: &[u8],
+        invocation: &Invocation,
+        include_reports: bool,
+    ) -> Result<SimulationOutput, String> {
+        simulate(SimulationRequest {
+            input: SimulationInput::Bytes(code),
+            invocation,
+            uipack: UipackSource::Default {
+                verify_checksum: false,
+            },
+            options: SimulationOptions {
+                include_reports,
+                missing_uipack: if include_reports {
+                    MissingUipackPolicy::Error
+                } else {
+                    MissingUipackPolicy::Fallback
+                },
+                ..SimulationOptions::default()
+            },
+        })
+    }
+
     #[test]
-    fn engine_output_can_include_report_bundle() {
+    fn simulate_can_include_report_bundle() {
         let fixture = add_loop_fixture();
         let runtime = runtime_from_fixture(&fixture, "SKL");
-        let output = super::engine_output_with_uipack_runtime(
+        let output = simulate_bytes_with_runtime(
             &[0x48, 0x01, 0xd8],
             &Invocation {
                 arch: "SKL".to_string(),
@@ -3067,7 +3197,7 @@ mod tests {
             ..uica_model::Invocation::default()
         };
 
-        let output = crate::engine::engine_output(&bytes, &invocation, true, false)
+        let output = simulate_bytes_default(&bytes, &invocation, true)
             .expect("engine output should succeed");
         let regular = &output.reports.expect("reports should exist").regular;
 
@@ -3125,7 +3255,7 @@ mod tests {
             ..uica_model::Invocation::default()
         };
 
-        let output = crate::engine::engine_output(&bytes, &invocation, true, false)
+        let output = simulate_bytes_default(&bytes, &invocation, true)
             .expect("engine output should succeed");
         let regular = &output.reports.expect("reports should exist").regular;
 
@@ -3162,7 +3292,7 @@ mod tests {
             ..uica_model::Invocation::default()
         };
 
-        let output = crate::engine::engine_output(&bytes, &invocation, true, false)
+        let output = simulate_bytes_default(&bytes, &invocation, true)
             .expect("engine output should succeed");
         let regular = &output.reports.expect("reports should exist").regular;
 
@@ -3203,7 +3333,7 @@ mod tests {
             ..uica_model::Invocation::default()
         };
 
-        let output = crate::engine::engine_output(&bytes, &invocation, true, false)
+        let output = simulate_bytes_default(&bytes, &invocation, true)
             .expect("engine output should succeed");
         let regular = &output.reports.expect("reports should exist").regular;
 
@@ -3247,7 +3377,7 @@ mod tests {
                 ..Invocation::default()
             };
             let runtime = load_manifest_runtime(&manifest, arch).unwrap();
-            let result = engine_output_with_uipack_runtime(&code, &invocation, &runtime, false)
+            let result = simulate_bytes_with_runtime(&code, &invocation, &runtime, false)
                 .unwrap()
                 .result;
 
@@ -3270,7 +3400,7 @@ mod tests {
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../uica-data/generated/manifest.json");
         let runtime = load_manifest_runtime(&manifest, "IVB").unwrap();
-        let result = engine_output_with_uipack_runtime(
+        let result = simulate_bytes_with_runtime(
             &code,
             &Invocation {
                 arch: "IVB".to_string(),
@@ -3292,7 +3422,7 @@ mod tests {
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../uica-data/generated/manifest.json");
         let runtime = load_manifest_runtime(&manifest, "IVB").unwrap();
-        let result = engine_output_with_uipack_runtime(
+        let result = simulate_bytes_with_runtime(
             &code,
             &Invocation {
                 arch: "IVB".to_string(),
@@ -3321,10 +3451,10 @@ mod tests {
             .join("../uica-data/generated/manifest.json");
         let runtime = uica_data::load_manifest_runtime(&manifest, "SKL").unwrap();
 
-        let first = engine_output_with_uipack_runtime(&code, &invocation, &runtime, false)
+        let first = simulate_bytes_with_runtime(&code, &invocation, &runtime, false)
             .unwrap()
             .result;
-        let second = engine_output_with_uipack_runtime(&code, &invocation, &runtime, false)
+        let second = simulate_bytes_with_runtime(&code, &invocation, &runtime, false)
             .unwrap()
             .result;
 

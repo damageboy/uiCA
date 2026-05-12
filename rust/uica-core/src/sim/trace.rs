@@ -74,6 +74,7 @@ pub struct TraceEvent {
     pub source: Option<String>,
 }
 
+#[derive(Clone, Debug)]
 pub struct TraceWriter {
     events: Vec<TraceEvent>,
 }

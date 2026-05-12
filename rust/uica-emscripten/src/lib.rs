@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use uica_core::{simulate, SimulationInput, SimulationOptions, SimulationRequest, UipackSource};
 use uica_data::MappedUiPackRuntime;
 use uica_model::Invocation;
 
@@ -69,8 +70,15 @@ fn run_request_json_inner(request_json: &str, uipack_bytes: &[u8]) -> Result<Str
         ));
     }
 
-    let output =
-        uica_core::engine::engine_output_with_uipack_runtime(&code, &invocation, &uipack, true)?;
+    let output = simulate(SimulationRequest {
+        input: SimulationInput::Bytes(&code),
+        invocation: &invocation,
+        uipack: UipackSource::Runtime(&uipack),
+        options: SimulationOptions {
+            include_reports: true,
+            ..SimulationOptions::default()
+        },
+    })?;
     let reports = output
         .reports
         .as_ref()

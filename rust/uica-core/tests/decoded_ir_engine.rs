@@ -94,15 +94,16 @@ fn analyzes_caller_supplied_decoded_ir_with_runtime() {
     };
 
     let runtime = MappedUiPackRuntime::from_bytes(encode_uipack(&fixture, "SKL").unwrap()).unwrap();
-    let result = uica_core::engine::engine_output_with_decoded_uipack_runtime(
-        &decoded,
-        &Invocation {
-            arch: "SKL".to_string(),
-            ..Invocation::default()
-        },
-        &runtime,
-        false,
-    )
+    let invocation = Invocation {
+        arch: "SKL".to_string(),
+        ..Invocation::default()
+    };
+    let result = uica_core::engine::simulate(uica_core::engine::SimulationRequest {
+        input: uica_core::engine::SimulationInput::Decoded(&decoded),
+        invocation: &invocation,
+        uipack: uica_core::engine::UipackSource::Runtime(&runtime),
+        options: uica_core::engine::SimulationOptions::default(),
+    })
     .unwrap()
     .result;
 

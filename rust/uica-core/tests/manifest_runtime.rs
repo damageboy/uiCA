@@ -11,6 +11,52 @@ use uica_data::{
 };
 use uica_model::Invocation;
 
+fn simulate_bytes_output(
+    code: &[u8],
+    invocation: &Invocation,
+    verify_checksum: bool,
+    options: uica_core::engine::SimulationOptions,
+) -> Result<uica_core::engine::SimulationOutput, String> {
+    uica_core::engine::simulate(uica_core::engine::SimulationRequest {
+        input: uica_core::engine::SimulationInput::Bytes(code),
+        invocation,
+        uipack: uica_core::engine::UipackSource::Default { verify_checksum },
+        options,
+    })
+}
+
+fn simulate_bytes(code: &[u8], invocation: &Invocation) -> uica_model::UicaResult {
+    simulate_bytes_output(
+        code,
+        invocation,
+        false,
+        uica_core::engine::SimulationOptions::default(),
+    )
+    .unwrap()
+    .result
+}
+
+fn trace_bytes(
+    code: &[u8],
+    invocation: &Invocation,
+    verify_checksum: bool,
+) -> uica_core::sim::TraceWriter {
+    simulate_bytes_output(
+        code,
+        invocation,
+        verify_checksum,
+        uica_core::engine::SimulationOptions {
+            include_trace: true,
+            missing_uipack: uica_core::engine::MissingUipackPolicy::Error,
+            decode_errors: uica_core::engine::DecodeErrorPolicy::Error,
+            ..uica_core::engine::SimulationOptions::default()
+        },
+    )
+    .unwrap()
+    .trace
+    .expect("trace should exist")
+}
+
 fn assert_laminated_uops_populated_once(frontend: &uica_core::sim::FrontEnd) {
     for inst in &frontend.all_generated_instr_instances {
         if inst.macro_fused_with_prev_instr {
@@ -477,7 +523,7 @@ fn engine_prefers_manifest_selected_arch_pack_from_env_dir() {
 
     {
         let _env = EnvVarGuard::set("UICA_RUST_DATAPACK", &generated_dir);
-        let result = uica_core::engine::engine(
+        let result = simulate_bytes(
             &[0x48, 0x01, 0xd8],
             &Invocation {
                 arch: "SKL".to_string(),
@@ -509,7 +555,7 @@ fn engine_loads_manifest_file_from_env_path() {
 
     {
         let _env = EnvVarGuard::set("UICA_RUST_DATAPACK", &manifest_path);
-        let result = uica_core::engine::engine(
+        let result = simulate_bytes(
             &[0x48, 0x01, 0xd8],
             &Invocation {
                 arch: "SKL".to_string(),
@@ -538,7 +584,7 @@ fn engine_trace_uses_manifest_uipack_from_env_path() {
 
     {
         let _env = EnvVarGuard::set("UICA_RUST_DATAPACK", &manifest_path);
-        let trace = uica_core::engine::engine_trace(
+        let trace = trace_bytes(
             &[0x48, 0x01, 0xd8],
             &Invocation {
                 arch: "SKL".to_string(),
@@ -547,8 +593,7 @@ fn engine_trace_uses_manifest_uipack_from_env_path() {
                 ..Invocation::default()
             },
             false,
-        )
-        .unwrap();
+        );
         let trace_path = temp.path().join("events.trace");
         trace.finish_to_path(&trace_path).unwrap();
         assert!(trace_path.is_file());
@@ -565,7 +610,7 @@ fn event_trace_supports_vcmpeqps_with_decoded_operands() {
     let _env = EnvVarGuard::set("UICA_RUST_DATAPACK", &manifest_path);
 
     // vcmpps ymm0, ymm1, ymm2, 0; vblendvps ymm3, ymm4, ymm5, ymm0; dec rcx; jnz -16
-    let result = uica_core::engine::engine(
+    let result = simulate_bytes(
         &[
             0xc5, 0xf4, 0xc2, 0xc2, 0x00, 0xc4, 0xe3, 0x5d, 0x4a, 0xdd, 0x00, 0x48, 0xff, 0xc9,
             0x75, 0xf0,
@@ -594,15 +639,14 @@ fn event_trace_emits_executed_events_for_zero_port_uops() {
 
     let _env = EnvVarGuard::set("UICA_RUST_DATAPACK", &manifest_path);
     // xor rax, rax; dec rcx; jnz -6
-    let trace = uica_core::engine::engine_trace(
+    let trace = trace_bytes(
         &[0x48, 0x31, 0xc0, 0x48, 0xff, 0xc9, 0x75, 0xf6],
         &Invocation {
             arch: "HSW".to_string(),
             ..Invocation::default()
         },
         false,
-    )
-    .unwrap();
+    );
     trace.finish_to_path(&trace_path).unwrap();
 
     let trace_text = std::fs::read_to_string(trace_path).unwrap();
@@ -626,9 +670,14 @@ fn uipack_for_arch_without_microarch_model_fails_clearly() {
         ..Invocation::default()
     };
 
-    let err = uica_core::engine::engine_output(&[0x48, 0x01, 0xd8], &invocation, false, false)
-        .unwrap_err()
-        .to_string();
+    let err = simulate_bytes_output(
+        &[0x48, 0x01, 0xd8],
+        &invocation,
+        false,
+        uica_core::engine::SimulationOptions::default(),
+    )
+    .unwrap_err()
+    .to_string();
     assert!(
         err.contains("microarchitecture model not supported for ZEN5"),
         "{err}"
@@ -652,12 +701,20 @@ fn verify_uipack_rejects_bad_checksum_but_default_load_skips_it() {
             arch: "SKL".to_string(),
             ..Invocation::default()
         };
-        let result = uica_core::engine::engine(&[0x48, 0x01, 0xd8], &invocation);
+        let result = simulate_bytes(&[0x48, 0x01, 0xd8], &invocation);
         assert_eq!(result.summary.throughput_cycles_per_iteration, Some(2.0));
 
-        let err = uica_core::engine::engine_output(&[0x48, 0x01, 0xd8], &invocation, false, true)
-            .unwrap_err()
-            .to_string();
+        let err = simulate_bytes_output(
+            &[0x48, 0x01, 0xd8],
+            &invocation,
+            true,
+            uica_core::engine::SimulationOptions {
+                missing_uipack: uica_core::engine::MissingUipackPolicy::Error,
+                ..uica_core::engine::SimulationOptions::default()
+            },
+        )
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("uipack checksum mismatch"), "{err}");
     }
 
@@ -675,7 +732,7 @@ fn engine_loads_single_uipack_file_from_env_path() {
 
     {
         let _env = EnvVarGuard::set("UICA_RUST_DATAPACK", &pack_path);
-        let result = uica_core::engine::engine(
+        let result = simulate_bytes(
             &[0x48, 0x01, 0xd8],
             &Invocation {
                 arch: "SKL".to_string(),

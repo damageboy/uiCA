@@ -89,6 +89,30 @@ fn raw_cli_accepts_run_config_flags_and_writes_v1_json() {
 }
 
 #[test]
+fn raw_cli_tp_only_uses_fallback_for_truncated_bytes() {
+    let temp = tempdir().expect("tempdir should exist");
+    let input = temp.path().join("bad.bin");
+
+    fs::write(&input, [0x48]).expect("input should be writable");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_uica-cli"))
+        .arg(&input)
+        .arg("--raw")
+        .arg("--arch")
+        .arg("SKL")
+        .arg("--tp-only")
+        .output()
+        .expect("cli should run");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "1\n");
+}
+
+#[test]
 fn raw_cli_writes_trace_from_non_repo_cwd_without_datapack_env() {
     let temp = tempfile::tempdir().expect("tempdir should be created");
     let raw = temp.path().join("loop.bin");

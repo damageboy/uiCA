@@ -14,9 +14,14 @@ fn run_fixture(
         uica_data::encode_uipack(fixture, &invocation.arch).unwrap(),
     )
     .unwrap();
-    uica_core::engine::engine_output_with_uipack_runtime(code, invocation, &runtime, false)
-        .unwrap()
-        .result
+    uica_core::engine::simulate(uica_core::engine::SimulationRequest {
+        input: uica_core::engine::SimulationInput::Bytes(code),
+        invocation,
+        uipack: uica_core::engine::UipackSource::Runtime(&runtime),
+        options: uica_core::engine::SimulationOptions::default(),
+    })
+    .unwrap()
+    .result
 }
 
 fn engine_with_runtime(
@@ -24,9 +29,14 @@ fn engine_with_runtime(
     invocation: &Invocation,
     runtime: &uica_data::MappedUiPackRuntime,
 ) -> uica_model::UicaResult {
-    uica_core::engine::engine_output_with_uipack_runtime(code, invocation, runtime, false)
-        .unwrap()
-        .result
+    uica_core::engine::simulate(uica_core::engine::SimulationRequest {
+        input: uica_core::engine::SimulationInput::Bytes(code),
+        invocation,
+        uipack: uica_core::engine::UipackSource::Runtime(runtime),
+        options: uica_core::engine::SimulationOptions::default(),
+    })
+    .unwrap()
+    .result
 }
 
 #[test]
